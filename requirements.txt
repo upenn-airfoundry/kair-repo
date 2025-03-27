@@ -1,0 +1,11 @@
+faiss-cpu
+openai
+tiktoken
+langchain-openai
+langchain-community
+psycopg2
+langchain
+python-dotenv
+pgvector
+pypdf
+langchain-ai
