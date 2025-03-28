@@ -1,6 +1,14 @@
 # kair-repo
 
-These are the building blocks for the KAIR project.  You will need to update `.env` to match your configuration and we expect a PostgreSQL / TimescaleDB engine accessible via port 5432, with pgvectorscale.
+These are the building blocks for the KAIR project.  You will need to update `.env` to match your configuration and we expect a PostgreSQL / TimescaleDB engine accessible via port 5432, with pgvectorscale.  You can do this with the following [Docker container](https://github.com/timescale/pgvectorscale?tab=readme-ov-file#using-a-pre-built-docker-container).
+
+The SQL in [create_db.sql](create_db.sql) generates a sample user and creates basic relations.
+
+## Conceptual Framework
+
+The main backbone of the project is a simple graph representation of **entities** (nodes) and **associations** (edges). Entities include various properties and come from a closed set of types (enum). They are expected to have an *embedding*.
+
+Edges can be explicitly encoded (with support, including *negative support* saying they should not exist); but implicitly one could have an edge between any two entities -- by looking at the distance between the entities' *embeddings*. Explicit edges can be labeled from an open set of types (arbitrary strings).
 
 ## Key Objectives
 
