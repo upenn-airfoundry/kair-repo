@@ -1,8 +1,10 @@
 ############
-## Basic database "graph" interface
+## Basic database "graph" interface wrapper, currently
+## using TimescaleDB because of scalable pgvectorscale
+## implementation and hybrid relational/graph capabilities.
 ##
-############
-
+## Copyright (C) Zachary G. Ives, 2025
+##################
 
 import psycopg2
 import os

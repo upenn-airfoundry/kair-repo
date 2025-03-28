@@ -1,3 +1,10 @@
+##################
+## PDF document parsing, semantic extraction,
+## and simple enrichment
+##
+## Copyright (C) Zachary G. Ives, 2025
+##################
+
 import traceback
 import os
 import json

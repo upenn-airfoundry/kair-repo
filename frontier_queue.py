@@ -1,3 +1,10 @@
+##################
+## Simple module to add URLs into the database frontier queue
+## for crawling
+##
+## Z. Ives, March 2025
+##################
+
 from datetime import datetime
 from graph_db import GraphAccessor
 
