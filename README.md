@@ -4,6 +4,8 @@ These are the building blocks for the KAIR project.  You will need to update `.e
 
 The SQL in [create_db.sql](create_db.sql) generates a sample user and creates basic relations.
 
+The KAIR repository is intended to support LLM reasoning that goes beyond RAG: rather than retrieving raw data segments, we can instead match questions / tasks against *enriched* knowledge: commentary, assessment, extraction, annotation, and interpretation *added* to the raw data.  We provide a very general model of *entities* and *tags* that have associated embeddings and types: any RAG-style search can match against *raw or enriched data* and reason about relationships back to sources, papers, paragraphs, etc.
+
 ## Conceptual Framework
 
 The main backbone of the project is a simple graph representation of **entities** (nodes) and **associations** (edges). Entities include various properties and come from a closed set of types (enum). They are expected to have an *embedding*.
@@ -27,14 +29,11 @@ And more.
 
 1. `create_db.sql`: Creates the host database in PostgreSQL
 2. `frontier_queue.py`: Adds a number of URLs to the table representing the frontier queue for crawling
-3. `crawler.py`: Fetches the URLs from the frontier queue
-4. `generate_doc_info.py`: Parses the PDFs, chunks them for RAG, and generates a paper descriptor, author info (+ links), a summary.
+3. `crawler.py`: Fetches the URLs from the frontier queue and pulls the PDF files to a local directory
+4. `generate_doc_info.py`: Parses the PDFs in the local directory, chunks them for RAG, and generates a paper descriptor, author info (+ links), a summary.
 
-Key tables for reasoning about relationships:
-* authors (can use for provenance)
-* paper_authors
-* papers
-* paper_tags (link to papers; tag + content; tag indexed, content embedded)
-  - Pre-analysis of papers yields a _summary_ and a _field_ or topic
-* paragraphs (link to papers; content embedded)
-* paragraph_tags
+5. *Not yet inimplemented*: `generate_source_info.py` should **enrich** the corpus with information about authors, organizations, etc. and use these as the basis of **trust**.  In turn, once computed this trust could be propagated as tags to all documents.
+6. *Not yet implemented*: `generate_detection_info.py` would be used to add tag-value pairs to items (paragraphs, papers, etc.) with particular *detections* of interest.
+7. *Not yet implemented*: there is some scaffolding to extract *tables* from documents and to annotate/enrich them, via `generate_table_info.py`.
+
+A set of helper functions is provided in `graph_db.py` for reading / writing authors, papers, paragraphs, etc.  In the database, several views exist to look at all tags relevant to paragraphs, authors and paragraphs, etc.
