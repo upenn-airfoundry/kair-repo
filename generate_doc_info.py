@@ -117,7 +117,6 @@ def index_split_paragraphs(split_docs, path, the_date) -> int:
     graph_db.commit()
     return paper_id
 
-
 def chunk_and_partition_pdf_file(filename):
   data = None
   with open(DOWNLOAD_DIR + filename, "rb") as f:
@@ -145,34 +144,40 @@ def split_with_langchain(pdf_path: str) -> list:
     split_docs = splitter.split_documents(documents)
     
     return split_docs
+
+def handle_file(path: str, use_aryn: bool = False):
+    pdf_path = os.path.join(DOWNLOAD_DIR, path)
+    # Get today's date
+    the_date = datetime.now().date()
+        
+    if path.endswith('.pdf'):                    
+        print(f"Parsing PDF: {path}")
+        if use_aryn:
+            split_docs = chunk_and_partition_pdf_file(pdf_path)
+        else:               
+            # Parse the PDF using Langchain PDF parser
+            split_docs = split_with_langchain(pdf_path)  # Use the Langchain splitter to split the documents
+    else:
+        print(f"Skipping non-PDF file: {pdf_path}")
+        return
+    
+    if len(split_docs):
+        index_split_paragraphs(split_docs, path, the_date)
     
 def parse_pdfs_and_index(use_aryn: bool = False):
     # Fetch all papers
     papers = graph_db.exec_sql("SELECT id, path FROM crawled;")
 
     for paper_id, path in papers:
-        # Parse the PDF using Langchain PDF parser
-        pdf_path = os.path.join(DOWNLOAD_DIR, path)
-        
-        print(f"Parsing PDF: {path}")
-        
-        # Get today's date
-        the_date = datetime.now().date()
         
         try:
             if not GraphAccessor().paper_exists(path):
-                if use_aryn:
-                    split_docs = chunk_and_partition_pdf_file(pdf_path)
-                else:               
-                    split_docs = split_with_langchain(pdf_path)  # Use the Langchain splitter to split the documents
-
-                if len(split_docs):
-                    index_split_paragraphs(split_docs, path, the_date)
+                handle_file(path, use_aryn)
             else:
-                print(f"Paper ID {paper_id} already exists in the database. Skipping parsing for {path}.")
+                print(f"Paper {path} is already indexed with ID {paper_id}.")
 
         except Exception as e:
-            print(f"Error processing PDF {pdf_path}: {e}")
+            print(f"Error processing PDF {path}: {e}")
             traceback.print_exc()
             
 if __name__ == "__main__":

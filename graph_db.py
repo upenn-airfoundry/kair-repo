@@ -118,6 +118,7 @@ class GraphAccessor:
         embedding = self._generate_embedding(content)
         with self.conn.cursor() as cur:
             # Check if the paragraph already exists
+            content = content.replace("\x00", "\uFFFD")
             cur.execute("SELECT entity_id FROM entities WHERE entity_parent = %s AND entity_type = 'paragraph' AND entity_detail = %s;", (paper_id, content,))
             paragraph_id = cur.fetchone()
             if paragraph_id is None:

@@ -51,3 +51,7 @@ And more.
 7. *Not yet implemented*: there is some scaffolding to extract *tables* from documents and to annotate/enrich them, via `generate_table_info.py`.
 
 A set of helper functions is provided in `graph_db.py` for reading / writing authors, papers, paragraphs, etc.  In the database, several views exist to look at all tags relevant to paragraphs, authors and paragraphs, etc.
+
+## Pre-Crawled / Indexed Data
+
+You can supply a list of pre-crawled files under `PDF_PATH/dataset_papers`, and they will be added to the crawled list by `crawler.py`.  If a `.pdf.json` file with Aryn parsed data exists in `PDF_PATH/chunked_files` this will be used in lieu of the LangChain splitter.
