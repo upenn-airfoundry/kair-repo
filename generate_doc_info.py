@@ -30,7 +30,7 @@ DOWNLOAD_DIR = os.getenv("PDF_PATH", os.path.expanduser("~/Downloads"))
 
 graph_db = GraphAccessor()
 
-def index_split_paragraphs(split_docs) -> int:
+def index_split_paragraphs(split_docs, path, the_date) -> int:
     """
     Indexes the paragraphs from the split documents into the graph database.
     This function takes the split documents, concatenates the first two splits,
@@ -167,7 +167,7 @@ def parse_pdfs_and_index(use_aryn: bool = False):
                     split_docs = split_with_langchain(pdf_path)  # Use the Langchain splitter to split the documents
 
                 if len(split_docs):
-                    index_split_paragraphs(split_docs)
+                    index_split_paragraphs(split_docs, pdf_path, the_date)
             else:
                 print(f"Paper ID {paper_id} already exists in the database. Skipping parsing for {path}.")
 
