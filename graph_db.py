@@ -41,6 +41,13 @@ class GraphAccessor:
         """Commit the current transaction."""
         self.conn.commit()
         
+    def paper_exists(self, url: str) -> bool:
+        """Check if a paper exists in the database by URL."""
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT entity_id FROM entities WHERE entity_type = 'paper' AND entity_url = %s;", (url, ))
+            result = cur.fetchone()
+            return result is not None
+        
     def add_paper(self, url: str, crawl_time: str, title: str, summary: str) -> int:
         """Store a paper by URL and return its paper ID."""
         with self.conn.cursor() as cur:

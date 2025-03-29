@@ -2,7 +2,7 @@
 ## Simple module to add URLs into the database frontier queue
 ## for crawling
 ##
-## Z. Ives, March 2025
+## Copyright (C) Zachary G. Ives, 2025
 ##################
 
 from datetime import datetime
@@ -16,7 +16,21 @@ urls = [
     "https://arxiv.org/pdf/2503.11248",
     "https://arxiv.org/pdf/2503.14929",
     "https://arxiv.org/pdf/2503.06902",
-    "https://arxiv.org/pdf/2503.01642"
+    "https://arxiv.org/pdf/2503.01642",
+    "https://arxiv.org/pdf/2407.11418",
+    "https://arxiv.org/pdf/2405.14696",
+    "https://arxiv.org/pdf/2502.03368",
+    "https://arxiv.org/pdf/2410.12189",
+    "https://arxiv.org/pdf/2501.05006",
+    "https://vldb.org/cidrdb/papers/2025/p32-wang.pdf",
+    "https://arxiv.org/pdf/2311.09818",
+    "https://arxiv.org/pdf/2410.01837",
+    "https://arxiv.org/pdf/2412.18022",
+    "https://arxiv.org/pdf/2407.09522",
+    "https://arxiv.org/pdf/2409.00847",
+    "https://dl.acm.org/doi/pdf/10.14778/2732951.2732962",
+    "https://arxiv.org/pdf/2502.07132",
+    "https://dl.acm.org/doi/pdf/10.1145/2882903.2915212"
 ]
 
 graph_db = GraphAccessor()

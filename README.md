@@ -1,8 +1,22 @@
 # kair-repo
 
-These are the building blocks for the KAIR project.  You will need to update `.env` to match your configuration and we expect a PostgreSQL / TimescaleDB engine accessible via port 5432, with pgvectorscale.  You can do this with the following [Docker container](https://github.com/timescale/pgvectorscale?tab=readme-ov-file#using-a-pre-built-docker-container).
+These are the building blocks for the KAIR project.  You will need to update `.env` (copy from `sample.env`) to match your configuration.
 
-The SQL in [create_db.sql](create_db.sql) generates a sample user and creates basic relations.
+## Database
+
+We expect a PostgreSQL / TimescaleDB engine accessible via port 5432, with pgvectorscale.  With Docker installed, you can run `source timescaledb.sh` to install the Docker container.  Then the SQL in [create_db.sql](create_db.sql) generates a sample user and creates basic relations.  Some options:
+
+Linux:
+```bash
+apt install postgresql
+psql -d "postgres://postgres:${DB_PASSWORD}@localhost/postgres" -f create_db.sql
+```
+
+Mac:
+```bash
+brew install postgresql
+psql -d "postgres://postgres:${DB_PASSWORD}@localhost/postgres" -f create_db.sql
+```
 
 The KAIR repository is intended to support LLM reasoning that goes beyond RAG: rather than retrieving raw data segments, we can instead match questions / tasks against *enriched* knowledge: commentary, assessment, extraction, annotation, and interpretation *added* to the raw data.  We provide a very general model of *entities* and *tags* that have associated embeddings and types: any RAG-style search can match against *raw or enriched data* and reason about relationships back to sources, papers, paragraphs, etc.
 

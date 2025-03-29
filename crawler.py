@@ -1,7 +1,10 @@
 #########
-## Trivial web crawl
+## Simple, single-threaded web crawler
 ##
 ## Iterate over database table, fetch PDFs, and mark as crawled
+##
+## Copyright (C) Zachary G. Ives, 2025
+##################
 
 import requests
 import os
@@ -34,6 +37,15 @@ def fetch_and_crawl():
             pdf_filename = os.path.join(DOWNLOADS_DIR, pdf_base)
             with open(pdf_filename, "wb") as pdf_file:
                 pdf_file.write(response.content)
+                
+            # Verify the path isn't already in the crawled table
+            existing_crawl = graph_db.exec_sql(
+                "SELECT 1 FROM crawled WHERE id = %s;",
+                (crawl_id,)
+            )
+            if existing_crawl:
+                print(f"File {pdf_base} already exists in the crawled table. Skipping.")
+                continue
 
             # Add the crawled ID to the crawled table
             graph_db.execute(
