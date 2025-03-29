@@ -242,7 +242,7 @@ class GraphAccessor:
                 return result[0]
         return None
 
-    def find_related_entities(self, question: str, k: int = 10, entity_type: Optional[str] = None, keywords: Optional[List[str]] = None) -> List[int]:
+    def find_related_entities(self, question: str, k: int = 10, entity_type: Optional[str] = None, keywords: Optional[List[str]] = None) -> List[str]:
         """
         Find entities related to a particular task by matching against the entity_embed field using vector distance.
         Optionally filter by entity type and keywords.
@@ -259,7 +259,7 @@ class GraphAccessor:
         concept_embedding = self._generate_embedding(question)
         return self.find_related_entities_by_embedding(concept_embedding, k, entity_type, keywords)
 
-    def find_related_entities_by_tag(self, tag_name: str, k: int = 10) -> List[int]:
+    def find_related_entities_by_tag(self, tag_name: str, k: int = 10) -> List[str]:
         """
         Find entities whose tag (with a specified tag_name) has a tag_value whose embedding approximately matches
         the query embedding using vector distance.
@@ -272,7 +272,7 @@ class GraphAccessor:
         query_embedding = self._generate_embedding(tag_name)
         return self.find_entities_by_tag_embedding(query_embedding, tag_name, k)
 
-    def find_related_entities_by_embedding(self, concept_embedding: List[float], k: int = 10, entity_type: Optional[str] = None, keywords: Optional[List[str]] = None) -> List[int]:
+    def find_related_entities_by_embedding(self, concept_embedding: List[float], k: int = 10, entity_type: Optional[str] = None, keywords: Optional[List[str]] = None) -> List[str]:
         """
         Find entities related to a particular concept by matching against the entity_embed field using vector distance.
         Optionally filter by entity type and keywords.
@@ -287,7 +287,7 @@ class GraphAccessor:
             List[int]: A list of entity IDs that match the criteria.
         """
         query = """
-            SELECT entity_id
+            SELECT entity_type || ': ' || entity_detail
             FROM entities
             WHERE (entity_embed <-> %s::vector) IS NOT NULL
         """
@@ -311,7 +311,7 @@ class GraphAccessor:
 
         return related_entity_ids
 
-    def find_entities_by_tag_embedding(self, query_embedding: List[float], tag_name: str, k: int = 10) -> List[int]:
+    def find_entities_by_tag_embedding(self, query_embedding: List[float], tag_name: str, k: int = 10) -> List[str]:
         """
         Find entities whose tag (with a specified tag_name) has a tag_value whose embedding approximately matches
         the query embedding using vector distance.
@@ -325,8 +325,8 @@ class GraphAccessor:
             List[int]: A list of entity IDs that match the criteria.
         """
         query = """
-            SELECT entity_id
-            FROM entity_tags
+            SELECT tag_name || ': ' || COALESCE(entity_name, entity_detail)
+            FROM entity_tags JOIN entities ON entity_tags.entity_id = entities.entity_id
             WHERE tag_name = %s
             ORDER BY (tag_embed <-> %s::vector) ASC
             LIMIT %s;
