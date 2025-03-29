@@ -14,6 +14,7 @@ import json
 from datetime import datetime
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.schema import Document
 
 from aryn_sdk.partition import partition_file
 # from aryn_sdk.config import ArynConfig
@@ -145,6 +146,30 @@ def split_with_langchain(pdf_path: str) -> list:
     
     return split_docs
 
+def get_presplit_file(filename: str) -> list:
+    """
+    Load a pre-split JSON file that was created by the chunk_and_partition_pdf_file function.
+    :param
+    filename: The name of the JSON file to load.
+    :return: A list of split documents.
+    """
+    json_path = os.path.join(DOWNLOAD_DIR, filename)
+    
+    if os.path.exists(json_path):
+        with open(json_path, 'r') as f:
+            data = json.load(f)
+            # Convert the data into a format that can be used as documents
+            split_docs = []
+            for item in data['elements']:
+                if item['type'] == 'Text':
+                    for seg in item['text_representation'].replace("\x00", "fi").replace("\\n", "\n").split('\n\n'):
+                        split_docs.append(Document(page_content = seg.strip()))
+                        
+            return split_docs
+    else:
+        print(f"File {json_path} does not exist.")
+        return []
+
 def handle_file(path: str, use_aryn: bool = False):
     pdf_path = os.path.join(DOWNLOAD_DIR, path)
     # Get today's date
@@ -152,14 +177,15 @@ def handle_file(path: str, use_aryn: bool = False):
         
     if path.endswith('.pdf'):                    
         print(f"Parsing PDF: {path}")
+        return
         if use_aryn:
             split_docs = chunk_and_partition_pdf_file(pdf_path)
         else:               
             # Parse the PDF using Langchain PDF parser
             split_docs = split_with_langchain(pdf_path)  # Use the Langchain splitter to split the documents
     else:
-        print(f"Skipping non-PDF file: {pdf_path}")
-        return
+        print(f"Non-PDF file: {pdf_path}")
+        split_docs = get_presplit_file(pdf_path)
     
     if len(split_docs):
         index_split_paragraphs(split_docs, path, the_date)
