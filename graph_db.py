@@ -241,3 +241,100 @@ def fetch_next_from_crawl_queue(self) -> Optional[str]:
             self.conn.commit()
             return result[0]
     return None
+
+def find_related_entities(self, question: str, k: int = 10, entity_type: Optional[str] = None, keywords: Optional[List[str]] = None) -> List[int]:
+    """
+    Find entities related to a particular task by matching against the entity_embed field using vector distance.
+    Optionally filter by entity type and keywords.
+
+    Args:
+        question (str): The question or task to match against.
+        k (int): The number of closest matches to return.
+        entity_type (Optional[str]): The type of entities to filter by (e.g., 'paper', 'author').
+        keywords (Optional[List[str]]): A list of keywords to match using tsvector.
+
+    Returns:
+        List[int]: A list of entity IDs that match the criteria.
+    """
+    concept_embedding = self._generate_embedding(question)
+    return self.find_related_entities_by_embedding(concept_embedding, k, entity_type, keywords)
+
+def find_related_entities_by_tag(self, tag_name: str, k: int = 10) -> List[int]:
+    """
+    Find entities whose tag (with a specified tag_name) has a tag_value whose embedding approximately matches
+    the query embedding using vector distance.
+    Args:
+        tag_name (str): The name of the tag to filter by.
+        k (int): The number of closest matches to return.
+    Returns:
+        List[int]: A list of entity IDs that match the criteria.
+    """
+    query_embedding = self._generate_embedding(tag_name)
+    return self.find_entities_by_tag_embedding(query_embedding, tag_name, k)
+
+def find_related_entities_by_embedding(self, concept_embedding: List[float], k: int = 10, entity_type: Optional[str] = None, keywords: Optional[List[str]] = None) -> List[int]:
+    """
+    Find entities related to a particular concept by matching against the entity_embed field using vector distance.
+    Optionally filter by entity type and keywords.
+
+    Args:
+        concept_embedding (List[float]): The embedding of the concept to match against.
+        k (int): The number of closest matches to return.
+        entity_type (Optional[str]): The type of entities to filter by (e.g., 'paper', 'author').
+        keywords (Optional[List[str]]): A list of keywords to match using tsvector.
+
+    Returns:
+        List[int]: A list of entity IDs that match the criteria.
+    """
+    query = """
+        SELECT entity_id
+        FROM entities
+        WHERE (entity_embed <-> %s) IS NOT NULL
+    """
+    params = [concept_embedding]
+
+    if entity_type:
+        query += " AND entity_type = %s"
+        params.append(entity_type)
+
+    if keywords:
+        query += " AND to_tsvector('english', entity_detail) @@ to_tsquery(%s)"
+        ts_query = ' & '.join(keywords)
+        params.append(ts_query)
+
+    query += " ORDER BY (entity_embed <-> %s) ASC LIMIT %s;"
+    params.extend([concept_embedding, k])
+
+    with self.conn.cursor() as cur:
+        cur.execute(query, tuple(params))
+        related_entity_ids = [row[0] for row in cur.fetchall()]
+
+    return related_entity_ids
+
+def find_entities_by_tag_embedding(self, query_embedding: List[float], tag_name: str, k: int = 10) -> List[int]:
+    """
+    Find entities whose tag (with a specified tag_name) has a tag_value whose embedding approximately matches
+    the query embedding using vector distance.
+
+    Args:
+        query_embedding (List[float]): The embedding of the query to match against.
+        tag_name (str): The name of the tag to filter by.
+        k (int): The number of closest matches to return.
+
+    Returns:
+        List[int]: A list of entity IDs that match the criteria.
+    """
+    query = """
+        SELECT entity_id
+        FROM entity_tags
+        WHERE tag_name = %s
+        ORDER BY (tag_embed <-> %s) ASC
+        LIMIT %s;
+    """
+    params = (tag_name, query_embedding, k)
+
+    with self.conn.cursor() as cur:
+        cur.execute(query, params)
+        matching_entity_ids = [row[0] for row in cur.fetchall()]
+
+    return matching_entity_ids

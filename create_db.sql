@@ -112,6 +112,8 @@ CREATE INDEX entity_parent_idx ON entities USING btree ("entity_parent");
 CREATE INDEX entity_embed_idx ON entities
 USING diskann (entity_embed vector_cosine_ops);
 
+CREATE INDEX entity_keyword_idx ON entities USING GIN (to_tsvector('english', entity_detail));
+
 -- Rename to assocation?
 CREATE TABLE entity_link(
     from_id INTEGER,
@@ -141,6 +143,9 @@ CREATE INDEX entity_tag_idx ON entity_tags(tag_name);
 CREATE INDEX entity_tag_val_idx ON entity_tags(tag_value);
 CREATE INDEX entity_tag_embedding_idx ON entity_tags
 USING diskann (tag_embed vector_cosine_ops);
+
+
+CREATE INDEX entity_tag_keyword_idx ON entity_tags USING GIN (to_tsvector('english', tag_value));
 
 
 CREATE VIEW paragraph_tags_view AS

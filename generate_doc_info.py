@@ -170,7 +170,8 @@ def get_presplit_file(filename: str) -> list:
             # Convert the data into a format that can be used as documents
             split_docs = []
             for item in data['elements']:
-                if item['type'] == 'Text':
+                if item['type'] == 'Text' and item['text_representation']:
+                    # Replace null characters and split by new lines
                     for seg in item['text_representation'].replace("\x00", "fi").replace("\\n", "\n").split('\n\n'):
                         split_docs.append(Document(page_content = seg.strip()))
                         
