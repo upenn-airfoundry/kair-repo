@@ -19,6 +19,23 @@ graph_db = GraphAccessor()
 # Directory to save downloaded PDFs
 DOWNLOADS_DIR = os.getenv("PDF_PATH", os.path.expanduser("~/Downloads"))
 
+def add_to_crawled(crawl_id: int, path: str):
+    # Verify the path isn't already in the crawled table
+    existing_crawl = graph_db.exec_sql(
+        "SELECT 1 FROM crawled WHERE id = %s;",
+        (crawl_id,)
+    )
+    if existing_crawl:
+        print(f"File {path} already exists in the crawled table. Skipping.")
+        return
+
+    # Add the crawled ID to the crawled table
+    graph_db.execute(
+        "INSERT INTO crawled (id, crawl_time, path) VALUES (%s, %s, %s);",
+        (crawl_id, datetime.now().date(), path)
+    )
+
+
 def fetch_and_crawl():
     # Ensure the downloads directory exists
     os.makedirs(DOWNLOADS_DIR, exist_ok=True)
@@ -38,24 +55,8 @@ def fetch_and_crawl():
             with open(pdf_filename, "wb") as pdf_file:
                 pdf_file.write(response.content)
                 
-            # Verify the path isn't already in the crawled table
-            existing_crawl = graph_db.exec_sql(
-                "SELECT 1 FROM crawled WHERE id = %s;",
-                (crawl_id,)
-            )
-            if existing_crawl:
-                print(f"File {pdf_base} already exists in the crawled table. Skipping.")
-                continue
-
-            # Add the crawled ID to the crawled table
-            graph_db.execute(
-                "INSERT INTO crawled (id, crawl_time, path) VALUES (%s, %s, %s);",
-                (crawl_id, datetime.now().date(), pdf_base)
-            )
-
-            # Commit the transaction
-            graph_db.commit()
-
+            add_to_crawled(crawl_id, pdf_base)  # Mark this PDF as crawled in the database
+                
             print(f"Successfully crawled and saved: {url}")
 
         except requests.RequestException as e:
@@ -63,5 +64,7 @@ def fetch_and_crawl():
         except Exception as e:
             print(f"Error processing crawl ID {crawl_id}: {e}")
 
+    graph_db.commit()
+    
 if __name__ == "__main__":
     fetch_and_crawl()
