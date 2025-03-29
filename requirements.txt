@@ -10,3 +10,5 @@ pgvector
 pypdf
 langchain-ai
 aryn-sdk
+flask
+flask-cors
