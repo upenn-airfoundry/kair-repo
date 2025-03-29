@@ -42,7 +42,15 @@ def index_split_paragraphs(split_docs, path, the_date) -> int:
     :return: Paper ID
     """
     # Take the first 2 splits and concatenate them
-    concatenated_text = " ".join(doc.page_content for doc in split_docs[:2])
+    n = 0
+    length = 0
+    for i in range(len(split_docs)):
+        length += len(split_docs[i].page_content.split())
+        n += 1
+        if length > 100:
+            break
+    
+    concatenated_text = " ".join(doc.page_content for doc in split_docs[:n])
 
     # Use GPT-4o-mini to extract summary and authors
     llm = ChatOpenAI(model="gpt-4o-mini")  # Use ChatOpenAI for chat models
@@ -105,18 +113,19 @@ def index_split_paragraphs(split_docs, path, the_date) -> int:
             graph_db.link_author_to_paper(author_id, paper_id)
             print(f"Added author: {name} (ID: {author_id})")
 
+        # Index the paragraphs
+        for doc in split_docs:
+            content = doc.page_content
+            print(f"Indexing paragraph: {content}")
+            (para_id, embedding) = graph_db.add_paragraph(paper_id, content)
+        graph_db.commit()
+        return paper_id
     except json.JSONDecodeError as e:
         print(f"Error decoding JSON: {e}")
         print("Raw response text:")
         print(response_text)
-    
-    # Index the paragraphs
-    for doc in split_docs:
-        content = doc.page_content
-        print(f"Indexing paragraph: {content}")
-        (para_id, embedding) = graph_db.add_paragraph(paper_id, content)
-    graph_db.commit()
-    return paper_id
+
+        return 0    
 
 def chunk_and_partition_pdf_file(filename):
   data = None
