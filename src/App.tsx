@@ -1,5 +1,37 @@
 import React, { useState } from "react";
+import { Provider } from "./components/ui/provider.jsx";
+import { Heading, Stack, Text } from "@chakra-ui/react"
+import { Button, HStack } from "@chakra-ui/react";
+import { Box } from "@chakra-ui/react"
 import axios from "axios";
+
+import { createSystem, defaultConfig } from "@chakra-ui/react"
+
+export const system = createSystem(defaultConfig, {
+  theme: {
+    textStyles: {
+      h1: {
+        // you can also use responsive styles
+        fontSize: ['48px', '72px'],
+        fontWeight: 'bold',
+        lineHeight: '110%',
+        letterSpacing: '-2%',
+      },
+      h2: {
+        fontSize: ['36px', '48px'],
+        fontWeight: 'semibold',
+        lineHeight: '110%',
+        letterSpacing: '-1%',
+      },
+    },
+    tokens: {
+      fonts: {
+        heading: { value: `'Figtree', sans-serif` },
+        body: { value: `'Figtree', sans-serif` },
+      },
+    },
+  },
+})
 
 function App() {
   const url2 = "http://localhost:8081";
@@ -73,11 +105,12 @@ function App() {
   };
 
   return (
+    <Provider>
     <div style={{ padding: "20px" }}>
-      <h1>Flask Backend Operations</h1>
+      <Heading size="2xl">KAIR Semantic Search</Heading>
 
-      <div>
-        <h2>Find Related Entities by Tag</h2>
+        <Heading size="xl">Find Related Entities by Tag</Heading>
+        <Box color='gray.50' bgcolor='gray.800' p={4} borderRadius='md'>
         <input
           type="text"
           placeholder="Tag Name"
@@ -96,22 +129,17 @@ function App() {
           value={k}
           onChange={(e) => setK(e.target.value)}
         />
-        <button onClick={handleFindRelatedEntitiesByTag}>Search</button>
-      </div>
+        <Button onClick={handleFindRelatedEntitiesByTag}>Search</Button>
+        </Box>
 
-      <div>
-        <h2>Find Related Entities</h2>
+        <Heading size="xl">Directly Find Related Entities</Heading>
+        <Stack align="flex-start">
+        <HStack>
         <input
           type="text"
           placeholder="Query"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-        />
-        <input
-          type="number"
-          placeholder="k"
-          value={k}
-          onChange={(e) => setK(e.target.value)}
         />
         <input
           type="text"
@@ -121,55 +149,59 @@ function App() {
         />
         <input
           type="text"
-          placeholder="Keywords (comma-separated)"
+          placeholder="Keywords"
           value={keywords}
           onChange={(e) => setKeywords(e.target.value)}
         />
-        <button onClick={handleFindRelatedEntities}>Search</button>
-      </div>
-
-      <div>
-        <h2>Add to Crawl Queue</h2>
         <input
-          type="text"
-          placeholder="URL"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
+          type="number"
+          placeholder="k"
+          value={k}
+          onChange={(e) => setK(e.target.value)}
         />
-        <input
-          type="text"
-          placeholder="Comment"
-          value={comment}
-          onChange={(e) => setComment(e.target.value)}
-        />
-        <button onClick={handleAddToCrawlQueue}>Add</button>
-      </div>
+        <Button onClick={handleFindRelatedEntities}>Search</Button>
+        </HStack>
+      </Stack>
 
-      <div>
-        <h2>Crawl PDFs</h2>
-        <button onClick={handleCrawlPDF}>Start Crawling</button>
-      </div>
+      <Heading size="xl">Crawler / Indexer Controls</Heading>
+      <Stack align="flex-start">
+      <Heading size="l">Add an URL to the Crawl Queue</Heading>
+        <HStack>
+          <input
+            type="text"
+            placeholder="URL"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+          />
+          <input
+            type="text"
+            placeholder="Description"
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+          />
+          <Button onClick={handleAddToCrawlQueue}>Add to Queue</Button>
+        </HStack>
 
-      <div>
-        <h2>Parse PDFs and Index</h2>
-        <button onClick={handleParsePDFsAndIndex}>Parse and Index</button>
-      </div>
+        <HStack>
+          <Button onClick={handleGetUncrawledEntries}>See Uncrawled</Button>
+          <Button onClick={handleCrawlPDF}>Start Crawling</Button>
+          <Button onClick={handleParsePDFsAndIndex}>Parse and Index</Button>
+        </HStack>
+      </Stack>
 
-      <div>
-        <h2>Get Uncrawled Entries</h2>
-        <button onClick={handleGetUncrawledEntries}>Fetch</button>
-      </div>
+      <hr/>
 
-      <div>
-        <h2>Results</h2>
+      <Heading size="xl">Intermediate (RAG) Results</Heading>
+      <Box color='gray.50' bgcolor='gray.800' p={4} borderRadius='md'>
         <pre>{JSON.stringify(results, null, 2)}</pre>
-      </div>
+      </Box>
 
       <div>
         <h2>Message</h2>
         <p>{message}</p>
       </div>
     </div>
+    </Provider>
   );
 }
 

@@ -156,8 +156,9 @@ CREATE VIEW paragraph_tags_view AS
     from entities JOIN entity_tags ON entity_tags.entity_id = entities.entity_parent
     WHERE entities.entity_type = 'paragraph';
 
+
 CREATE VIEW authors_view AS
-    SELECT entity_id, entity_name, entity_contact
+    SELECT entity_id, entity_name, entity_contact, entity_detail
     FROM entities
     WHERE entity_type = 'author';
 

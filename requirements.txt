@@ -12,3 +12,4 @@ langchain-ai
 aryn-sdk
 flask
 flask-cors
+bs4
