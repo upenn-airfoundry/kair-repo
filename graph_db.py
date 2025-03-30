@@ -52,7 +52,8 @@ class GraphAccessor:
         """Store a paper by URL and return its paper ID."""
         with self.conn.cursor() as cur:
             # See if paper already exists
-            cur.execute("SELECT entity_id FROM entities WHERE entity_type = 'paper' AND entity_url = %s;", (url, ))
+            # cur.execute("SELECT entity_id FROM entities WHERE entity_type = 'paper' AND entity_url = %s;", (url, ))
+            cur.execute("SELECT entity_id FROM entities WHERE entity_name = %s and entity_type = 'paper';", (title, ))
             paper_id = cur.fetchone()
             if paper_id is not None:
                 paper_id = paper_id[0]
@@ -60,12 +61,12 @@ class GraphAccessor:
                 cur.execute("SELECT tag_value FROM entity_tags WHERE entity_id = %s AND tag_name = %s;", (paper_id, "summary"))
                 the_tag = cur.fetchone()
                 if the_tag is None:
-                    cur.execute ("INSERT INTO entity_tags (entity_id, tag_name, tag_value, tag_embed) VALUES (%s, %s, %s, %s);", (paper_id, "summary", summary, self._generate_embedding(summary)))
+                    cur.execute ("INSERT INTO entity_tags (entity_id, tag_name, tag_value, tag_embed) VALUES (%s, %s, %s, %s);", (paper_id, "summary", summary, self.generate_embedding(summary)))
             else:            
                 cur.execute("INSERT INTO entities (entity_url, entity_type, entity_name) VALUES (%s, %s, %s) RETURNING entity_id;", (url,'paper',title))
                 paper_id = cur.fetchone()[0]
             
-                cur.execute ("INSERT INTO entity_tags (entity_id, tag_name, tag_value, tag_embed) VALUES (%s, %s, %s, %s);", (paper_id, "summary", summary, self._generate_embedding(summary)))
+                cur.execute ("INSERT INTO entity_tags (entity_id, tag_name, tag_value, tag_embed) VALUES (%s, %s, %s, %s);", (paper_id, "summary", summary, self.generate_embedding(summary)))
         self.conn.commit()
         return paper_id
     
@@ -115,7 +116,7 @@ class GraphAccessor:
 
     def add_paragraph(self, paper_id: int, content: str) -> Tuple[List[float], int]:
         """Add a paragraph, returning an embedding and paragraph ID."""
-        embedding = self._generate_embedding(content)
+        embedding = self.generate_embedding(content)
         with self.conn.cursor() as cur:
             # Check if the paragraph already exists
             content = content.replace("\x00", "\uFFFD")
@@ -213,7 +214,7 @@ class GraphAccessor:
             similar_paragraph_ids = [row[0] for row in cur.fetchall()]
         return similar_paragraph_ids
 
-    def _generate_embedding(self, content: str) -> List[float]:
+    def generate_embedding(self, content: str) -> List[float]:
         """Generate an embedding for the given content using LangChain and OpenAI."""
         try:
             # Initialize OpenAI embeddings
@@ -256,7 +257,7 @@ class GraphAccessor:
         Returns:
             List[int]: A list of entity IDs that match the criteria.
         """
-        concept_embedding = self._generate_embedding(question)
+        concept_embedding = self.generate_embedding(question)
         return self.find_related_entities_by_embedding(concept_embedding, k, entity_type, keywords)
 
     def find_related_entities_by_tag(self, tag_name: str, k: int = 10) -> List[str]:
@@ -269,7 +270,7 @@ class GraphAccessor:
         Returns:
             List[int]: A list of entity IDs that match the criteria.
         """
-        query_embedding = self._generate_embedding(tag_name)
+        query_embedding = self.generate_embedding(tag_name)
         return self.find_entities_by_tag_embedding(query_embedding, tag_name, k)
 
     def find_related_entities_by_embedding(self, concept_embedding: List[float], k: int = 10, entity_type: Optional[str] = None, keywords: Optional[List[str]] = None) -> List[str]:
@@ -287,7 +288,7 @@ class GraphAccessor:
             List[int]: A list of entity IDs that match the criteria.
         """
         query = """
-            SELECT entity_type || ': ' || entity_detail
+            SELECT entity_type || ': ' || COALESCE(entity_name, entity_detail)
             FROM entities
             WHERE (entity_embed <-> %s::vector) IS NOT NULL
         """
@@ -304,6 +305,8 @@ class GraphAccessor:
 
         query += " ORDER BY (entity_embed <-> %s::vector) ASC LIMIT %s;"
         params.extend([str(concept_embedding), k])
+        
+        print("Query: ", query)
 
         with self.conn.cursor() as cur:
             cur.execute(query, tuple(params))

@@ -184,10 +184,11 @@ def handle_file(path: str, use_aryn: bool = False):
     pdf_path = os.path.join(DOWNLOAD_DIR, path)
     # Get today's date
     the_date = datetime.now().date()
+    
+    if path.endswith('.pdf.json'):
+        path = path.replace('.json', '')
         
     if path.endswith('.pdf'):                    
-        print(f"Parsing PDF: {path}")
-        return
         if use_aryn:
             split_docs = chunk_and_partition_pdf_file(pdf_path)
         else:               
@@ -199,6 +200,8 @@ def handle_file(path: str, use_aryn: bool = False):
     
     if len(split_docs):
         index_split_paragraphs(split_docs, path, the_date)
+        
+    graph_db.commit()
     
 def parse_pdfs_and_index(use_aryn: bool = False):
     # Fetch all papers

@@ -32,7 +32,7 @@ def find_related_entities_by_tag():
     if not tag_name or not query:
         return jsonify({"error": "Both 'tag_name' and 'query' parameters are required"}), 400
 
-    query_embedding = graph_accessor._generate_embedding(query)
+    query_embedding = graph_accessor.generate_embedding(query)
     results = graph_accessor.find_entities_by_tag_embedding(query_embedding, tag_name, k)
 
     return jsonify({"results": results})
@@ -46,13 +46,18 @@ def find_related_entities():
     query = request.args.get('query')
     k = int(request.args.get('k', 10))  # Default to 10 if not provided
     entity_type = request.args.get('entity_type')  # Optional
-    keywords = request.args.getlist('keywords')  # Optional list of keywords
+    keywords = request.args.get('keywords').split(',')  # Optional list of keywords
+    
+    if keywords[0] == '':
+        keywords = None
+    
+    print( request.args)
 
     if not query:
         return jsonify({"error": "'query' parameter is required"}), 400
 
-    concept_embedding = graph_accessor._generate_embedding(query)
-    results = graph_accessor.find_related_entities_by_embedding(concept_embedding, k, entity_type, keywords)
+    print ("Find related entities: ", query)
+    results = graph_accessor.find_related_entities(query, k, entity_type, keywords)
 
     return jsonify({"results": results})
 
@@ -150,6 +155,31 @@ def expand_search():
             ("user", "{question}"),
             ("assistant", "Let's think about what questions we need to ask.")
         ])
+        """
+        1. What characteristics should we look for in the authors and sources?
+        2. What field should we focus on for papers?
+        3. How many citations did the paper receive?
+        4. What are the main topics covered in the paper?
+        5. What are the main findings or conclusions of the paper?
+        6. What are the implications of the findings?
+        7. What are the limitations of the study?
+        8. What future research directions are suggested?
+        9. What are the main contributions of the paper?
+        10. What are the key methodologies used in the paper?
+        11. What are the main theories or frameworks discussed?
+        12. What are the main arguments or claims made by the authors?
+        13. What are the main research questions addressed?
+        14. What are the main hypotheses tested?
+        15. What are the main variables or constructs studied?
+        16. What are the main data sources used?
+        17. What are the main analytical techniques used?
+        18. What are the main results or findings?
+        19. What are the main conclusions drawn?
+        20. What are the main recommendations made?
+        21. What are the main implications for practice or policy?
+        22. What are the main implications for theory or research?
+        23. What are the main implications for future research?
+        """
 
         chain = prompt | llm
 

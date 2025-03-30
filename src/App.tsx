@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Provider } from "./components/ui/provider.jsx";
 import { useColorModeValue } from "./components/ui/color-mode.jsx";
 import { Heading, Stack, Text } from "@chakra-ui/react"
-import { Button, HStack } from "@chakra-ui/react";
+import { Button, HStack, Image } from "@chakra-ui/react";
 import { Box } from "@chakra-ui/react"
 import axios from "axios";
 import { Textarea } from "@chakra-ui/react"
@@ -63,7 +63,7 @@ function App() {
   const handleFindRelatedEntities = async () => {
     try {
       const response = await axios.get(url2 + "/find_related_entities", {
-        params: { query, k, entity_type: entityType, keywords: keywords.split(",") },
+        params: { query, k, entity_type: entityType, keywords: keywords },
       });
       setResults(response.data.results);
     } catch (error) {
@@ -119,10 +119,11 @@ function App() {
   return (
     <Provider>
     <div style={{ padding: "20px" }}>
-      <Heading size="2xl">KAIR Semantic Search Prototype</Heading>
-      <Heading size="sm">Copyright (C) 2025 by the Trustees of the University of Pennsylvania</Heading>
-
-        <p>&nbsp;</p>
+      <Stack align="flex-start">
+      <HStack><Image src="airfoundry.svg" /><Heading size="2xl">KAIR Semantic Search Prototype</Heading></HStack>
+      <HStack><Heading size="sm">Copyright (C) 2025 by the Trustees of the University of Pennsylvania</Heading><Image scale="50%" src="logo-NSF.png" /></HStack>
+      
+      </Stack>
         <Heading size="xl">Pose Your Question:</Heading>
         <Stack>
         <Textarea rows="5" cols="80" width="100" placeholder="Enter your question here..." value={prompt} onChange={(e) => setPrompt(e.target.value)} />  
@@ -136,7 +137,9 @@ function App() {
 
       <Heading size="l">Intermediate (RAG) Results</Heading>
       <Box color='gray.50' bgcolor='gray.800' p={4} borderRadius='md'>
+        <Text color="black">
         <pre>{JSON.stringify(results, null, 2)}</pre>
+        </Text>
       </Box>
 
       <Heading size="l">Message</Heading>

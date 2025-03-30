@@ -54,12 +54,12 @@ def fetch_and_crawl():
             if url.startswith('file://'):
                 pdf_base = url.split('/')[-1]  # Extract the filename from the URL
                 pdf_filename = os.path.join(DOWNLOADS_DIR + "/dataset_papers/" + pdf_base)  # Construct the local file path
-                if os.path.exists(DOWNLOADS_DIR + "/chunked_files/" + pdf_base + ".json"):
-                    if add_to_crawled(crawl_id, "chunked_files/" + pdf_base + ".json"):  # Mark this PDF as crawled in the database
-                        print(f"Registered pre-chunked file: {pdf_filename}")
-                else:
-                    if add_to_crawled(crawl_id, "dataset_papers/" + pdf_base):  # Mark this PDF as crawled in the database
-                        print(f"Registered pre-crawled file: {pdf_filename}")
+                # if os.path.exists(DOWNLOADS_DIR + "/chunked_files/" + pdf_base + ".json"):
+                #     if add_to_crawled(crawl_id, "chunked_files/" + pdf_base + ".json"):  # Mark this PDF as crawled in the database
+                #         print(f"Registered pre-chunked file: {pdf_filename}")
+                # else:
+                if add_to_crawled(crawl_id, "dataset_papers/" + pdf_base):  # Mark this PDF as crawled in the database
+                    print(f"Registered pre-crawled file: {pdf_filename}")
             else:
                 # Save the PDF locally
                 pdf_base = f"{crawl_id}.pdf"
