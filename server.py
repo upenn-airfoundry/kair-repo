@@ -5,6 +5,10 @@ from crawler import fetch_and_crawl
 from datetime import datetime
 from flask_cors import CORS
 
+from langchain_openai import ChatOpenAI
+from langchain.prompts import ChatPromptTemplate
+from langchain.chains import LLMChain
+
 app = Flask("KAIR")
 CORS(app, resources={r"/*": {"origins": ["http://localhost:5173"], \
     "methods": ["GET", "POST", "PUT", "DELETE"],
@@ -124,6 +128,41 @@ def get_uncrawled_entries():
     except Exception as e:
         return jsonify({"error": f"An error occurred while fetching uncrawled entries: {e}"}), 500
 
+@app.route('/expand', methods=['POST'])
+def expand_search():
+    """
+    Endpoint to process a user question or prompt using LangChain and GPT-4o-mini
+    with chain-of-thought reasoning.
+    """
+    try:
+        # Get the user question or prompt from the request
+        user_prompt = request.json.get('prompt')
+        if not user_prompt:
+            print ("'prompt' parameter is missing")
+            return jsonify({"error": "'prompt' parameter is required"}), 400
+
+        # Initialize the GPT-4o-mini model
+        llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+
+        # Define the chain-of-thought reasoning prompt
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", "You are a helpful assistant that uses chain-of-thought reasoning to answer questions."),
+            ("user", "{question}"),
+            ("assistant", "Let's think about what questions we need to ask.")
+        ])
+
+        chain = prompt | llm
+
+        # Run the chain with the user prompt
+        response = chain.invoke({"question": user_prompt})
+        
+        print(response.text)
+
+        # Return the response in JSON format
+        return jsonify({"data": {"message": response.content} }), 200
+    except Exception as e:
+        return jsonify({"error": f"An error occurred: {e}"}), 500
+
 
 if __name__ == '__main__':
-    app.run(port=8081,debug=True)
+    app.run(port=8081,debug=True) 

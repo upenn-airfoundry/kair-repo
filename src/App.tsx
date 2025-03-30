@@ -1,9 +1,11 @@
 import React, { useState } from "react";
 import { Provider } from "./components/ui/provider.jsx";
+import { useColorModeValue } from "./components/ui/color-mode.jsx";
 import { Heading, Stack, Text } from "@chakra-ui/react"
 import { Button, HStack } from "@chakra-ui/react";
 import { Box } from "@chakra-ui/react"
 import axios from "axios";
+import { Textarea } from "@chakra-ui/react"
 
 import { createSystem, defaultConfig } from "@chakra-ui/react"
 
@@ -38,6 +40,7 @@ function App() {
 
   const [tagName, setTagName] = useState("");
   const [query, setQuery] = useState("");
+  const [prompt, setPrompt] = useState("");
   const [k, setK] = useState(10);
   const [entityType, setEntityType] = useState("");
   const [keywords, setKeywords] = useState("");
@@ -104,12 +107,48 @@ function App() {
     }
   };
 
+  const handlePrompt = async () => {
+    try {
+      const response = await axios.post(url2 + "/expand", { prompt });
+      setMessage(response.data.data.message);
+    } catch (error) {
+      setMessage(`Error: ${error.response?.data?.error || error.message}`);
+    }
+  };
+
   return (
     <Provider>
     <div style={{ padding: "20px" }}>
-      <Heading size="2xl">KAIR Semantic Search</Heading>
+      <Heading size="2xl">KAIR Semantic Search Prototype</Heading>
+      <Heading size="sm">Copyright (C) 2025 by the Trustees of the University of Pennsylvania</Heading>
 
-        <Heading size="xl">Find Related Entities by Tag</Heading>
+        <p>&nbsp;</p>
+        <Heading size="xl">Pose Your Question:</Heading>
+        <Stack>
+        <Textarea rows="5" cols="80" width="100" placeholder="Enter your question here..." value={prompt} onChange={(e) => setPrompt(e.target.value)} />  
+        <HStack>
+        <Button onClick={handlePrompt}>Ask KAIR</Button>
+        </HStack>
+        </Stack>
+        <p>&nbsp;</p>
+        <hr/>
+        <hr/>
+
+      <Heading size="l">Intermediate (RAG) Results</Heading>
+      <Box color='gray.50' bgcolor='gray.800' p={4} borderRadius='md'>
+        <pre>{JSON.stringify(results, null, 2)}</pre>
+      </Box>
+
+      <Heading size="l">Message</Heading>
+      <Box color='gray.50' bgcolor='gray.800' p={4} borderRadius='md'>
+        <Text color="black">{message}</Text>
+      </Box>
+
+      <p>&nbsp;</p>
+      <hr/>
+        <Heading size="xl">Low-Level Retrieval</Heading>
+        <p>&nbsp;</p>
+        <Heading size="l">Retrieve Related Entities by Tag</Heading>
         <Box color='gray.50' bgcolor='gray.800' p={4} borderRadius='md'>
         <input
           type="text"
@@ -132,7 +171,7 @@ function App() {
         <Button onClick={handleFindRelatedEntitiesByTag}>Search</Button>
         </Box>
 
-        <Heading size="xl">Directly Find Related Entities</Heading>
+        <Heading size="l">Directly Retrieve Entities</Heading>
         <Stack align="flex-start">
         <HStack>
         <input
@@ -163,9 +202,12 @@ function App() {
         </HStack>
       </Stack>
 
+      <p>&nbsp;</p>
+      <hr/>
+
       <Heading size="xl">Crawler / Indexer Controls</Heading>
       <Stack align="flex-start">
-      <Heading size="l">Add an URL to the Crawl Queue</Heading>
+      <Heading size="m">Add an URL to the Crawl Queue</Heading>
         <HStack>
           <input
             type="text"
@@ -188,20 +230,9 @@ function App() {
           <Button onClick={handleParsePDFsAndIndex}>Parse and Index</Button>
         </HStack>
       </Stack>
-
-      <hr/>
-
-      <Heading size="xl">Intermediate (RAG) Results</Heading>
-      <Box color='gray.50' bgcolor='gray.800' p={4} borderRadius='md'>
-        <pre>{JSON.stringify(results, null, 2)}</pre>
-      </Box>
-
-      <div>
-        <h2>Message</h2>
-        <p>{message}</p>
       </div>
-    </div>
-    </Provider>
+      </Provider>
+
   );
 }
 
