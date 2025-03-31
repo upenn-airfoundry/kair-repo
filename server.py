@@ -10,6 +10,7 @@ from generate_detection_info import get_papers_by_field, get_entities_from_db
 from generate_detection_info import answer_from_summary
 
 from search import search_over_criteria, search_multiple_criteria
+from search import generate_rag_answer
 
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
@@ -218,6 +219,7 @@ def add_enrichment():
         
     return jsonify({"message": "Enrichment step completed"}), 201
 
+
 @app.route('/expand', methods=['POST'])
 def expand_search():
     """
@@ -263,11 +265,29 @@ def expand_search():
         
         relevant_docs = search_multiple_criteria(questions)
         
-        main = graph_accessor.find_related_entities(user_prompt, 50, 'paper')
+        # TODO: from paragraph to paper
+        #main = graph_accessor.find_related_entity_ids(user_prompt, 100)
+        main = graph_accessor.find_related_entity_ids_by_tag(user_prompt, "summary", 100)
+        print ("Relevant docs: " + str(relevant_docs))
+        
+        print ("Main papers: " + str(main))
+        
+        items = set(relevant_docs)
+        items.intersection_update(set(main))
+        
+        print("Items matching criteria: " + str(items))
+        
+        if len(items):
+            paper_info = graph_accessor.get_entities_with_summaries(list(items))
+                
+            answer = generate_rag_answer(paper_info, user_prompt)
 
-        # Return the response in JSON format
-        return jsonify({"data": {"message": questions} }), 200
+            # Return the response in JSON format
+            return jsonify({"data": {"message": answer} }), 200
+        else:
+            return jsonify({"error": "No relevant papers found"}), 404
     except Exception as e:
+        print(f"Error during expansion: {e}")
         return jsonify({"error": f"An error occurred: {e}"}), 500
 
 

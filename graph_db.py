@@ -260,6 +260,23 @@ class GraphAccessor:
         concept_embedding = self.generate_embedding(question)
         return self.find_related_entities_by_embedding(concept_embedding, k, entity_type, keywords)
 
+    def find_related_entity_ids(self, question: str, k: int = 10, entity_type: Optional[str] = None, keywords: Optional[List[str]] = None) -> List[int]:
+        """
+        Find entities related to a particular task by matching against the entity_embed field using vector distance.
+        Optionally filter by entity type and keywords.
+
+        Args:
+            question (str): The question or task to match against.
+            k (int): The number of closest matches to return.
+            entity_type (Optional[str]): The type of entities to filter by (e.g., 'paper', 'author').
+            keywords (Optional[List[str]]): A list of keywords to match using tsvector.
+
+        Returns:
+            List[int]: A list of entity IDs that match the criteria.
+        """
+        concept_embedding = self.generate_embedding(question)
+        return self.find_related_entity_ids_by_embedding(concept_embedding, k, entity_type, keywords)
+
     def find_related_entity_ids_by_tag(self, tag_value: str, tag_name: str = None, k: int = 10) -> List[int]:
         """
         Find entities whose tag (with a specified tag_name) has a tag_value whose embedding approximately matches
@@ -302,6 +319,47 @@ class GraphAccessor:
         """
         query = """
             SELECT entity_type || ': ' || COALESCE(entity_name, entity_detail)
+            FROM entities
+            WHERE (entity_embed <-> %s::vector) IS NOT NULL
+        """
+        params = [str(concept_embedding)]
+
+        if entity_type:
+            query += " AND entity_type = %s"
+            params.append(entity_type)
+
+        if keywords:
+            query += " AND to_tsvector('english', entity_detail) @@ to_tsquery(%s)"
+            ts_query = ' & '.join(keywords)
+            params.append(ts_query)
+
+        query += " ORDER BY (entity_embed <-> %s::vector) ASC LIMIT %s;"
+        params.extend([str(concept_embedding), k])
+        
+        print("Query: ", query)
+
+        with self.conn.cursor() as cur:
+            cur.execute(query, tuple(params))
+            related_entity_ids = [row[0] for row in cur.fetchall()]
+
+        return related_entity_ids
+
+    def find_related_entity_ids_by_embedding(self, concept_embedding: List[float], k: int = 10, entity_type: Optional[str] = None, keywords: Optional[List[str]] = None) -> List[str]:
+        """
+        Find entities related to a particular concept by matching against the entity_embed field using vector distance.
+        Optionally filter by entity type and keywords.
+
+        Args:
+            concept_embedding (List[float]): The embedding of the concept to match against.
+            k (int): The number of closest matches to return.
+            entity_type (Optional[str]): The type of entities to filter by (e.g., 'paper', 'author').
+            keywords (Optional[List[str]]): A list of keywords to match using tsvector.
+
+        Returns:
+            List[int]: A list of entity IDs that match the criteria.
+        """
+        query = """
+            SELECT entity_id
             FROM entities
             WHERE (entity_embed <-> %s::vector) IS NOT NULL
         """
@@ -433,3 +491,33 @@ class GraphAccessor:
             criterion_id = cur.fetchone()[0]
         self.conn.commit()
         return criterion_id
+    
+    def get_entities_with_summaries(self, entity_ids: Optional[List[int]] = None) -> List[dict]:
+        """
+        Fetch all entities and their associated 'summary' tags, filtered by a list of entity IDs if provided.
+
+        Args:
+            entity_ids (Optional[List[int]]): A list of entity IDs to filter the results. If None, fetch all entities.
+
+        Returns:
+            List[dict]: A list of dictionaries containing entity names and their summaries.
+        """
+        query = """
+            SELECT e.entity_name, t.tag_value AS summary
+            FROM entities e
+            LEFT JOIN entity_tags t ON e.entity_id = t.entity_id AND t.tag_name = 'summary'
+            WHERE e.entity_name IS NOT NULL
+        """
+        params = []
+
+        # Add filtering by entity_ids if provided
+        if entity_ids:
+            query += " AND e.entity_id = ANY(%s)"
+            params.append(entity_ids)
+
+        query += " ORDER BY e.entity_name ASC;"
+
+        with self.conn.cursor() as cur:
+            cur.execute(query, params)
+            results = [{"name": row[0], "summary": row[1]} for row in cur.fetchall()]
+        return results
