@@ -4,6 +4,12 @@ from flask import request
 from crawler import fetch_and_crawl
 from datetime import datetime
 from flask_cors import CORS
+import json
+
+from generate_detection_info import get_papers_by_field, get_entities_from_db
+from generate_detection_info import answer_from_summary
+
+from search import search_over_criteria, search_multiple_criteria
 
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
@@ -132,6 +138,85 @@ def get_uncrawled_entries():
         return jsonify({"uncrawled_entries": results}), 200
     except Exception as e:
         return jsonify({"error": f"An error occurred while fetching uncrawled entries: {e}"}), 500
+    
+@app.route('/get_assessment_criteria', methods=['GET'])
+def get_assessment_criteria():
+    """
+    Endpoint to get the assessment criteria for papers.
+    """
+    try:
+        name = request.args.get('name')
+        criteria = graph_accessor.get_assessment_criteria(name)
+        if criteria:
+            return jsonify({"criteria": criteria}), 200
+        else:
+            if name:
+                return jsonify({"error": "No criteria found for the given name"}), 404
+            else:
+                return jsonify({"error": "Please create some assessment criteria"}), 404
+    except Exception as e:
+        return jsonify({"error": f"An error occurred: {e}"}), 500
+
+@app.route('/add_assessment_criterion', methods=['POST'])
+def add_assessment_criterion():
+    """
+    Endpoint to add an assessment criterion to the database.
+    """
+    try:
+        # Parse the request JSON
+        data = request.json
+        name = data.get('name')
+        scope = data.get('scope')
+        prompt = data.get('prompt')
+        promise = data.get('promise', 1.0)  # Default promise value is 1.0
+
+        # Validate required fields
+        if not name or not prompt or not scope:
+            return jsonify({"error": "'name', 'scope', and 'prompt' fields are required"}), 400
+        
+        print("Adding assessment criterion with name:", name)
+        print("Scope:", scope)
+        print("Prompt:", prompt)
+
+        # Call the GraphAccessor method to add the assessment criterion
+        criterion_id = graph_accessor.add_assessment_criterion(name, prompt, scope, promise)
+
+        # Return the newly created criterion ID
+        return jsonify({"message": "Assessment criterion added successfully", "criterion_id": criterion_id}), 201
+
+    except Exception as e:
+        return jsonify({"error": f"An error occurred: {e}"}), 500
+
+@app.route('/add_enrichment', methods=['POST'])
+def add_enrichment():
+    criteria = graph_accessor.get_assessment_criteria(None)
+    
+    for criterion in criteria:
+        name = criterion['name']
+        scope = criterion['scope']
+        prompt = criterion['prompt']
+        # promise = criterion['promise']
+        
+        relevant_papers = get_papers_by_field(scope, 30)
+        
+        for paper in relevant_papers:
+            result = get_entities_from_db(paper[0])
+            if result is None:
+                continue
+
+            for row in result:
+                data = row['json']
+                
+                # print(data)
+                result = answer_from_summary(json.loads(data), prompt)
+                
+                if result is None or result == 'none':
+                    continue
+                
+                print (result)
+                graph_accessor.add_tag_to_paper(paper[0], name, result)
+        
+    return jsonify({"message": "Enrichment step completed"}), 201
 
 @app.route('/expand', methods=['POST'])
 def expand_search():
@@ -146,15 +231,6 @@ def expand_search():
             print ("'prompt' parameter is missing")
             return jsonify({"error": "'prompt' parameter is required"}), 400
 
-        # Initialize the GPT-4o-mini model
-        llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-
-        # Define the chain-of-thought reasoning prompt
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", "You are a helpful assistant that uses chain-of-thought reasoning to answer questions."),
-            ("user", "{question}"),
-            ("assistant", "Let's think about what questions we need to ask.")
-        ])
         """
         1. What characteristics should we look for in the authors and sources?
         2. What field should we focus on for papers?
@@ -181,15 +257,16 @@ def expand_search():
         23. What are the main implications for future research?
         """
 
-        chain = prompt | llm
-
-        # Run the chain with the user prompt
-        response = chain.invoke({"question": user_prompt})
+        questions = search_over_criteria(user_prompt, graph_accessor.get_assessment_criteria());
         
-        print(response.text)
+        print('Expanded into subquestions: ' + questions)
+        
+        relevant_docs = search_multiple_criteria(questions)
+        
+        main = graph_accessor.find_related_entities(user_prompt, 50, 'paper')
 
         # Return the response in JSON format
-        return jsonify({"data": {"message": response.content} }), 200
+        return jsonify({"data": {"message": questions} }), 200
     except Exception as e:
         return jsonify({"error": f"An error occurred: {e}"}), 500
 

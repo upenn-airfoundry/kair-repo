@@ -260,7 +260,7 @@ class GraphAccessor:
         concept_embedding = self.generate_embedding(question)
         return self.find_related_entities_by_embedding(concept_embedding, k, entity_type, keywords)
 
-    def find_related_entities_by_tag(self, tag_name: str, k: int = 10) -> List[str]:
+    def find_related_entity_ids_by_tag(self, tag_value: str, tag_name: str = None, k: int = 10) -> List[int]:
         """
         Find entities whose tag (with a specified tag_name) has a tag_value whose embedding approximately matches
         the query embedding using vector distance.
@@ -270,7 +270,20 @@ class GraphAccessor:
         Returns:
             List[int]: A list of entity IDs that match the criteria.
         """
-        query_embedding = self.generate_embedding(tag_name)
+        query_embedding = self.generate_embedding(tag_value)
+        return self.find_entity_ids_by_tag_embedding(query_embedding, tag_name, k)
+
+    def find_related_entities_by_tag(self, tag_value: str, tag_name: str = None, k: int = 10) -> List[str]:
+        """
+        Find entities whose tag (with a specified tag_name) has a tag_value whose embedding approximately matches
+        the query embedding using vector distance.
+        Args:
+            tag_name (str): The name of the tag to filter by.
+            k (int): The number of closest matches to return.
+        Returns:
+            List[int]: A list of entity IDs that match the criteria.
+        """
+        query_embedding = self.generate_embedding(tag_value)
         return self.find_entities_by_tag_embedding(query_embedding, tag_name, k)
 
     def find_related_entities_by_embedding(self, concept_embedding: List[float], k: int = 10, entity_type: Optional[str] = None, keywords: Optional[List[str]] = None) -> List[str]:
@@ -327,17 +340,96 @@ class GraphAccessor:
         Returns:
             List[int]: A list of entity IDs that match the criteria.
         """
-        query = """
-            SELECT tag_name || ': ' || COALESCE(entity_name, entity_detail)
-            FROM entity_tags JOIN entities ON entity_tags.entity_id = entities.entity_id
-            WHERE tag_name = %s
-            ORDER BY (tag_embed <-> %s::vector) ASC
-            LIMIT %s;
-        """
-        params = (tag_name, str(query_embedding), k)
+        if tag_name:
+            query = """
+                SELECT tag_name || ': ' || COALESCE(entity_name, entity_detail)
+                FROM entity_tags JOIN entities ON entity_tags.entity_id = entities.entity_id
+                WHERE tag_name = %s
+                ORDER BY (tag_embed <-> %s::vector) ASC
+                LIMIT %s;
+            """
+            params = (tag_name, str(query_embedding), k)
+        else:
+            query = """
+                SELECT tag_name || ': ' || COALESCE(entity_name, entity_detail)
+                FROM entity_tags JOIN entities ON entity_tags.entity_id = entities.entity_id
+                ORDER BY (tag_embed <-> %s::vector) ASC
+                LIMIT %s;
+            """
+            params = (str(query_embedding), k)
 
         with self.conn.cursor() as cur:
             cur.execute(query, params)
             matching_entity_ids = [row[0] for row in cur.fetchall()]
 
         return matching_entity_ids
+    
+    def find_entity_ids_by_tag_embedding(self, query_embedding: List[float], tag_name: str, k: int = 10) -> List[int]:
+        """
+        Find entities whose tag (with a specified tag_name) has a tag_value whose embedding approximately matches
+        the query embedding using vector distance.
+
+        Args:
+            query_embedding (List[float]): The embedding of the query to match against.
+            tag_name (str): The name of the tag to filter by.
+            k (int): The number of closest matches to return.
+
+        Returns:
+            List[int]: A list of entity IDs that match the criteria.
+        """
+        if tag_name:
+            query = """
+                SELECT entities.entity_id
+                FROM entity_tags JOIN entities ON entity_tags.entity_id = entities.entity_id
+                WHERE tag_name = %s
+                ORDER BY (tag_embed <-> %s::vector) ASC
+                LIMIT %s;
+            """
+            params = (tag_name, str(query_embedding), k)
+        else:
+            query = """
+                SELECT entities.entity_id
+                FROM entity_tags JOIN entities ON entity_tags.entity_id = entities.entity_id
+                ORDER BY (tag_embed <-> %s::vector) ASC
+                LIMIT %s;
+            """
+            params = (str(query_embedding), k)
+
+        with self.conn.cursor() as cur:
+            cur.execute(query, params)
+            matching_entity_ids = [row[0] for row in cur.fetchall()]
+
+        return matching_entity_ids
+    
+    def get_assessment_criteria(self, name:str = None) -> List:
+        """
+        Fetch all assessment criteria, or criteria with a particular name.
+        """
+        criteria = None
+        with self.conn.cursor() as cur:
+            if name is None:
+                criteria = cur.execute("""
+                                       SELECT criteria_id, criteria_name, criteria_prompt, criteria_scope 
+                                       FROM assessment_criteria ORDER BY criteria_promise DESC;""")
+            else:
+                criteria = cur.execute("""SELECT criteria_id, criteria_name, criteria_prompt, criteria_scope 
+                                       FROM assessment_criteria 
+                                       WHERE criteria_name = %s ORDER BY criteria_promise DESC;""", \
+                                           (name,))
+                
+            result = [{"id": c[0], "name": c[1], "prompt": c[2], "scope": c[3]} for c in cur.fetchall()]
+        return result
+    
+    def add_assessment_criterion(self, name:str, prompt:str, scope: str, promise:float = 1) -> int:
+        """
+        Add an assessment criterion to the database.
+        """
+        embed = self.generate_embedding(prompt)
+        with self.conn.cursor() as cur:
+            cur.execute("""INSERT INTO assessment_criteria 
+                        (criteria_name, criteria_prompt, criteria_scope, criteria_promise, criteria_embed) 
+                        VALUES (%s, %s, %s, %s, %s) 
+                        RETURNING criteria_id;""", (name, prompt, scope, promise, embed))
+            criterion_id = cur.fetchone()[0]
+        self.conn.commit()
+        return criterion_id

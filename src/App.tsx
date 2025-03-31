@@ -1,9 +1,9 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Provider } from "./components/ui/provider.jsx";
 import { useColorModeValue } from "./components/ui/color-mode.jsx";
 import { Heading, Stack, Text } from "@chakra-ui/react"
 import { Button, HStack, Image } from "@chakra-ui/react";
-import { Box } from "@chakra-ui/react"
+import { Box, Select, Table } from "@chakra-ui/react"
 import axios from "axios";
 import { Textarea } from "@chakra-ui/react"
 
@@ -48,6 +48,11 @@ function App() {
   const [comment, setComment] = useState("");
   const [results, setResults] = useState([]);
   const [message, setMessage] = useState("");
+  const [assessmentCriteria, setAssessmentCriteria] = useState([]);
+  const [selectedCriterion, setSelectedCriterion] = useState("");  
+  const [criterionName, setCriterionName] = useState("");
+  const [criterionPrompt, setCriterionPrompt] = useState("");
+  const [criterionScope, setCriterionScope] = useState("");
 
   const handleFindRelatedEntitiesByTag = async () => {
     try {
@@ -79,6 +84,33 @@ function App() {
       setMessage(`Error: ${error.response?.data?.error || error.message}`);
     }
   };
+
+  const addEnrichment = async () => {
+    try {
+      const response = await axios.post(url2 + "/add_enrichment", { selectedCriterion });
+      setMessage(response.data.message);
+    }
+    catch (error) {
+      setMessage(`Error: ${error.response?.data?.error || error.message}`);
+    }
+  };
+
+  const addCriterion = async () => {
+    try {
+      var name = criterionName;
+      var prompt = criterionPrompt;
+      var scope = criterionScope;
+      const response = await axios.post(url2 + "/add_assessment_criterion", { name, prompt, scope });
+      setMessage(response.data.message);
+      setCriterionName("");
+      setCriterionPrompt("");
+      setCriterionScope("");
+      fetchAssessmentCriteria(); // Refresh the criteria list after adding a new one
+    } catch (error) {
+      setMessage(`Error: ${error.response?.data?.error || error.message}`);
+    }
+  };
+
 
   const handleCrawlPDF = async () => {
     try {
@@ -115,6 +147,26 @@ function App() {
       setMessage(`Error: ${error.response?.data?.error || error.message}`);
     }
   };
+  // Fetch assessment criteria from the backend
+  const fetchAssessmentCriteria = async () => {
+    try {
+      const response = await axios.get(url2 + "/get_assessment_criteria");
+      console.log(response.data);
+      setAssessmentCriteria(response.data.criteria); // Assuming the backend returns { criteria: [...] }
+    } catch (error) {
+      setMessage(`Error: ${error.response?.data?.error || error.message}`);
+    }
+  };
+
+  // Handle selection change
+  const handleCriterionChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
+    setSelectedCriterion(event.target.value);
+  };
+
+  // Fetch criteria on component mount
+  useEffect(() => {
+    fetchAssessmentCriteria();
+  }, []);
 
   return (
     <Provider>
@@ -138,7 +190,7 @@ function App() {
       <Heading size="l">Intermediate (RAG) Results</Heading>
       <Box color='gray.50' bgcolor='gray.800' p={4} borderRadius='md'>
         <Text color="black">
-        <pre>{JSON.stringify(results, null, 2)}</pre>
+        {JSON.stringify(results, null, 2)}
         </Text>
       </Box>
 
@@ -146,6 +198,38 @@ function App() {
       <Box color='gray.50' bgcolor='gray.800' p={4} borderRadius='md'>
         <Text color="black">{message}</Text>
       </Box>
+
+      <p>&nbsp;</p>
+      <hr/>
+      <Heading size="xl">Assessment Criteria</Heading>
+      <p>&nbsp;</p>
+      <Stack align="flex-start">
+          <table border="2">
+            <thead><tr><td><b>Criterion Name</b></td><td><b>Prompt</b></td><td><b>Scope</b></td></tr></thead>
+            <tbody>
+          {assessmentCriteria.map((x, k) => (<tr key={k}><td>{x.name}</td><td>{x.prompt}</td><td>{x.scope}</td></tr>))}
+            <tr><td><b>New: </b><input
+          type="text"
+          placeholder="Criterion Name"
+          value={criterionName}
+          onChange={(e) => setCriterionName(e.target.value)}
+        /></td><td><input
+        type="text"
+        placeholder="Prompt"
+        value={criterionPrompt}
+        onChange={(e) => setCriterionPrompt(e.target.value)}
+      /></td><td><input
+      type="text"
+      placeholder="Scope"
+      value={criterionScope}
+      onChange={(e) => setCriterionScope(e.target.value)}
+    /></td></tr>
+            </tbody>
+          </table>
+        <HStack>
+        <Button onClick={addCriterion}>Add New Criterion</Button>
+        <Button onClick={addEnrichment}>Enrich</Button></HStack>
+      </Stack>
 
       <p>&nbsp;</p>
       <hr/>
