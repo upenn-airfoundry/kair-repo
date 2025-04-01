@@ -267,23 +267,37 @@ def expand_search():
         
         # TODO: from paragraph to paper
         #main = graph_accessor.find_related_entity_ids(user_prompt, 100)
-        main = graph_accessor.find_related_entity_ids_by_tag(user_prompt, "summary", 100)
+        main = graph_accessor.find_related_entity_ids_by_tag(user_prompt, "summary", 50)
         print ("Relevant docs: " + str(relevant_docs))
         
         print ("Main papers: " + str(main))
         
-        items = set(relevant_docs)
-        items.intersection_update(set(main))
+        docs_in_order = []
         
-        print("Items matching criteria: " + str(items))
+        count = 0
+        for doc in relevant_docs:
+            if doc in set(main):
+                docs_in_order.append(doc)
+                count += 1
+                if count >= 10:
+                    break
+            
+        other_docs = 0    
+        while count < 10 and other_docs < len(main):
+            if main[other_docs] not in set(relevant_docs):
+                docs_in_order.append(main[other_docs])
+                count += 1
+            other_docs += 1
         
-        if len(items):
-            paper_info = graph_accessor.get_entities_with_summaries(list(items))
+        print("Items matching criteria: " + str(docs_in_order))
+        
+        if len(docs_in_order):
+            paper_info = graph_accessor.get_entities_with_summaries(list(docs_in_order))
                 
             answer = generate_rag_answer(paper_info, user_prompt)
 
             # Return the response in JSON format
-            return jsonify({"data": {"message": answer} }), 200
+            return jsonify({"data": {"message": answer + '\n\nWe additionally looked for assessment criteria: ' + questions} }), 200
         else:
             return jsonify({"error": "No relevant papers found"}), 404
     except Exception as e:

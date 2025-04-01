@@ -196,7 +196,7 @@ function App() {
 
       <Heading size="l">Message</Heading>
       <Box color='gray.50' bgcolor='gray.800' p={4} borderRadius='md'>
-        <Text color="black">{message}</Text>
+        <Text color="black" whiteSpace="pre-line">{message}</Text>
       </Box>
 
       <p>&nbsp;</p>
