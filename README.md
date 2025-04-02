@@ -8,7 +8,7 @@ We expect a PostgreSQL / TimescaleDB engine accessible via port 5432, with pgvec
 
 Linux:
 ```bash
-apt install postgresql
+sudo apt install postgresql
 psql -d "postgres://postgres:${DB_PASSWORD}@localhost/postgres" -f create_db.sql
 ```
 
@@ -44,8 +44,18 @@ python3 server.py
 
 From another Terminal, set up the Node.js infrastructure.
 
+Linux:
+
 ```bash
-brew install nodejs # Or apt install nodejs
+sudo apt install nodejs
+sudo npm install -g npm@latest
+npm install
+npm run dev
+```
+
+Mac:
+```bash
+brew install nodejs
 npm install
 npm run dev
 ```
