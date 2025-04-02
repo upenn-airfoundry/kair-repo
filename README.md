@@ -20,6 +20,70 @@ psql -d "postgres://postgres:${DB_PASSWORD}@localhost/postgres" -f create_db.sql
 
 The KAIR repository is intended to support LLM reasoning that goes beyond RAG: rather than retrieving raw data segments, we can instead match questions / tasks against *enriched* knowledge: commentary, assessment, extraction, annotation, and interpretation *added* to the raw data.  We provide a very general model of *entities* and *tags* that have associated embeddings and types: any RAG-style search can match against *raw or enriched data* and reason about relationships back to sources, papers, paragraphs, etc.
 
+## Getting Started
+
+Install as per above. (You may wish to use VSCode and the VSCode MySQL extension [which also supports PostgreSQL] to connect directly to the DB instance.)
+
+### Backend
+
+From a terminal, run the following to build the Python / Flask backend:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip3 install -r requirements.txt` 
+```
+
+This should install dependencies.  Make sure your `.env` is updated with an OpenAI API key for access to the GPT APIs.  Now:
+
+```bash
+python3 server.py
+```
+
+### React Frontend
+
+From another Terminal, set up the Node.js infrastructure.
+
+```bash
+brew install nodejs # Or apt install nodejs
+npm install
+npm run dev
+```
+
+Now navigate your browser to `localhost:5173`.
+
+### Functionality
+
+The console includes a variety of different capabilities on one screen.
+
+**Crawling.**
+At the bottom, you can find **Crawler / Indexer Controls**, which control the *crawl queue* for KAIR.  You can add URLs to the Crawl Queue.  Then hit "Start Crawling" to fetch documents.  You need to separately select "Parse and Index" to parse the resulting PDFs and index them in our repository.
+
+**Low-Level Retrieval.** If you want to see what matches there are between a query and various *entities* or *tag values* (linked to entities), you can leverage the low-level retrieval functions.  
+
+- "Retrieve Related Entities by Tag" does an embedding top-k match with the Query, among all entities with the specified tag.
+- "Directly Retrieve Entities" does an embedding top-k match with the Query, among all entities. You can restrict the Entity Type (paragraph, author, paper, etc.) and also restrict the results to require matches to specified Keywords. (Keywords are stemmed.)
+
+#### Assessment Criteria
+
+The core concept behind the MUSE approach is to leverage *utility* and *semantic enrichment* to build out new entities and associations.  As a first step, we have implemented *item-centric* enrichment: an enrichment operator of the form 
+$(item,prompt) \mapsto (name, value)$ 
+where $item$ can be restricted to a particular *scope*.
+
+The *value* is the result of applying the *prompt* (normally a question, e.g., "if this paper was published in a journal, what is the name of the journal; return 'none' if this paper was not published in a journal.")  The value will be paired with the name of the assessment criterion, as a $(name,value)$ tag.
+
+Currently, running the "Enrich" operation will process, for each assessment criterion, up to 10 papers from the *scope* of each criterion.
+
+#### Pose Your Question
+
+The query answering component of KAIR will take a user question, and:
+
+1. Expand the question --- asking, for each assessment criterion, for any criteria to look for, in the enriched tags.  For instance, should the question be focused on papers with academic authors, or that appeared in reputable journals, or from authors with may citations.
+
+2. Match the question against paragraphs and the summary for various papers.  Create a joint ranking that also takes into account how the papers do against the various assessment criteria, above.
+
+The overall ranking strategy is still under development.
+ 
 ## Conceptual Framework
 
 The main backbone of the project is a simple graph representation of **entities** (nodes) and **associations** (edges). Entities include various properties and come from a closed set of types (enum). They are expected to have an *embedding*.
