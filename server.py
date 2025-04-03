@@ -7,7 +7,7 @@ from flask_cors import CORS
 import json
 
 from generate_detection_info import get_papers_by_field, get_entities_from_db
-from generate_detection_info import answer_from_summary
+from prompts.prompt_from_items import answer_from_summary
 
 from search import search_over_criteria, search_multiple_criteria
 from search import generate_rag_answer
@@ -211,7 +211,8 @@ def add_enrichment():
                 # print(data)
                 result = answer_from_summary(json.loads(data), prompt)
                 
-                if result is None or result == 'none':
+                if result is None or result.lower() == 'none' or result == '':
+                    print(f"Result is empty for paper {paper[0]}")
                     continue
                 
                 print (result)
