@@ -178,7 +178,7 @@ function App() {
       </Stack>
         <Heading size="xl">Pose Your Question:</Heading>
         <Stack>
-        <Textarea rows="5" cols="80" width="100" placeholder="Enter your question here..." value={prompt} onChange={(e) => setPrompt(e.target.value)} />  
+        <Textarea rows={5} cols={80} width={800} placeholder="Enter your question here..." value={prompt} onChange={(e) => setPrompt(e.target.value)} />  
         <HStack>
         <Button onClick={handlePrompt}>Ask KAIR</Button>
         </HStack>
