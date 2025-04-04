@@ -20,32 +20,7 @@ from langchain.prompts import ChatPromptTemplate
 from langchain.schema.output_parser import StrOutputParser
 from langchain.output_parsers import PydanticOutputParser
 
-import tiktoken
-
 graph_accessor = GraphAccessor()
-
-
-def truncate_text_to_token_limit(text, token_limit=128000):
-    """
-    Truncates a text string to a specified token limit using tiktoken.
-
-    Args:
-        text (str): The text string to truncate.
-        token_limit (int): The maximum number of tokens allowed.
-
-    Returns:
-        str: The truncated text string.
-    """
-
-    encoding = tiktoken.get_encoding("cl100k_base")  # or another appropriate encoding
-    tokens = encoding.encode(text)
-
-    if len(tokens) <= token_limit:
-        return text  # No truncation needed
-
-    truncated_tokens = tokens[:token_limit]
-    truncated_text = encoding.decode(truncated_tokens)
-    return truncated_text
 
 
 def get_line_items_as_str(criteria: List) -> str:
@@ -60,7 +35,8 @@ def get_line_items_as_str(criteria: List) -> str:
     """
     ret = ""
     for i in range(len(criteria)):
-        ret += "- " + criteria[i]['name'] + ': ' + criteria[i]['prompt'] + "\n"
+        if criteria[i]['prompt'].lower() != 'none':
+            ret += "- " + criteria[i]['name'] + ': ' + criteria[i]['prompt'] + "\n"
         
     return ret
 
