@@ -13,3 +13,4 @@ aryn-sdk
 flask
 flask-cors
 bs4
+zon
