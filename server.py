@@ -1,20 +1,24 @@
 from flask import Flask, jsonify
 from graph_db import GraphAccessor
 from flask import request
-from crawler import fetch_and_crawl
-from datetime import datetime
 from flask_cors import CORS
 import json
+from datetime import datetime
 
+
+from dotenv import load_dotenv
+from dotenv import find_dotenv
+
+# Load environment variables from .env file
+_ = load_dotenv(find_dotenv())
+
+
+from crawler import fetch_and_crawl
 from generate_detection_info import get_papers_by_field, get_entities_from_db
 from prompts.prompt_from_items import answer_from_summary
 
 from search import search_over_criteria, search_multiple_criteria
 from search import generate_rag_answer
-
-from langchain_openai import ChatOpenAI
-from langchain.prompts import ChatPromptTemplate
-from langchain.chains import LLMChain
 
 app = Flask("KAIR")
 CORS(app, resources={r"/*": {"origins": ["http://localhost:5173"], \
