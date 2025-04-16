@@ -66,6 +66,16 @@ CREATE TABLE strategies(
     strategy_embed vector(1536)
 );
 
+ALTER TABLE strategies 
+  ADD COLUMN strategy_scope TEXT,
+  ADD COLUMN sub_strategies INTEGER[],
+  ADD COLUMN description TEXT;
+
+CREATE INDEX strategy_name_idx ON strategies USING btree ("strategy_name");
+CREATE INDEX strategy_embed_idx ON strategies
+USING diskann (strategy_embed vector_cosine_ops);
+CREATE INDEX strategy_sub_strategies_idx ON strategies USING btree ("sub_strategies");
+
 CREATE TYPE entity_types AS ENUM ('synopsis', 
                                   'fact', 
                                   'new_concept',
