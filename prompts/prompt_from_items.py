@@ -4,6 +4,8 @@ from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 from langchain.schema.output_parser import StrOutputParser
 
+from enrichment.llms import analysis_llm
+
 def answer_from_summary(json_fragment, question):
     """
     Queries GPT-4o-mini with a question about a JSON fragment.
@@ -18,7 +20,7 @@ def answer_from_summary(json_fragment, question):
 
     try:
         # Initialize the ChatOpenAI model, specifying gpt-4o-mini
-        llm = ChatOpenAI(model="gpt-4o-mini", temperature=0) # gpt-4o-preview is the correct model name.
+        llm = analysis_llm
 
         # Create a prompt template
         prompt = ChatPromptTemplate.from_messages([

@@ -22,6 +22,8 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from graph_db import GraphAccessor
 
+from enrichment import analysis_llm
+
 from dotenv import load_dotenv, find_dotenv
 
 _ = load_dotenv(find_dotenv())
@@ -52,7 +54,7 @@ def index_split_paragraphs(split_docs, path, the_date) -> int:
     concatenated_text = " ".join(doc.page_content for doc in split_docs[:n])
 
     # Use GPT-4o-mini to extract summary and authors
-    llm = ChatOpenAI(model="gpt-4o-mini")  # Use ChatOpenAI for chat models
+    llm = analysis_llm
     prompt_template = ChatPromptTemplate.from_template(
         """Extract the title, research field, summary and authors from the following text. 
         If available, include authors' email addresses and affiliations in JSON format. 
