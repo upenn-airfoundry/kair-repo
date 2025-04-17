@@ -20,14 +20,14 @@ class EnrichmentCoreOps(Generic[T], Generic[U], Generic[V]):
         self._data_retriever = data_retriever
         pass
     
-    def est_cost(self, aux_data_providers: List[T], aux_data: List[U]) -> int:
+    def est_cost(self, aux_data_providers: List[T] = [], aux_data: List[U] = []) -> int:
         """
         Estimate the cost of the enrichment operation.
         """
         # Placeholder for cost estimation logic
         return self._budget
 
-    def enrich_data(self, aux_data_providers: List[T], aux_data: List[U]) -> V:
+    def enrich_data(self, aux_data_providers: List[T] = [], aux_data: List[U] = []) -> V:
         """
         Enrich the given data.
         """

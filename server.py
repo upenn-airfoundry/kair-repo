@@ -6,7 +6,6 @@ from datetime import datetime
 from flask_cors import CORS
 import json
 
-from generate_detection_info import get_papers_by_field, get_entities_from_db
 from prompts.prompt_from_items import answer_from_summary
 
 from search import search_over_criteria, search_multiple_criteria
@@ -198,10 +197,10 @@ def add_enrichment():
         prompt = criterion['prompt']
         # promise = criterion['promise']
         
-        relevant_papers = get_papers_by_field(scope, 30)
+        relevant_papers = graph_accessor.get_untagged_papers_by_field(scope, name, 10)
         
         for paper in relevant_papers:
-            result = get_entities_from_db(paper[0])
+            result = graph_accessor.get_untagged_entities_from_db(paper['entity_id'], name)
             if result is None:
                 continue
 
@@ -212,11 +211,12 @@ def add_enrichment():
                 result = answer_from_summary(json.loads(data), prompt)
                 
                 if result is None or result.lower() == 'none' or result == '':
-                    print(f"Result is empty for paper {paper[0]}")
+                    print(f"Criterion {name} is empty for paper {paper['entity_id']}")
+                    graph_accessor.add_tag_to_entity(paper['entity_id'], name, None)
                     continue
                 
                 print (result)
-                graph_accessor.add_tag_to_paper(paper[0], name, result)
+                graph_accessor.add_tag_to_entity(paper['entity_id'], name, result)
         
     return jsonify({"message": "Enrichment step completed"}), 201
 

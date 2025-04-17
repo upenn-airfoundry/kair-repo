@@ -170,7 +170,7 @@ class GraphAccessor:
                 cur.execute("UPDATE paragraph_tags SET tag_value = %s WHERE paragraph_id = %s AND tag_name = %s;", (tag_value, paragraph_id, tag))
         self.conn.commit()
 
-    def add_tag_to_paper(self, paper_id: int, tag: str, tag_value: str):
+    def add_tag_to_entity(self, paper_id: int, tag: str, tag_value: str):
         """Add a tag to a paper."""
         with self.conn.cursor() as cur:
             # Check if the tag already exists
@@ -518,6 +518,130 @@ class GraphAccessor:
         query += " ORDER BY e.entity_name ASC;"
 
         with self.conn.cursor() as cur:
-            cur.execute(query, params)
+            self.exec_sql(query, params)
             results = [{"name": row[0], "summary": row[1]} for row in cur.fetchall()]
         return results
+    
+    def get_papers_by_field(self, field: str, k: int = 1):
+        """
+        Take the field, generate its embedding, match it against entity_tags of type 'field',
+        and find the corresponding 'paper' entities. Print the paper IDs.
+
+        Args:
+            field (str): The field to search for.
+        """
+        try:
+            # Generate the embedding for the given field
+            field_embedding = self.generate_embedding(field)
+
+            # Query to match the field embedding against entity_tags of type 'field'
+            query = """
+                SELECT p.entity_id, p.entity_name, t.tag_value
+                FROM entities p
+                JOIN entity_tags t ON p.entity_id = t.entity_id
+                WHERE t.tag_name = 'field'
+                ORDER BY (t.tag_embed <-> %s::vector) ASC
+                LIMIT %s;
+            """
+            with self.conn.cursor() as cur:
+                results = self.exec_sql(query, (str(field_embedding), k))
+            
+                return [{'entity_id': r[0], 'entity_name': r[1], 'tag_value': r[2]} for r in results]
+            
+        except Exception as e:
+            print(f"An error occurred: {e}")
+
+    def get_untagged_papers_by_field(self, field: str, tag: str, k: int = 1):
+        """
+        Take the field, generate its embedding, match it against entity_tags of type 'field',
+        and find the corresponding 'paper' entities. Print the paper IDs.
+
+        Args:
+            field (str): The field to search for.
+            tag (str): The tag to exclude from the search.
+            k (int): The number of results to return.
+        Returns:
+            List[dict]: A list of dictionaries containing entity IDs, names, and tag values.
+        """
+        try:
+            # Generate the embedding for the given field
+            field_embedding = self.generate_embedding(field)
+
+            # Query to match the field embedding against entity_tags of type 'field'
+            query = """
+                SELECT p.entity_id, p.entity_name, t.tag_value
+                FROM entities p
+                JOIN entity_tags t ON p.entity_id = t.entity_id
+                WHERE t.tag_name = 'field' AND NOT EXISTS (select * from entity_tags t2 where t2.entity_id = p.entity_id and t2.tag_name = %s)
+                ORDER BY (t.tag_embed <-> %s::vector) ASC
+                LIMIT %s;
+            """
+            with self.conn.cursor() as cur:
+                results = self.exec_sql(query, (tag, str(field_embedding), k))
+            
+                return [{'entity_id': r[0], 'entity_name': r[1], 'tag_value': r[2]} for r in results]
+            
+        except Exception as e:
+            print(f"An error occurred: {e}")
+
+    def get_entities_from_db(self, paper_id: int):
+
+        query = """
+            SELECT entity_id, paper, array_agg('{ "name": "' || coalesce(author,'') || '", "email": "' || coalesce(email,'') || '", "detail": "' || coalesce(source,'') || '" }') AS authors
+                        FROM (
+                        SELECT p.entity_id, '"title": "' || p.entity_name || '", "abstract": "' || summary.tag_value || '", "field": "' || fields.tag_value || '"' AS paper, target.entity_name AS author, replace(target.entity_detail,'"','') AS source, target.entity_contact as email
+                        FROM entities p JOIN entity_tags summary ON p.entity_id = summary.entity_id
+                        JOIN entity_tags fields ON p.entity_id = fields.entity_id
+                        JOIN entity_link ON p.entity_id = entity_link.to_id
+                        JOIN entities AS target ON entity_link.from_id = target.entity_id
+                        WHERE summary.tag_name = 'summary' AND fields.tag_name = 'field'
+                        AND p.entity_id = %s
+                        AND p.entity_type = 'paper' AND target.entity_type = 'author'
+                    ) GROUP BY entity_id, paper;
+        """    
+        with self.conn.cursor() as cur:
+            result = self.exec_sql(query, (paper_id,))
+            new_results = []
+            for row in result:
+                (paper_id, paper_desc, nested) = row
+                
+                n = '['
+                for n2 in nested:
+                    n += n2 + ', '
+                n = n[:-2] + ']'
+                
+                description = '{' + paper_desc.replace('\n', ' ').replace('\r', ' ') + ', "authors": ' + n.replace('\n', ' ').replace('\r', ' ') + '}'
+                new_results.append({"id": paper_id, "json": description})
+                # print(f"Paper ID: {paper_id}, Description: {description}")
+            return new_results
+
+    def get_untagged_entities_from_db(self, paper_id: int, tag: str):
+
+        query = """
+            SELECT entity_id, paper, array_agg('{ "name": "' || coalesce(author,'') || '", "email": "' || coalesce(email,'') || '", "detail": "' || coalesce(source,'') || '" }') AS authors
+                        FROM (
+                        SELECT p.entity_id, '"title": "' || p.entity_name || '", "abstract": "' || summary.tag_value || '", "field": "' || fields.tag_value || '"' AS paper, target.entity_name AS author, replace(target.entity_detail,'"','') AS source, target.entity_contact as email
+                        FROM entities p JOIN entity_tags summary ON p.entity_id = summary.entity_id
+                        JOIN entity_tags fields ON p.entity_id = fields.entity_id
+                        JOIN entity_link ON p.entity_id = entity_link.to_id
+                        JOIN entities AS target ON entity_link.from_id = target.entity_id
+                        WHERE summary.tag_name = 'summary' AND fields.tag_name = 'field'
+                        AND p.entity_id = %s AND NOT EXISTS (select * from entity_tags t2 where t2.entity_id = p.entity_id and t2.tag_name = %s)
+                        AND p.entity_type = 'paper' AND target.entity_type = 'author'
+                    ) GROUP BY entity_id, paper;
+        """    
+        with self.conn.cursor() as cur:
+            result = self.exec_sql(query, (paper_id,tag))
+            new_results = []
+            for row in result:
+                (paper_id, paper_desc, nested) = row
+                
+                n = '['
+                for n2 in nested:
+                    n += n2 + ', '
+                n = n[:-2] + ']'
+                
+                description = '{' + paper_desc.replace('\n', ' ').replace('\r', ' ') + ', "authors": ' + n.replace('\n', ' ').replace('\r', ' ') + '}'
+                new_results.append({"id": paper_id, "json": description})
+                # print(f"Paper ID: {paper_id}, Description: {description}")
+            return new_results

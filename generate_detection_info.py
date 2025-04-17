@@ -48,33 +48,33 @@ SELECT entity_id, paper, array_agg('{ "name": "' || coalesce(author,'') || '", "
     
 
 
-def get_papers_by_field(field: str, k: int = 1):
-    """
-    Take the field, generate its embedding, match it against entity_tags of type 'field',
-    and find the corresponding 'paper' entities. Print the paper IDs.
+# def get_papers_by_field(field: str, k: int = 1):
+#     """
+#     Take the field, generate its embedding, match it against entity_tags of type 'field',
+#     and find the corresponding 'paper' entities. Print the paper IDs.
 
-    Args:
-        field (str): The field to search for.
-    """
-    try:
-        # Generate the embedding for the given field
-        field_embedding = graph_db.generate_embedding(field)
+#     Args:
+#         field (str): The field to search for.
+#     """
+#     try:
+#         # Generate the embedding for the given field
+#         field_embedding = graph_db.generate_embedding(field)
 
-        # Query to match the field embedding against entity_tags of type 'field'
-        query = """
-            SELECT p.entity_id, p.entity_name, t.tag_value
-            FROM entities p
-            JOIN entity_tags t ON p.entity_id = t.entity_id
-            WHERE t.tag_name = 'field'
-            ORDER BY (t.tag_embed <-> %s::vector) ASC
-            LIMIT %s;
-        """
-        results = graph_db.exec_sql(query, (str(field_embedding),k))
+#         # Query to match the field embedding against entity_tags of type 'field'
+#         query = """
+#             SELECT p.entity_id, p.entity_name, t.tag_value
+#             FROM entities p
+#             JOIN entity_tags t ON p.entity_id = t.entity_id
+#             WHERE t.tag_name = 'field'
+#             ORDER BY (t.tag_embed <-> %s::vector) ASC
+#             LIMIT %s;
+#         """
+#         results = graph_db.exec_sql(query, (str(field_embedding),k))
         
-        return results
+#         return results
 
-    except Exception as e:
-        print(f"An error occurred: {e}")
+#     except Exception as e:
+#         print(f"An error occurred: {e}")
 
 
 if __name__ == "__main__":
