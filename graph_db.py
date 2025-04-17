@@ -615,7 +615,7 @@ class GraphAccessor:
                 # print(f"Paper ID: {paper_id}, Description: {description}")
             return new_results
 
-    def get_untagged_entities_from_db(self, paper_id: int, tag: str):
+    def get_untagged_entities_as_json(self, paper_id: int, tag: str):
 
         query = """
             SELECT entity_id, paper, array_agg('{ "name": "' || coalesce(author,'') || '", "email": "' || coalesce(email,'') || '", "detail": "' || coalesce(source,'') || '" }') AS authors

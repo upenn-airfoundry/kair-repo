@@ -2,14 +2,15 @@ import logging
 from typing import List, Dict, Any
 import json
 from graph_db import GraphAccessor
-from typing import TypeVar, List, Generic, FunctionType as Fun
+from typing import TypeVar, List, Generic, Callable as Fun
 
 T = TypeVar('T')
 U = TypeVar('U')
+V = TypeVar('V')
 
 graph_db = GraphAccessor()
 
-class EnrichmentCoreOps(Generic[T], Generic[U], Generic[V]):
+class EnrichmentCoreOps(Generic[T,U,V]):
     """
     Core operations for enrichment.
     """

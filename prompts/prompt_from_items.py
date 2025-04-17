@@ -24,7 +24,7 @@ def answer_from_summary(json_fragment, question):
 
         # Create a prompt template
         prompt = ChatPromptTemplate.from_messages([
-            ("system", "You are an expert at extracting information from JSON data."),
+            ("system", "You are an expert at extracting information from JSON data. Return an answer to the question, or else output 'none' if the question does not apply."),
             ("user", "Here is the JSON data, optionally comprising paper titles, abstracts, and lists of authors including their affiliations or biosketches:\n\n{json_fragment}\n\nQuestion: {question}\n\nAnswer:")
         ])
 
@@ -60,4 +60,5 @@ def summarize_web_page(content: str) -> str:
     except Exception as e:
         print(f"Error summarizing web page content: {e}")
         return "Summary could not be generated."
+
 

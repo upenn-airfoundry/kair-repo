@@ -6,7 +6,8 @@ from datetime import datetime
 from flask_cors import CORS
 import json
 
-from prompts.prompt_from_items import answer_from_summary
+from enrichment.langchain_ops import AssessmentOps
+from enrichment.iterative_enrichment import iterative_enrichment
 
 from search import search_over_criteria, search_multiple_criteria
 from search import generate_rag_answer
@@ -189,35 +190,8 @@ def add_assessment_criterion():
 
 @app.route('/add_enrichment', methods=['POST'])
 def add_enrichment():
-    criteria = graph_accessor.get_assessment_criteria(None)
-    
-    for criterion in criteria:
-        name = criterion['name']
-        scope = criterion['scope']
-        prompt = criterion['prompt']
-        # promise = criterion['promise']
-        
-        relevant_papers = graph_accessor.get_untagged_papers_by_field(scope, name, 10)
-        
-        for paper in relevant_papers:
-            result = graph_accessor.get_untagged_entities_from_db(paper['entity_id'], name)
-            if result is None:
-                continue
+    iterative_enrichment(graph_accessor)
 
-            for row in result:
-                data = row['json']
-                
-                # print(data)
-                result = answer_from_summary(json.loads(data), prompt)
-                
-                if result is None or result.lower() == 'none' or result == '':
-                    print(f"Criterion {name} is empty for paper {paper['entity_id']}")
-                    graph_accessor.add_tag_to_entity(paper['entity_id'], name, None)
-                    continue
-                
-                print (result)
-                graph_accessor.add_tag_to_entity(paper['entity_id'], name, result)
-        
     return jsonify({"message": "Enrichment step completed"}), 201
 
 

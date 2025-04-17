@@ -5,9 +5,10 @@ from langchain.prompts import ChatPromptTemplate
 from langchain.schema.output_parser import StrOutputParser
 from langchain.output_parsers import PydanticOutputParser
 
-from typing import Function, List
+from typing import List, Dict, Any, Callable as Fun, Optional
 
-from core_ops import EnrichmentCoreOps
+from enrichment.core_ops import EnrichmentCoreOps
+from prompts.prompt_from_items import answer_from_summary
 
 def entity_retriever(entity_id: str, graph_db: GraphAccessor) -> list[str]:
     """
@@ -26,14 +27,34 @@ class AssessmentOps(EnrichmentCoreOps):
     respect to an *assessment question*
     """
     
-    def __init__(self, prompt: str, budget: int = 1000, source_retriever: Function[str,str] = None):
+    def __init__(self, prompt: str, tag: str, budget: int = 1000, source_retriever: Fun[str,str] = None):
         super().__init__(budget, [], [source_retriever])
         self.llm = analysis_llm
+        self.tag = tag
         self.prompt = prompt
         self.graph_accessor = GraphAccessor()
         
     def enrich_data(self, aux_data_providers = [], aux_data = []) -> dict:
-        return super().enrich_data(aux_data_providers, aux_data)
+        """
+        Given a JSON descriptor of an entity, apply the prompt
+
+        Args:
+            aux_data_providers (list, optional): Directly provided data. Defaults to [].
+            aux_data (list, optional): _description_. Defaults to [].
+
+        Returns:
+            dict: _description_
+        """
+        result = answer_from_summary(aux_data_providers[0], self.prompt)
+        
+        if (result is None or result.lower().strip() == 'none'):
+            return {}
+
+        # Store the result in the database
+        # self.graph_accessor.add_tag_to_entity(self.tag, result)
+        return {self.tag: result}
+        # return super().enrich_data(aux_data_providers, aux_data)
+        
     
     def est_cost(self, aux_data_providers = [], aux_data = []) -> int:
         return super().est_cost(aux_data_providers, aux_data)
