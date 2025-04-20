@@ -28,14 +28,26 @@ class GraphAccessor:
         
     def exec_sql(self, sql: str, params: Tuple = ()) -> List[Tuple]:
         """Execute an SQL query and return the results."""
-        with self.conn.cursor() as cur:
-            cur.execute(sql, params)
-            return cur.fetchall()
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(sql, params)
+                return cur.fetchall()
+        except Exception as e:
+            print(f"Error executing SQL: {e}")
+            self.conn.rollback()
+            # throw the exception again
+            raise e
         
     def execute(self, sql: str, params: Tuple = ()):
         """Execute an SQL query and return the results."""
-        with self.conn.cursor() as cur:
-            cur.execute(sql, params)
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(sql, params)
+        except Exception as e:
+            print(f"Error executing SQL: {e}")
+            self.conn.rollback()
+            # throw the exception again
+            raise e
             
     def commit(self):
         """Commit the current transaction."""
@@ -43,176 +55,262 @@ class GraphAccessor:
         
     def paper_exists(self, url: str) -> bool:
         """Check if a paper exists in the database by URL."""
-        with self.conn.cursor() as cur:
-            cur.execute("SELECT entity_id FROM entities WHERE entity_type = 'paper' AND entity_url = %s;", (url, ))
-            result = cur.fetchone()
-            return result is not None
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("SELECT entity_id FROM entities WHERE entity_type = 'paper' AND entity_url = %s;", (url, ))
+                result = cur.fetchone()
+                return result is not None
+        except Exception as e:
+            print(f"Error checking paper existence: {e}")
+            return False
+        finally:
+            self.conn.rollback()
         
     def add_paper(self, url: str, crawl_time: str, title: str, summary: str) -> int:
         """Store a paper by URL and return its paper ID."""
-        with self.conn.cursor() as cur:
-            # See if paper already exists
-            # cur.execute("SELECT entity_id FROM entities WHERE entity_type = 'paper' AND entity_url = %s;", (url, ))
-            cur.execute("SELECT entity_id FROM entities WHERE entity_name = %s and entity_type = 'paper';", (title, ))
-            paper_id = cur.fetchone()
-            if paper_id is not None:
-                paper_id = paper_id[0]
+        try:
+            with self.conn.cursor() as cur:
+                # See if paper already exists
+                # cur.execute("SELECT entity_id FROM entities WHERE entity_type = 'paper' AND entity_url = %s;", (url, ))
+                cur.execute("SELECT entity_id FROM entities WHERE entity_name = %s and entity_type = 'paper';", (title, ))
+                paper_id = cur.fetchone()
+                if paper_id is not None:
+                    paper_id = paper_id[0]
+                    
+                    cur.execute("SELECT tag_value FROM entity_tags WHERE entity_id = %s AND tag_name = %s;", (paper_id, "summary"))
+                    the_tag = cur.fetchone()
+                    if the_tag is None:
+                        cur.execute ("INSERT INTO entity_tags (entity_id, tag_name, tag_value, tag_embed) VALUES (%s, %s, %s, %s);", (paper_id, "summary", summary, self.generate_embedding(summary)))
+                else:            
+                    cur.execute("INSERT INTO entities (entity_url, entity_type, entity_name) VALUES (%s, %s, %s) RETURNING entity_id;", (url,'paper',title))
+                    paper_id = cur.fetchone()[0]
                 
-                cur.execute("SELECT tag_value FROM entity_tags WHERE entity_id = %s AND tag_name = %s;", (paper_id, "summary"))
-                the_tag = cur.fetchone()
-                if the_tag is None:
                     cur.execute ("INSERT INTO entity_tags (entity_id, tag_name, tag_value, tag_embed) VALUES (%s, %s, %s, %s);", (paper_id, "summary", summary, self.generate_embedding(summary)))
-            else:            
-                cur.execute("INSERT INTO entities (entity_url, entity_type, entity_name) VALUES (%s, %s, %s) RETURNING entity_id;", (url,'paper',title))
-                paper_id = cur.fetchone()[0]
-            
-                cur.execute ("INSERT INTO entity_tags (entity_id, tag_name, tag_value, tag_embed) VALUES (%s, %s, %s, %s);", (paper_id, "summary", summary, self.generate_embedding(summary)))
-        self.conn.commit()
+            self.conn.commit()
+        except Exception as e:
+            print(f"Error adding paper: {e}")
+            self.conn.rollback()
+            # throw the exception again
+            raise e
         return paper_id
     
     def update_paper(self, paper_id: int, url: Optional[str] = None, crawl_time: Optional[str] = None):
         """Update all fields of a paper given its ID."""
-        with self.conn.cursor() as cur:
-            if url is not None:
-                cur.execute("UPDATE entities SET url = %s WHERE entity_id = %s;", (url, paper_id))
-            if crawl_time is not None:
-                cur.execute("UPDATE entities SET crawl_time = %s WHERE entity_id = %s;", (crawl_time, paper_id))
-        self.conn.commit()
+        try:
+            with self.conn.cursor() as cur:
+                if url is not None:
+                    cur.execute("UPDATE entities SET url = %s WHERE entity_id = %s;", (url, paper_id))
+                if crawl_time is not None:
+                    cur.execute("UPDATE entities SET crawl_time = %s WHERE entity_id = %s;", (crawl_time, paper_id))
+            self.conn.commit()
+        except Exception as e:
+            print(f"Error updating paper: {e}")
+            self.conn.rollback()
+            # throw the exception again
+            raise e
 
     def fetch_paper_paragraphs(self, paper_id: int) -> List[str]:
         """Fetch a paper's paragraphs by paper ID."""
-        with self.conn.cursor() as cur:
-            cur.execute("SELECT entity_detail FROM entities WHERE entity_type = 'paragraph' and entity_parent = %s;", (paper_id,))
-            paragraphs = [row[0] for row in cur.fetchall()]
-        return paragraphs
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("SELECT entity_detail FROM entities WHERE entity_type = 'paragraph' and entity_parent = %s;", (paper_id,))
+                paragraphs = [row[0] for row in cur.fetchall()]
+            return paragraphs
+        except Exception as e:
+            print(f"Error fetching paper paragraphs: {e}")
+            self.conn.rollback()
+            return []
 
     def add_source(self, url: str) -> int:
         """Add a source by URL and return its source ID."""
-        with self.conn.cursor() as cur:
-            cur.execute("INSERT INTO entities (entity_type, entity_url) VALUES (%s,%s) RETURNING entity_id;", ('source', url,))
-            source_id = cur.fetchone()[0]
-        self.conn.commit()
-        return source_id
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("INSERT INTO entities (entity_type, entity_url) VALUES (%s,%s) RETURNING entity_id;", ('source', url,))
+                source_id = cur.fetchone()[0]
+            self.conn.commit()
+            return source_id
+        except Exception as e:
+            print(f"Error adding source: {e}")
+            self.conn.rollback()
+            # throw the exception again
+            raise e
 
     def link_source_to_paper(self, source_id: int, paper_id: int):
         """Link a source ID to a paper ID."""
-        with self.conn.cursor() as cur:
-            # Check if the link already exists
-            cur.execute("SELECT 1 FROM entity_link WHERE from_id = %s AND to_id = %s;", (source_id, paper_id))
-            the_link = cur.fetchone()
-            if the_link is None:
-                cur.execute("INSERT INTO entity_link (from_id, to_id, entity_strength, link_type) VALUES (%s, %s, 'source');", (source_id, paper_id,1))
-        self.conn.commit()
+        try:
+            with self.conn.cursor() as cur:
+                # Check if the link already exists
+                cur.execute("SELECT 1 FROM entity_link WHERE from_id = %s AND to_id = %s;", (source_id, paper_id))
+                the_link = cur.fetchone()
+                if the_link is None:
+                    cur.execute("INSERT INTO entity_link (from_id, to_id, entity_strength, link_type) VALUES (%s, %s, 'source');", (source_id, paper_id,1))
+            self.conn.commit()
+        except Exception as e:
+            print(f"Error linking source to paper: {e}")
+            self.conn.rollback()
+            # throw the exception again
+            raise e
 
     def link_author_to_paper(self, author_id: int, paper_id: int):
         """Link an author ID to a paper ID."""
-        with self.conn.cursor() as cur:
-            # Check if the link already exists
-            cur.execute("SELECT 1 FROM entity_link WHERE from_id = %s AND to_id = %s;", (author_id, paper_id))
-            the_link = cur.fetchone()
-            if the_link is None:
-                cur.execute("INSERT INTO entity_link (from_id, to_id, entity_strength, link_type) VALUES (%s, %s, %s, 'author');", (author_id, paper_id, 1))
-        self.conn.commit()
+        try:
+            with self.conn.cursor() as cur:
+                # Check if the link already exists
+                cur.execute("SELECT 1 FROM entity_link WHERE from_id = %s AND to_id = %s;", (author_id, paper_id))
+                the_link = cur.fetchone()
+                if the_link is None:
+                    cur.execute("INSERT INTO entity_link (from_id, to_id, entity_strength, link_type) VALUES (%s, %s, %s, 'author');", (author_id, paper_id, 1))
+            self.conn.commit()
+        except Exception as e:
+            print(f"Error linking author to paper: {e}")
+            self.conn.rollback()
+            # throw the exception again
+            raise e
 
     def add_paragraph(self, paper_id: int, content: str) -> Tuple[List[float], int]:
         """Add a paragraph, returning an embedding and paragraph ID."""
-        embedding = self.generate_embedding(content)
-        with self.conn.cursor() as cur:
-            # Check if the paragraph already exists
-            content = content.replace("\x00", "\uFFFD")
-            cur.execute("SELECT entity_id FROM entities WHERE entity_parent = %s AND entity_type = 'paragraph' AND entity_detail = %s;", (paper_id, content,))
-            paragraph_id = cur.fetchone()
-            if paragraph_id is None:
-                cur.execute(
-                    "INSERT INTO entities (entity_parent, entity_type, entity_detail, entity_embed) VALUES (%s, 'paragraph', %s, %s) RETURNING entity_id;",
-                    (paper_id, content, embedding)
-                )
-                paragraph_id = cur.fetchone()[0]
-        self.conn.commit()
+        try:
+            embedding = self.generate_embedding(content)
+            with self.conn.cursor() as cur:
+                # Check if the paragraph already exists
+                content = content.replace("\x00", "\uFFFD")
+                cur.execute("SELECT entity_id FROM entities WHERE entity_parent = %s AND entity_type = 'paragraph' AND entity_detail = %s;", (paper_id, content,))
+                paragraph_id = cur.fetchone()
+                if paragraph_id is None:
+                    cur.execute(
+                        "INSERT INTO entities (entity_parent, entity_type, entity_detail, entity_embed) VALUES (%s, 'paragraph', %s, %s) RETURNING entity_id;",
+                        (paper_id, content, embedding)
+                    )
+                    paragraph_id = cur.fetchone()[0]
+            self.conn.commit()
+        except Exception as e:
+            print(f"Error adding paragraph: {e}")
+            self.conn.rollback()
+            # throw the exception again
+            raise e
         return embedding, paragraph_id
     
     def add_author(self, name: str, email: str, organization: str) -> int:
         """Add an author by name and return their author ID."""
-        with self.conn.cursor() as cur:
-            # Check if the author already exists
-            cur.execute("SELECT entity_id FROM entities WHERE entity_type = 'author' and entity_name = %s;", (name,))
-            author_id = cur.fetchone()
-            if author_id is None:
-                # Add the author if they don't exist
-                cur.execute("INSERT INTO entities (entity_type, entity_name) VALUES (%s, %s) RETURNING entity_id;", ('author', name,))
-                author_id = cur.fetchone()[0]
-            if email is not None:
-                cur.execute("UPDATE entities SET entity_contact = %s WHERE entity_id = %s;", (email, author_id))
-            if organization is not None:
-                cur.execute("UPDATE entities SET entity_detail = %s WHERE entity_id = %s;", (organization, author_id))
-        self.conn.commit()
+        try:
+            with self.conn.cursor() as cur:
+                # Check if the author already exists
+                cur.execute("SELECT entity_id FROM entities WHERE entity_type = 'author' and entity_name = %s;", (name,))
+                author_id = cur.fetchone()
+                if author_id is None:
+                    # Add the author if they don't exist
+                    cur.execute("INSERT INTO entities (entity_type, entity_name) VALUES (%s, %s) RETURNING entity_id;", ('author', name,))
+                    author_id = cur.fetchone()[0]
+                if email is not None:
+                    cur.execute("UPDATE entities SET entity_contact = %s WHERE entity_id = %s;", (email, author_id))
+                if organization is not None:
+                    cur.execute("UPDATE entities SET entity_detail = %s WHERE entity_id = %s;", (organization, author_id))
+            self.conn.commit()
+        except Exception as e:
+            print(f"Error adding author: {e}")
+            self.conn.rollback()
+            # throw the exception again
+            raise e
         return author_id
 
     def update_paragraph(self, paragraph_id: int, content: Optional[str] = None, embedding: Optional[List[float]] = None):
         """Update all fields of a paragraph given its ID."""
-        with self.conn.cursor() as cur:
-            if content is not None:
-                cur.execute("UPDATE entities SET entity_detail = %s WHERE entity_id = %s;", (content, paragraph_id))
-            if embedding is not None:
-                cur.execute("UPDATE entities SET entity_embed = %s WHERE entity_id = %s;", (embedding, paragraph_id))
-        self.conn.commit()
+        try:
+            with self.conn.cursor() as cur:
+                if content is not None:
+                    cur.execute("UPDATE entities SET entity_detail = %s WHERE entity_id = %s;", (content, paragraph_id))
+                if embedding is not None:
+                    cur.execute("UPDATE entities SET entity_embed = %s WHERE entity_id = %s;", (embedding, paragraph_id))
+            self.conn.commit()
+        except Exception as e:
+            print(f"Error updating paragraph: {e}")
+            self.conn.rollback()
+            # throw the exception again
+            raise e
             
     def add_tag_to_paragraph(self, paragraph_id: int, tag: str, tag_value: str):
         """Add a tag to a paragraph."""
-        with self.conn.cursor() as cur:
-            # Check if the tag already exists
-            cur.execute("SELECT tag_value FROM paragraph_tags WHERE paragraph_id = %s AND tag_name = %s;", (paragraph_id, tag))
-            the_tag = cur.fetchone()
-            if the_tag is None:
-                cur.execute("INSERT INTO paragraph_tags (paragraph_id, tag_name, tag_value) VALUES (%s, %s, %s);", (paragraph_id, tag, tag_value))
-            else:
-                # Update the tag if it already exists
-                cur.execute("UPDATE paragraph_tags SET tag_value = %s WHERE paragraph_id = %s AND tag_name = %s;", (tag_value, paragraph_id, tag))
-        self.conn.commit()
+        try:
+            with self.conn.cursor() as cur:
+                # Check if the tag already exists
+                cur.execute("SELECT tag_value FROM paragraph_tags WHERE paragraph_id = %s AND tag_name = %s;", (paragraph_id, tag))
+                the_tag = cur.fetchone()
+                if the_tag is None:
+                    cur.execute("INSERT INTO paragraph_tags (paragraph_id, tag_name, tag_value) VALUES (%s, %s, %s);", (paragraph_id, tag, tag_value))
+                else:
+                    # Update the tag if it already exists
+                    cur.execute("UPDATE paragraph_tags SET tag_value = %s WHERE paragraph_id = %s AND tag_name = %s;", (tag_value, paragraph_id, tag))
+            self.conn.commit()
+        except Exception as e:
+            print(f"Error adding tag to paragraph: {e}")
+            self.conn.rollback()
+            # throw the exception again
+            raise e
 
-    def add_tag_to_paper(self, paper_id: int, tag: str, tag_value: str):
+    def add_tag_to_entity(self, paper_id: int, tag: str, tag_value: str):
         """Add a tag to a paper."""
-        with self.conn.cursor() as cur:
-            # Check if the tag already exists
-            cur.execute("SELECT tag_value FROM entity_tags WHERE entity_id = %s AND tag_name = %s;", (paper_id, tag))
-            the_tag = cur.fetchone()
-            if the_tag is None:
-                cur.execute("INSERT INTO entity_tags (entity_id, tag_name, tag_value) VALUES (%s, %s, %s);", (paper_id, tag, tag_value))
-            else:
-                # Update the tag if it already exists
-                cur.execute("UPDATE entity_tags SET tag_value = %s WHERE entity_id = %s AND tag_name = %s;", (tag_value, paper_id, tag))
-        self.conn.commit()
+        try:
+            with self.conn.cursor() as cur:
+                # Check if the tag already exists
+                cur.execute("SELECT tag_value FROM entity_tags WHERE entity_id = %s AND tag_name = %s;", (paper_id, tag))
+                the_tag = cur.fetchone()
+                if the_tag is None:
+                    cur.execute("INSERT INTO entity_tags (entity_id, tag_name, tag_value) VALUES (%s, %s, %s);", (paper_id, tag, tag_value))
+                else:
+                    # Update the tag if it already exists
+                    cur.execute("UPDATE entity_tags SET tag_value = %s WHERE entity_id = %s AND tag_name = %s;", (tag_value, paper_id, tag))
+            self.conn.commit()
+        except Exception as e:
+            print(f"Error adding tag to entity: {e}")
+            self.conn.rollback()
+            # throw the exception again
+            raise e
 
     def find_paragraphs_by_tag(self, tag: str) -> List[int]:
         """Find all paragraph matches to a tag."""
-        with self.conn.cursor() as cur:
-            cur.execute("SELECT entity_id FROM entity_tags WHERE tag_name = %s AND entity_type = 'paragraph';", (tag,))
-            paragraph_ids = [row[0] for row in cur.fetchall()]
-        return paragraph_ids
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("SELECT entity_id FROM entity_tags WHERE tag_name = %s AND entity_type = 'paragraph';", (tag,))
+                paragraph_ids = [row[0] for row in cur.fetchall()]
+            return paragraph_ids
+        except Exception as e:
+            print(f"Error finding paragraphs by tag: {e}")
+            self.conn.rollback()
+            return []
 
     def find_tags_for_paragraph(self, paragraph_id: int) -> List[str]:
         """Find all tags for a paragraph."""
-        with self.conn.cursor() as cur:
-            cur.execute("SELECT tag_name FROM entity_tags WHERE entity_id = %s;", (paragraph_id,))
-            tags = [row[0] for row in cur.fetchall()]
-        return tags
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("SELECT tag_name FROM entity_tags WHERE entity_id = %s;", (paragraph_id,))
+                tags = [row[0] for row in cur.fetchall()]
+            return tags
+        except Exception as e:
+            print(f"Error finding tags for paragraph: {e}")
+            self.conn.rollback()
+            return []
 
     def find_k_most_similar_entities(self, entity_id: int, k: int) -> List[int]:
         """Find the k most similar entities given an entity."""
-        with self.conn.cursor() as cur:
-            cur.execute("SELECT entity_embed FROM entities WHERE entity_id = %s;", (entity_id,))
-            embedding = cur.fetchone()[0]
-            cur.execute(
-                """
-                SELECT id FROM entities
-                WHERE entity_id != %s
-                ORDER BY (entity_embed <-> %s::vector) ASC
-                LIMIT %s;
-                """,
-                (entity_id, str(embedding), k)
-            )
-            similar_paragraph_ids = [row[0] for row in cur.fetchall()]
-        return similar_paragraph_ids
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("SELECT entity_embed FROM entities WHERE entity_id = %s;", (entity_id,))
+                embedding = cur.fetchone()[0]
+                cur.execute(
+                    """
+                    SELECT id FROM entities
+                    WHERE entity_id != %s
+                    ORDER BY (entity_embed <-> %s::vector) ASC
+                    LIMIT %s;
+                    """,
+                    (entity_id, str(embedding), k)
+                )
+                similar_paragraph_ids = [row[0] for row in cur.fetchall()]
+            return similar_paragraph_ids
+        except Exception as e:
+            print(f"Error finding similar entities: {e}")
+            self.conn.rollback()
+            return []
 
     def generate_embedding(self, content: str) -> List[float]:
         """Generate an embedding for the given content using LangChain and OpenAI."""
@@ -228,20 +326,31 @@ class GraphAccessor:
         
     def add_to_crawl_queue(self, url: str):
         """Add a paper URL to the crawl queue."""
-        with self.conn.cursor() as cur:
-            cur.execute("INSERT INTO crawl_queue (url) VALUES (%s);", (url,))
-        self.conn.commit()
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("INSERT INTO crawl_queue (url) VALUES (%s);", (url,))
+            self.conn.commit()
+        except Exception as e:
+            print(f"Error adding to crawl queue: {e}")
+            self.conn.rollback()
+            # throw the exception again
+            raise e
 
     def fetch_next_from_crawl_queue(self) -> Optional[str]:
         """Fetch the next URL from the crawl queue."""
-        with self.conn.cursor() as cur:
-            cur.execute("SELECT url FROM crawl_queue ORDER BY id ASC LIMIT 1;")
-            result = cur.fetchone()
-            if result:
-                cur.execute("DELETE FROM crawl_queue WHERE url = %s;", (result[0],))
-                self.conn.commit()
-                return result[0]
-        return None
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("SELECT url FROM crawl_queue ORDER BY id ASC LIMIT 1;")
+                result = cur.fetchone()
+                if result:
+                    cur.execute("DELETE FROM crawl_queue WHERE url = %s;", (result[0],))
+                    self.conn.commit()
+                    return result[0]
+            return None
+        except Exception as e:
+            print(f"Error fetching from crawl queue: {e}")
+            self.conn.rollback()
+            return None
 
     def find_related_entities(self, question: str, k: int = 10, entity_type: Optional[str] = None, keywords: Optional[List[str]] = None) -> List[str]:
         """
@@ -338,12 +447,17 @@ class GraphAccessor:
         
         print("Query: ", query)
 
-        with self.conn.cursor() as cur:
-            cur.execute(query, tuple(params))
-            related_entity_ids = [row[0] for row in cur.fetchall()]
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(query, tuple(params))
+                related_entity_ids = [row[0] for row in cur.fetchall()]
 
-        return related_entity_ids
-
+            return related_entity_ids
+        except Exception as e:
+            print(f"Error executing query: {e}")
+            self.conn.rollback()
+            return []
+        
     def find_related_entity_ids_by_embedding(self, concept_embedding: List[float], k: int = 10, entity_type: Optional[str] = None, keywords: Optional[List[str]] = None) -> List[str]:
         """
         Find entities related to a particular concept by matching against the entity_embed field using vector distance.
@@ -379,9 +493,14 @@ class GraphAccessor:
         
         print("Query: ", query)
 
-        with self.conn.cursor() as cur:
-            cur.execute(query, tuple(params))
-            related_entity_ids = [row[0] for row in cur.fetchall()]
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(query, tuple(params))
+                related_entity_ids = [row[0] for row in cur.fetchall()]
+        except Exception as e:
+            print(f"Error executing query: {e}")
+            self.conn.rollback()
+            return []
 
         return related_entity_ids
 
@@ -416,9 +535,14 @@ class GraphAccessor:
             """
             params = (str(query_embedding), k)
 
-        with self.conn.cursor() as cur:
-            cur.execute(query, params)
-            matching_entity_ids = [row[0] for row in cur.fetchall()]
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(query, params)
+                matching_entity_ids = [row[0] for row in cur.fetchall()]
+        except Exception as e:
+            print(f"Error executing query: {e}")
+            self.conn.rollback()
+            return []
 
         return matching_entity_ids
     
@@ -453,9 +577,14 @@ class GraphAccessor:
             """
             params = (str(query_embedding), k)
 
-        with self.conn.cursor() as cur:
-            cur.execute(query, params)
-            matching_entity_ids = [row[0] for row in cur.fetchall()]
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(query, params)
+                matching_entity_ids = [row[0] for row in cur.fetchall()]
+        except Exception as e:
+            print(f"Error executing query: {e}")
+            self.conn.rollback()
+            return []
 
         return matching_entity_ids
     
@@ -464,32 +593,43 @@ class GraphAccessor:
         Fetch all assessment criteria, or criteria with a particular name.
         """
         criteria = None
-        with self.conn.cursor() as cur:
-            if name is None:
-                criteria = cur.execute("""
-                                       SELECT criteria_id, criteria_name, criteria_prompt, criteria_scope 
-                                       FROM assessment_criteria ORDER BY criteria_promise DESC;""")
-            else:
-                criteria = cur.execute("""SELECT criteria_id, criteria_name, criteria_prompt, criteria_scope 
-                                       FROM assessment_criteria 
-                                       WHERE criteria_name = %s ORDER BY criteria_promise DESC;""", \
-                                           (name,))
-                
-            result = [{"id": c[0], "name": c[1], "prompt": c[2], "scope": c[3]} for c in cur.fetchall()]
-        return result
+        try:
+            with self.conn.cursor() as cur:
+                if name is None:
+                    criteria = cur.execute("""
+                                        SELECT criteria_id, criteria_name, criteria_prompt, criteria_scope 
+                                        FROM assessment_criteria ORDER BY criteria_promise DESC;""")
+                else:
+                    criteria = cur.execute("""SELECT criteria_id, criteria_name, criteria_prompt, criteria_scope 
+                                        FROM assessment_criteria 
+                                        WHERE criteria_name = %s ORDER BY criteria_promise DESC;""", \
+                                            (name,))
+                    
+                result = [{"id": c[0], "name": c[1], "prompt": c[2], "scope": c[3]} for c in cur.fetchall()]
+            return result
+        except Exception as e:
+            print(f"Error fetching assessment criteria: {e}")
+            self.conn.rollback()
+            return []
     
     def add_assessment_criterion(self, name:str, prompt:str, scope: str, promise:float = 1) -> int:
         """
         Add an assessment criterion to the database.
         """
         embed = self.generate_embedding(prompt)
-        with self.conn.cursor() as cur:
-            cur.execute("""INSERT INTO assessment_criteria 
-                        (criteria_name, criteria_prompt, criteria_scope, criteria_promise, criteria_embed) 
-                        VALUES (%s, %s, %s, %s, %s) 
-                        RETURNING criteria_id;""", (name, prompt, scope, promise, embed))
-            criterion_id = cur.fetchone()[0]
-        self.conn.commit()
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""INSERT INTO assessment_criteria 
+                            (criteria_name, criteria_prompt, criteria_scope, criteria_promise, criteria_embed) 
+                            VALUES (%s, %s, %s, %s, %s) 
+                            RETURNING criteria_id;""", (name, prompt, scope, promise, embed))
+                criterion_id = cur.fetchone()[0]
+            self.conn.commit()
+        except Exception as e:
+            print(f"Error adding assessment criterion: {e}")
+            self.conn.rollback()
+            # throw the exception again
+            raise e
         return criterion_id
     
     def get_entities_with_summaries(self, entity_ids: Optional[List[int]] = None) -> List[dict]:
@@ -517,7 +657,232 @@ class GraphAccessor:
 
         query += " ORDER BY e.entity_name ASC;"
 
-        with self.conn.cursor() as cur:
-            cur.execute(query, params)
-            results = [{"name": row[0], "summary": row[1]} for row in cur.fetchall()]
+        try:
+            with self.conn.cursor() as cur:
+                self.exec_sql(query, params)
+                results = [{"name": row[0], "summary": row[1]} for row in cur.fetchall()]
+        except Exception as e:
+            print(f"Error getting entities with summaries: {e}")
+            self.conn.rollback()
+            # throw the exception again
+            raise e
+             
         return results
+    
+    def get_papers_by_field(self, field: str, k: int = 1):
+        """
+        Take the field, generate its embedding, match it against entity_tags of type 'field',
+        and find the corresponding 'paper' entities. Print the paper IDs.
+
+        Args:
+            field (str): The field to search for.
+        """
+        try:
+            # Generate the embedding for the given field
+            field_embedding = self.generate_embedding(field)
+
+            # Query to match the field embedding against entity_tags of type 'field'
+            query = """
+                SELECT p.entity_id, p.entity_name, t.tag_value
+                FROM entities p
+                JOIN entity_tags t ON p.entity_id = t.entity_id
+                WHERE t.tag_name = 'field'
+                ORDER BY (t.tag_embed <-> %s::vector) ASC
+                LIMIT %s;
+            """
+            
+            with self.conn.cursor() as cur:
+                results = self.exec_sql(query, (str(field_embedding), k))
+            
+                return [{'entity_id': r[0], 'entity_name': r[1], 'tag_value': r[2]} for r in results]
+            
+        except Exception as e:
+            print(f"An error occurred: {e}")
+            self.conn.rollback()
+
+    def get_untagged_papers_by_field(self, field: str, tag: str, k: int = 1):
+        """
+        Take the field, generate its embedding, match it against entity_tags of type 'field',
+        and find the corresponding 'paper' entities. Print the paper IDs.
+
+        Args:
+            field (str): The field to search for.
+            tag (str): The tag to exclude from the search.
+            k (int): The number of results to return.
+        Returns:
+            List[dict]: A list of dictionaries containing entity IDs, names, and tag values.
+        """
+        try:
+            # Generate the embedding for the given field
+            field_embedding = self.generate_embedding(field)
+
+            # Query to match the field embedding against entity_tags of type 'field'
+            query = """
+                SELECT p.entity_id, p.entity_name, t.tag_value
+                FROM entities p
+                JOIN entity_tags t ON p.entity_id = t.entity_id
+                WHERE t.tag_name = 'field' AND NOT EXISTS (select * from entity_tags t2 where t2.entity_id = p.entity_id and t2.tag_name = %s)
+                ORDER BY (t.tag_embed <-> %s::vector) ASC
+                LIMIT %s;
+            """
+            with self.conn.cursor() as cur:
+                results = self.exec_sql(query, (tag, str(field_embedding), k))
+            
+                return [{'entity_id': r[0], 'entity_name': r[1], 'tag_value': r[2]} for r in results]
+            
+        except Exception as e:
+            print(f"An error occurred: {e}")
+            self.conn.rollback()
+
+    def get_entities_from_db(self, paper_id: int):
+
+        query = """
+            SELECT entity_id, paper, array_agg('{ "name": "' || coalesce(author,'') || '", "email": "' || coalesce(email,'') || '", "detail": "' || coalesce(source,'') || '" }') AS authors
+                        FROM (
+                        SELECT p.entity_id, '"title": "' || p.entity_name || '", "abstract": "' || summary.tag_value || '", "field": "' || fields.tag_value || '"' AS paper, target.entity_name AS author, replace(target.entity_detail,'"','') AS source, target.entity_contact as email
+                        FROM entities p JOIN entity_tags summary ON p.entity_id = summary.entity_id
+                        JOIN entity_tags fields ON p.entity_id = fields.entity_id
+                        JOIN entity_link ON p.entity_id = entity_link.to_id
+                        JOIN entities AS target ON entity_link.from_id = target.entity_id
+                        WHERE summary.tag_name = 'summary' AND fields.tag_name = 'field'
+                        AND p.entity_id = %s
+                        AND p.entity_type = 'paper' AND target.entity_type = 'author'
+                    ) GROUP BY entity_id, paper;
+        """    
+        try:
+            with self.conn.cursor() as cur:
+                result = self.exec_sql(query, (paper_id,))
+                new_results = []
+                for row in result:
+                    (paper_id, paper_desc, nested) = row
+                    
+                    n = '['
+                    for n2 in nested:
+                        n += n2 + ', '
+                    n = n[:-2] + ']'
+                    
+                    description = '{' + paper_desc.replace('\n', ' ').replace('\r', ' ') + ', "authors": ' + n.replace('\n', ' ').replace('\r', ' ') + '}'
+                    new_results.append({"id": paper_id, "json": description})
+                    # print(f"Paper ID: {paper_id}, Description: {description}")
+                return new_results
+        except Exception as e:
+            print(f"Error fetching entities from DB: {e}")
+            self.conn.rollback()
+            # throw the exception again
+            raise e
+
+    def get_untagged_entities_as_json(self, paper_id: int, tag: str):
+
+        query = """
+            SELECT entity_id, paper, array_agg('{ "name": "' || coalesce(author,'') || '", "email": "' || coalesce(email,'') || '", "detail": "' || coalesce(source,'') || '" }') AS authors
+                        FROM (
+                        SELECT p.entity_id, '"title": "' || p.entity_name || '", "abstract": "' || summary.tag_value || '", "field": "' || fields.tag_value || '"' AS paper, target.entity_name AS author, replace(target.entity_detail,'"','') AS source, target.entity_contact as email
+                        FROM entities p JOIN entity_tags summary ON p.entity_id = summary.entity_id
+                        JOIN entity_tags fields ON p.entity_id = fields.entity_id
+                        JOIN entity_link ON p.entity_id = entity_link.to_id
+                        JOIN entities AS target ON entity_link.from_id = target.entity_id
+                        WHERE summary.tag_name = 'summary' AND fields.tag_name = 'field'
+                        AND p.entity_id = %s AND NOT EXISTS (select * from entity_tags t2 where t2.entity_id = p.entity_id and t2.tag_name = %s)
+                        AND p.entity_type = 'paper' AND target.entity_type = 'author'
+                    ) GROUP BY entity_id, paper;
+        """    
+        try:
+            with self.conn.cursor() as cur:
+                result = self.exec_sql(query, (paper_id,tag))
+                new_results = []
+                for row in result:
+                    (paper_id, paper_desc, nested) = row
+                    
+                    n = '['
+                    for n2 in nested:
+                        n += n2 + ', '
+                    n = n[:-2] + ']'
+                    
+                    description = '{' + paper_desc.replace('\n', ' ').replace('\r', ' ') + ', "authors": ' + n.replace('\n', ' ').replace('\r', ' ') + '}'
+                    new_results.append({"id": paper_id, "json": description})
+                    # print(f"Paper ID: {paper_id}, Description: {description}")
+                return new_results
+        except Exception as e:
+            print(f"Error fetching untagged entities: {e}")
+            self.conn.rollback()
+            # throw the exception again
+            raise e
+
+    def add_task_to_queue(self, name: str, scope: str, prompt: str, description: str) -> int:
+        """
+        Add a task to the task_queue relation.
+
+        Args:
+            name (str): The name of the task.
+            scope (str): The scope of the task.
+            prompt (str): The prompt for the task.
+            description (str): A description of the task.
+
+        Returns:
+            int: The task_id of the newly added task.
+        """
+        query = """
+            INSERT INTO task_queue (task_name, task_scope, task_prompt, task_description)
+            VALUES (%s, %s, %s, %s)
+            RETURNING task_id;
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(query, (name, scope, prompt, description))
+                task_id = cur.fetchone()[0]
+            self.conn.commit()
+        except Exception as e:
+            print(f"Error adding task to queue: {e}")
+            self.conn.rollback()
+            # throw the exception again
+            raise e
+        return task_id
+
+    def fetch_next_task(self) -> Optional[dict]:
+        """
+        Fetch the next task from the task_queue in queue order.
+
+        Returns:
+            Optional[dict]: A dictionary containing the task details, or None if the queue is empty.
+        """
+        query = """
+            SELECT task_id, task_name, task_scope, task_prompt, task_description
+            FROM task_queue
+            ORDER BY task_id ASC
+            LIMIT 1;
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(query)
+                task = cur.fetchone()
+                if task:
+                    return {
+                        "task_id": task[0],
+                        "name": task[1],
+                        "scope": task[2],
+                        "prompt": task[3],
+                        "description": task[4],
+                    }
+            return None
+        except Exception as e:
+            print(f"Error fetching next task: {e}")
+            self.conn.rollback()
+            return None
+
+    def delete_task(self, task_id: int):
+        """
+        Delete a task from the task_queue by task_id.
+
+        Args:
+            task_id (int): The ID of the task to delete.
+        """
+        query = "DELETE FROM task_queue WHERE task_id = %s;"
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(query, (task_id,))
+            self.conn.commit()
+        except Exception as e:
+            print(f"Error deleting task: {e}")
+            self.conn.rollback()
+            # throw the exception again
+            raise e

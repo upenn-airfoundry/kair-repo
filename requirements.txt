@@ -13,4 +13,6 @@ aryn-sdk
 flask
 flask-cors
 bs4
+flask-apscheduler
+flask-socketio
 zon

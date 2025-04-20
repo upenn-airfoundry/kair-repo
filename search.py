@@ -20,6 +20,8 @@ from langchain.prompts import ChatPromptTemplate
 from langchain.schema.output_parser import StrOutputParser
 from langchain.output_parsers import PydanticOutputParser
 
+from enrichment.llms import analysis_llm
+
 graph_accessor = GraphAccessor()
 
 
@@ -72,7 +74,7 @@ def search_over_criteria(question: str, criteria: List) -> str:
 
     try:
         # Initialize the ChatOpenAI model, specifying gpt-4o-mini
-        llm = ChatOpenAI(model="gpt-4o-mini", temperature=0) # gpt-4o-preview is the correct model name.
+        llm = analysis_llm
 
         # Create a prompt template
         prompt = ChatPromptTemplate.from_messages([
@@ -216,7 +218,7 @@ def generate_rag_answer(paper_titles_and_summaries: List, question: str) -> str:
         )
 
         # Initialize the GPT-4o-mini model
-        llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.1)
+        llm = analysis_llm
 
         # Create a prompt template
         prompt = ChatPromptTemplate.from_messages([

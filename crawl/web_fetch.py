@@ -10,9 +10,24 @@ import json
 import hashlib
 from urllib.parse import urlparse
 import time
+import os
+from graph_db import GraphAccessor
+
+import logging
+from datetime import datetime
 
 from pennsieve import get_dataset_metadata
 
+from dotenv import load_dotenv, find_dotenv
+_ = load_dotenv(find_dotenv())
+
+from crawl.crawler_queue import add_to_crawled
+from crawl.crawler_queue import get_urls_to_crawl
+
+graph_db = GraphAccessor()
+
+# Directory to save downloaded PDFs
+DOWNLOADS_DIR = os.getenv("PDF_PATH", os.path.expanduser("~/Downloads"))
 
 # make a request and wait for it to redirect
 def get_redirected_url(doi_url):
@@ -186,3 +201,50 @@ def get_pdf(row):
         pass
     else:
         pass
+    
+def fetch_and_crawl_frontier():
+    # Ensure the downloads directory exists
+    os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+
+    rows = get_urls_to_crawl()
+
+    for row in rows:
+        crawl_id = row['id']
+        url = row['url']
+        try:
+            if url.startswith('file://'):
+                pdf_base = url.split('/')[-1]  # Extract the filename from the URL
+                pdf_filename = os.path.join(DOWNLOADS_DIR + "/dataset_papers/" + pdf_base)  # Construct the local file path
+                # if os.path.exists(DOWNLOADS_DIR + "/chunked_files/" + pdf_base + ".json"):
+                #     if add_to_crawled(crawl_id, "chunked_files/" + pdf_base + ".json"):  # Mark this PDF as crawled in the database
+                #         print(f"Registered pre-chunked file: {pdf_filename}")
+                # else:
+                if add_to_crawled(crawl_id, "dataset_papers/" + pdf_base):  # Mark this PDF as crawled in the database
+                    logging.debug(f"Registered pre-crawled file: {pdf_filename}")
+            else:
+                # Save the PDF locally
+                pdf_base = f"{crawl_id}.pdf"
+                pdf_filename = os.path.join(DOWNLOADS_DIR, pdf_base)
+                
+                if os.path.exists(pdf_filename):
+                    logging.debug(f"File {pdf_filename} already exists. Skipping download.")
+                    add_to_crawled(crawl_id, pdf_base)
+                    continue
+
+                # Fetch the PDF from the URL
+                response = requests.get(url, timeout=10)
+                response.raise_for_status()  # Raise an error for HTTP errors
+
+                with open(pdf_filename, "wb") as pdf_file:
+                    pdf_file.write(response.content)
+                    
+                if add_to_crawled(crawl_id, pdf_base):  # Mark this PDF as crawled in the database
+                    logging.info(f"Successfully crawled and saved: {url}")
+
+        except requests.RequestException as e:
+            print(f"Failed to fetch URL {url}: {e}")
+        except Exception as e:
+            print(f"Error processing crawl ID {crawl_id}: {e}")
+
+    graph_db.commit()
+    

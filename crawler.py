@@ -14,33 +14,12 @@ from graph_db import GraphAccessor
 from dotenv import load_dotenv, find_dotenv
 _ = load_dotenv(find_dotenv())
 
+from crawl.crawler_queue import add_to_crawled
+
 graph_db = GraphAccessor()
 
 # Directory to save downloaded PDFs
 DOWNLOADS_DIR = os.getenv("PDF_PATH", os.path.expanduser("~/Downloads"))
-
-def add_to_crawled(crawl_id: int, path: str) -> bool:
-    # Verify the path isn't already in the crawled table
-    existing_crawl = graph_db.exec_sql(
-        "SELECT 1 FROM crawled WHERE path = %s;",
-        (path,)
-    )
-    if existing_crawl:
-        print(f"File {path} already exists in the crawled table. Skipping.")
-        return False
-
-    # Add the crawled ID to the crawled table
-    if crawl_id >= 1:
-        graph_db.execute(
-            "INSERT INTO crawled (id, crawl_time, path) VALUES (%s, %s, %s);",
-            (crawl_id, datetime.now().date(), path)
-        )
-    else:
-        graph_db.execute(
-            "INSERT INTO crawled (crawl_time, path) VALUES (%s, %s);",
-            (datetime.now().date(), path)
-        )
-    return True
 
 def fetch_and_crawl():
     # Ensure the downloads directory exists

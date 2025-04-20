@@ -2,14 +2,15 @@ import logging
 from typing import List, Dict, Any
 import json
 from graph_db import GraphAccessor
-from typing import TypeVar, List, Generic, FunctionType as Fun
+from typing import TypeVar, List, Generic, Callable as Fun
 
 T = TypeVar('T')
 U = TypeVar('U')
+V = TypeVar('V')
 
 graph_db = GraphAccessor()
 
-class EnrichmentCoreOps(Generic[T], Generic[U], Generic[V]):
+class EnrichmentCoreOps(Generic[T,U,V]):
     """
     Core operations for enrichment.
     """
@@ -20,14 +21,14 @@ class EnrichmentCoreOps(Generic[T], Generic[U], Generic[V]):
         self._data_retriever = data_retriever
         pass
     
-    def est_cost(self, aux_data_providers: List[T], aux_data: List[U]) -> int:
+    def est_cost(self, aux_data_providers: List[T] = [], aux_data: List[U] = []) -> int:
         """
         Estimate the cost of the enrichment operation.
         """
         # Placeholder for cost estimation logic
         return self._budget
 
-    def enrich_data(self, aux_data_providers: List[T], aux_data: List[U]) -> V:
+    def enrich_data(self, aux_data_providers: List[T] = [], aux_data: List[U] = []) -> V:
         """
         Enrich the given data.
         """

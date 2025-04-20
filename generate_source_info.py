@@ -23,18 +23,18 @@ from prompts.prompt_from_items import summarize_web_page
 from crawl.semscholar import fetch_author_from_semantic_scholar
 from crawl.duckduckgo import get_author_homepage
 
-def fix_db():
-    query = "SELECT entity_id, entity_detail FROM entities WHERE entity_type = 'author' and entity_detail IS NOT NULL and entity_embed IS NULL"
-    results = graph_db.exec_sql(query)
-    for author_id, author_detail in results:
-        print(f"Processing author ID: {author_id}")
-        if author_detail:
-            # Generate the embedding for the author detail
-            embedding = graph_db.generate_embedding(author_detail)
-            # Update the database with the new embedding
-            update_query = "UPDATE entities SET entity_embed = %s WHERE entity_id = %s;"
-            graph_db.execute(update_query, (embedding, author_id))
-    graph_db.commit()
+# def fix_db():
+#     query = "SELECT entity_id, entity_detail FROM entities WHERE entity_type = 'author' and entity_detail IS NOT NULL and entity_embed IS NULL"
+#     results = graph_db.exec_sql(query)
+#     for author_id, author_detail in results:
+#         print(f"Processing author ID: {author_id}")
+#         if author_detail:
+#             # Generate the embedding for the author detail
+#             embedding = graph_db.generate_embedding(author_detail)
+#             # Update the database with the new embedding
+#             update_query = "UPDATE entities SET entity_embed = %s WHERE entity_id = %s;"
+#             graph_db.execute(update_query, (embedding, author_id))
+#     graph_db.commit()
 
 def get_authors_from_db(with_no_affiliation=False):
     """
@@ -91,6 +91,6 @@ def process_authors():
                 print(f"An error occurred: {e}")
     
 if __name__ == "__main__":
-    fix_db()
+    # fix_db()
     process_authors()
 
