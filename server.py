@@ -4,16 +4,32 @@ from flask_apscheduler import APScheduler
 from graph_db import GraphAccessor
 from enrichment.iterative_enrichment import process_next_task
 from flask import request
-from crawler import fetch_and_crawl
-from datetime import datetime
 from flask_cors import CORS
+<<<<<<< HEAD
 
 from enrichment.langchain_ops import AssessmentOps
 from enrichment.iterative_enrichment import iterative_enrichment
+=======
+import json
+from datetime import datetime
+
+
+from dotenv import load_dotenv
+from dotenv import find_dotenv
+
+# Load environment variables from .env file
+_ = load_dotenv(find_dotenv())
+
+
+from crawler import fetch_and_crawl
+from generate_detection_info import get_papers_by_field, get_entities_from_db
+from prompts.prompt_from_items import answer_from_summary
+>>>>>>> main
 
 from search import search_over_criteria, search_multiple_criteria
 from search import generate_rag_answer
 
+<<<<<<< HEAD
 import logging
 
 # Configure APScheduler
@@ -21,6 +37,8 @@ class Config:
     SCHEDULER_API_ENABLED = True
 
 
+=======
+>>>>>>> main
 app = Flask("KAIR")
 app.config.from_object(Config)
 CORS(app, resources={r"/*": {"origins": ["http://localhost:5173"], \
