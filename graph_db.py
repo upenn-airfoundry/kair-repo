@@ -28,14 +28,26 @@ class GraphAccessor:
         
     def exec_sql(self, sql: str, params: Tuple = ()) -> List[Tuple]:
         """Execute an SQL query and return the results."""
-        with self.conn.cursor() as cur:
-            cur.execute(sql, params)
-            return cur.fetchall()
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(sql, params)
+                return cur.fetchall()
+        except Exception as e:
+            print(f"Error executing SQL: {e}")
+            self.conn.rollback()
+            # throw the exception again
+            raise e
         
     def execute(self, sql: str, params: Tuple = ()):
         """Execute an SQL query and return the results."""
-        with self.conn.cursor() as cur:
-            cur.execute(sql, params)
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(sql, params)
+        except Exception as e:
+            print(f"Error executing SQL: {e}")
+            self.conn.rollback()
+            # throw the exception again
+            raise e
             
     def commit(self):
         """Commit the current transaction."""
@@ -645,3 +657,65 @@ class GraphAccessor:
                 new_results.append({"id": paper_id, "json": description})
                 # print(f"Paper ID: {paper_id}, Description: {description}")
             return new_results
+
+    def add_task_to_queue(self, name: str, scope: str, prompt: str, description: str) -> int:
+        """
+        Add a task to the task_queue relation.
+
+        Args:
+            name (str): The name of the task.
+            scope (str): The scope of the task.
+            prompt (str): The prompt for the task.
+            description (str): A description of the task.
+
+        Returns:
+            int: The task_id of the newly added task.
+        """
+        query = """
+            INSERT INTO task_queue (task_name, task_scope, task_prompt, task_description)
+            VALUES (%s, %s, %s, %s)
+            RETURNING task_id;
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(query, (name, scope, prompt, description))
+            task_id = cur.fetchone()[0]
+        self.conn.commit()
+        return task_id
+
+    def fetch_next_task(self) -> Optional[dict]:
+        """
+        Fetch the next task from the task_queue in queue order.
+
+        Returns:
+            Optional[dict]: A dictionary containing the task details, or None if the queue is empty.
+        """
+        query = """
+            SELECT task_id, task_name, task_scope, task_prompt, task_description
+            FROM task_queue
+            ORDER BY task_id ASC
+            LIMIT 1;
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(query)
+            task = cur.fetchone()
+            if task:
+                return {
+                    "task_id": task[0],
+                    "name": task[1],
+                    "scope": task[2],
+                    "prompt": task[3],
+                    "description": task[4],
+                }
+        return None
+
+    def delete_task(self, task_id: int):
+        """
+        Delete a task from the task_queue by task_id.
+
+        Args:
+            task_id (int): The ID of the task to delete.
+        """
+        query = "DELETE FROM task_queue WHERE task_id = %s;"
+        with self.conn.cursor() as cur:
+            cur.execute(query, (task_id,))
+        self.conn.commit()

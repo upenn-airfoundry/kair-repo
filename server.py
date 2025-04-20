@@ -1,10 +1,12 @@
 from flask import Flask, jsonify
+from flask_apscheduler import APScheduler
+
 from graph_db import GraphAccessor
+from enrichment.iterative_enrichment import process_next_task
 from flask import request
 from crawler import fetch_and_crawl
 from datetime import datetime
 from flask_cors import CORS
-import json
 
 from enrichment.langchain_ops import AssessmentOps
 from enrichment.iterative_enrichment import iterative_enrichment
@@ -12,16 +14,22 @@ from enrichment.iterative_enrichment import iterative_enrichment
 from search import search_over_criteria, search_multiple_criteria
 from search import generate_rag_answer
 
-from langchain_openai import ChatOpenAI
-from langchain.prompts import ChatPromptTemplate
-from langchain.chains import LLMChain
+import logging
+
+# Configure APScheduler
+class Config:
+    SCHEDULER_API_ENABLED = True
+
 
 app = Flask("KAIR")
+app.config.from_object(Config)
 CORS(app, resources={r"/*": {"origins": ["http://localhost:5173"], \
     "methods": ["GET", "POST", "PUT", "DELETE"],
     "allow_headers": ["Content-Type", "Authorization"],
     "expose_headers": ["X-Custom-Header"],
     "supports_credentials": True}})  # Enable CORS for all routes
+scheduler = APScheduler()
+scheduler.init_app(app)
 
 # Initialize the GraphAccessor
 graph_accessor = GraphAccessor()
@@ -58,12 +66,12 @@ def find_related_entities():
     if keywords[0] == '':
         keywords = None
     
-    print( request.args)
+    logging.debug( request.args)
 
     if not query:
         return jsonify({"error": "'query' parameter is required"}), 400
 
-    print ("Find related entities: ", query)
+    logging.debug ("Find related entities: ", query)
     results = graph_accessor.find_related_entities(query, k, entity_type, keywords)
 
     return jsonify({"results": results})
@@ -175,9 +183,9 @@ def add_assessment_criterion():
         if not name or not prompt or not scope:
             return jsonify({"error": "'name', 'scope', and 'prompt' fields are required"}), 400
         
-        print("Adding assessment criterion with name:", name)
-        print("Scope:", scope)
-        print("Prompt:", prompt)
+        logging.info("Adding assessment criterion with name:", name)
+        logging.debug("Scope:", scope)
+        logging.debug("Prompt:", prompt)
 
         # Call the GraphAccessor method to add the assessment criterion
         criterion_id = graph_accessor.add_assessment_criterion(name, prompt, scope, promise)
@@ -205,7 +213,7 @@ def expand_search():
         # Get the user question or prompt from the request
         user_prompt = request.json.get('prompt')
         if not user_prompt:
-            print ("'prompt' parameter is missing")
+            logging.error ("'prompt' parameter is missing")
             return jsonify({"error": "'prompt' parameter is required"}), 400
 
         """
@@ -236,16 +244,16 @@ def expand_search():
 
         questions = search_over_criteria(user_prompt, graph_accessor.get_assessment_criteria());
         
-        print('Expanded into subquestions: ' + questions)
+        logging.info('Expanded into subquestions: ' + questions)
         
         relevant_docs = search_multiple_criteria(questions)
         
         # TODO: from paragraph to paper
         #main = graph_accessor.find_related_entity_ids(user_prompt, 100)
         main = graph_accessor.find_related_entity_ids_by_tag(user_prompt, "summary", 50)
-        print ("Relevant docs: " + str(relevant_docs))
+        logging.debug ("Relevant docs: " + str(relevant_docs))
         
-        print ("Main papers: " + str(main))
+        logging.debug ("Main papers: " + str(main))
         
         docs_in_order = []
         
@@ -276,9 +284,44 @@ def expand_search():
         else:
             return jsonify({"error": "No relevant papers found"}), 404
     except Exception as e:
-        print(f"Error during expansion: {e}")
+        logging.error(f"Error during expansion: {e}")
         return jsonify({"error": f"An error occurred: {e}"}), 500
 
 
+@app.route('/start_scheduler', methods=['POST'])
+def start_scheduler():
+    """
+    Start the scheduler.
+    """
+    try:
+        scheduler.start()
+        return jsonify({"message": "Scheduler started successfully."}), 200
+    except Exception as e:
+        return jsonify({"error": f"Failed to start scheduler: {e}"}), 500
+
+@app.route('/stop_scheduler', methods=['POST'])
+def stop_scheduler():
+    """
+    Stop the scheduler.
+    """
+    try:
+        scheduler.shutdown()
+        return jsonify({"message": "Scheduler stopped successfully."}), 200
+    except Exception as e:
+        return jsonify({"error": f"Failed to stop scheduler: {e}"}), 500
+
+
+def process_next():
+    logging.info("Polling for enrichment tasks...")
+    process_next_task(graph_accessor)
+
 if __name__ == '__main__':
+    # Schedule the task processing function to run every minute
+    scheduler.add_job(
+        id="enrichment_task",
+        func=process_next,
+        trigger="interval",
+        minutes=1
+    )
+    scheduler.start()
     app.run(port=8081,debug=True) 
