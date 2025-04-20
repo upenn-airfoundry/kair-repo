@@ -1,8 +1,13 @@
-# kair-repo
+# KAIR-Repo
 
-These are the building blocks for the KAIR project.  You will need to update `.env` (copy from `sample.env`) to match your configuration.
+![AIRFoundry logo](https://airfoundry.upenn.edu/wp-content/themes/penn-airfoundry/img/airfoundry.svg)
+
+These are the building blocks for the [KAIR project](https://airfoundry.seas.upenn.edu) for the AIRFoundry.  Our key objective is to support *discovery queries* for science, driven by but not limited to RNA and LNP technologies.
+
 
 ## Database
+
+You will need to update `.env` (copy from `sample.env`) to match your configuration.
 
 We expect a PostgreSQL / TimescaleDB engine accessible via port 5432, with pgvectorscale.  With Docker installed, you can run `source timescaledb.sh` to install the Docker container.  Then the SQL in [create_db.sql](create_db.sql) generates a sample user and creates basic relations.  Some options:
 
@@ -113,7 +118,11 @@ This is a data platform for going beyond RAG to (1) allow arbitrary annotations,
 
 And more.
 
-## Stages
+Details for *data enrichment* can be found [here](enrichment.md).
+
+## Command line
+
+You will probably want to run the web modules as specified above. However, there are additional scriptable sub-modules that may be of interest.
 
 1. `create_db.sql`: Creates the host database in PostgreSQL
 2. `frontier_queue.py`: Adds a number of URLs to the table representing the frontier queue for crawling
@@ -121,7 +130,7 @@ And more.
 4. `generate_doc_info.py`: Parses the PDFs in the local directory, chunks them for RAG, and generates a paper descriptor, author info (+ links), a summary.
 
 5. *Not yet inimplemented*: `generate_source_info.py` should **enrich** the corpus with information about authors, organizations, etc. and use these as the basis of **trust**.  In turn, once computed this trust could be propagated as tags to all documents.
-6. *Not yet implemented*: `generate_detection_info.py` would be used to add tag-value pairs to items (paragraphs, papers, etc.) with particular *detections* of interest.
+6. `generate_detection_info.py` would be used to add tag-value pairs to items (paragraphs, papers, etc.) with particular *detections* of interest.
 7. *Not yet implemented*: there is some scaffolding to extract *tables* from documents and to annotate/enrich them, via `generate_table_info.py`.
 
 A set of helper functions is provided in `graph_db.py` for reading / writing authors, papers, paragraphs, etc.  In the database, several views exist to look at all tags relevant to paragraphs, authors and paragraphs, etc.
@@ -129,3 +138,10 @@ A set of helper functions is provided in `graph_db.py` for reading / writing aut
 ## Pre-Crawled / Indexed Data
 
 You can supply a list of pre-crawled files under `PDF_PATH/dataset_papers`, and they will be added to the crawled list by `crawler.py`.  If a `.pdf.json` file with Aryn parsed data exists in `PDF_PATH/chunked_files` this will be used in lieu of the LangChain splitter.
+
+# Credits
+
+This project is funded by the National Science Foundation under DBI-2400135.
+
+![NSF logo](https://airfoundry.upenn.edu/wp-content/themes/penn-airfoundry/img/logo-NSF.png)
+
