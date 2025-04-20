@@ -72,19 +72,15 @@ def pairwise_enrichment(graph_accessor: GraphAccessor):
     """
     return entity_enrichment(graph_accessor)
 
-def iterative_enrichment(graph_accessor: GraphAccessor):
+def iterative_enrichment(graph_accessor: GraphAccessor, task: str = None):
     """
-    Iteratively enrich the database with assessment criteria.
-    For 10 papers that haven't been assessed, apply all assessment criteria.
+    Enqueue the enrichment tasks.
     """
-    return entity_enrichment(graph_accessor)
-
-def enrichment_task(graph_accessor: GraphAccessor, task: str, entities: List[int] = None):
-    """
-    Iteratively enrich the database with assessment criteria.
-    For 10 papers that haven't been assessed, apply all assessment criteria.
-    """
-    return enrich_entities(graph_accessor, task, entities)
+    # return entity_enrichment(graph_accessor)
+    criteria = graph_accessor.get_assessment_criteria(task)
+    
+    for criterion in criteria:
+        graph_accessor.add_task_to_queue(criterion['name'], criterion['scope'])
 
 def process_next_task(graph_accessor: GraphAccessor):
     """
@@ -99,7 +95,7 @@ def process_next_task(graph_accessor: GraphAccessor):
             print(f"Processing task: {task_name} (Scope: {task_scope})")
 
             # Call enrichment_task with the task name
-            enrichment_task(graph_accessor, task_name)
+            enrich_entities(graph_accessor, task, entities)
 
             # Delete the task after processing
             graph_accessor.delete_task(next_task["task_id"])

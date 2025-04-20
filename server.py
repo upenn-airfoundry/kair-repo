@@ -189,9 +189,11 @@ def add_assessment_criterion():
 
         # Call the GraphAccessor method to add the assessment criterion
         criterion_id = graph_accessor.add_assessment_criterion(name, prompt, scope, promise)
+        
+        iterative_enrichment(graph_accessor, name)
 
         # Return the newly created criterion ID
-        return jsonify({"message": "Assessment criterion added successfully", "criterion_id": criterion_id}), 201
+        return jsonify({"message": "New assessment criterion added successfully", "criterion_id": criterion_id}), 201
 
     except Exception as e:
         return jsonify({"error": f"An error occurred: {e}"}), 500
@@ -200,7 +202,7 @@ def add_assessment_criterion():
 def add_enrichment():
     iterative_enrichment(graph_accessor)
 
-    return jsonify({"message": "Enrichment step completed"}), 201
+    return jsonify({"message": "All enrichment tasks queued"}), 201
 
 
 @app.route('/expand', methods=['POST'])
