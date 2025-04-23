@@ -9,8 +9,7 @@ import json
 from datetime import datetime
 
 
-from dotenv import load_dotenv
-from dotenv import find_dotenv
+from dotenv import load_dotenv, find_dotenv
 
 # Load environment variables from .env file
 _ = load_dotenv(find_dotenv())

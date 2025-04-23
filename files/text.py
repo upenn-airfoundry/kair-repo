@@ -22,7 +22,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from graph_db import GraphAccessor
 
-from enrichment import analysis_llm
+from enrichment.llms import analysis_llm
 
 from dotenv import load_dotenv, find_dotenv
 

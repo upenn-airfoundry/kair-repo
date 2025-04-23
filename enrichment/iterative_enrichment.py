@@ -95,7 +95,7 @@ def process_next_task(graph_accessor: GraphAccessor):
             print(f"Processing task: {task_name} (Scope: {task_scope})")
 
             # Call enrichment_task with the task name
-            enrich_entities(graph_accessor, task, entities)
+            enrich_entities(graph_accessor, task_name)
 
             # Delete the task after processing
             graph_accessor.delete_task(next_task["task_id"])
