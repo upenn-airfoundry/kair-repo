@@ -4,8 +4,18 @@ from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 from langchain.schema.output_parser import StrOutputParser
 
+from pydantic import BaseModel, Field
+from typing import Union, Literal
+
 from enrichment.llms import analysis_llm
 
+# Define the Pydantic Model
+class ConditionalAnswer(BaseModel):
+    """Response containing an answer or 'none' if the information is not in the context."""
+    answer: Union[str, Literal['none']] = Field(
+        description="The answer to the question based on the context, or the exact string 'none' if the information is not found."
+    )
+    
 def answer_from_summary(json_fragment, question):
     """
     Queries GPT-4o-mini with a question about a JSON fragment.
@@ -24,17 +34,19 @@ def answer_from_summary(json_fragment, question):
 
         # Create a prompt template
         prompt = ChatPromptTemplate.from_messages([
-            ("system", "You are an expert at extracting information from JSON data. Return an answer to the question, or else output 'none' if the question does not apply."),
-            ("user", "Here is the JSON data, optionally comprising paper titles, abstracts, and lists of authors including their affiliations or biosketches:\n\n{json_fragment}\n\nQuestion: {question}\n\nAnswer:")
+            ("system", "You are an expert at extracting information from JSON data. If the context does not contain the information needed to answer the question, the value of the 'answer' field should be the exact string 'none'. Otherwise, provide the answer in the 'answer' field."),
+            ("user", "Here is the JSON data, optionally comprising paper titles, abstracts, and lists of authors including their affiliations or biosketches:\n\n{json_fragment}\n\nQuestion: {question}\n\nAnswer:"),
+            ("user", "Tip: Respond with a JSON object conforming to the ConditionalAnswer schema.")
         ])
 
+        structured_llm = llm.with_structured_output(ConditionalAnswer)
         # Create a chain
-        chain = prompt | llm | StrOutputParser()
+        structured_chain = prompt | structured_llm# | StrOutputParser()
 
         # Invoke the chain
-        answer = chain.invoke({"title": json_fragment['title'], "question": question, "json_fragment": json_fragment})
+        response = structured_chain.invoke({"title": json_fragment['title'], "question": question, "json_fragment": json_fragment})
 
-        return answer
+        return response.answer
 
     except Exception as e:
         return f"An error occurred: {e}"
@@ -46,7 +58,7 @@ def summarize_web_page(content: str) -> str:
     """
     try:
         # Initialize the LLM (e.g., OpenAI GPT)
-        llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+        llm = analysis_llm
 
         prompt = ChatPromptTemplate.from_messages([
             ("system", "You are a helpful assistant that summarizes author biographical information from HTML content."),
@@ -62,3 +74,23 @@ def summarize_web_page(content: str) -> str:
         return "Summary could not be generated."
 
 
+def answer_yes_no(question: str):
+    """Boolean question to GPT-4o-mini.
+    This function is used to ask a yes/no question to the LLM.
+
+    Args:
+        question (str): _description_
+
+    Returns:
+        str: Yes or No
+    """
+    llm = analysis_llm
+    
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", "You are a concise assistant. Respond to the following question with strictly 'Yes' or 'No'. No other words or punctuation."),
+        ("user", "{question}")
+    ])
+    
+    chain = prompt | llm | StrOutputParser()
+    response = chain.invoke({"question": question})
+    return response
