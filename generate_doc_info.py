@@ -11,7 +11,7 @@ import traceback
 import os
 import json
 
-from files.pdfs import split_pdf_with_langchain, get_presplit_file, chunk_and_partition_pdf_file
+from files.pdfs import split_pdf_with_langchain, get_presplit_aryn_file, chunk_and_partition_pdf_file
 from files.text import index_split_paragraphs
 from crawl.crawler_queue import get_crawled_paths
 
@@ -52,7 +52,7 @@ def handle_file(path: str, use_aryn: bool = False):
             split_docs = split_pdf_with_langchain(pdf_path)  # Use the Langchain splitter to split the documents
     else:
         print(f"Non-PDF file: {pdf_path}")
-        split_docs = get_presplit_file(pdf_path)
+        split_docs = get_presplit_aryn_file(pdf_path)
     
     if len(split_docs):
         index_split_paragraphs(split_docs, path, the_date)
