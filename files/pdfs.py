@@ -44,12 +44,12 @@ def chunk_and_partition_pdf_file(filename, dir:str = DOWNLOAD_DIR) -> dict:
     return data
 
         
-def split_pdf_with_langchain(pdf_path: str) -> list:
+def split_pdf_with_langchain(pdf_path: str, chunk_overlap: int=200) -> list:
     loader = PyPDFLoader(pdf_path)
     documents = loader.load()
     
     # Use the most common splitter: RecursiveCharacterTextSplitter
-    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=chunk_overlap)
     split_docs = splitter.split_documents(documents)
     
     return split_docs

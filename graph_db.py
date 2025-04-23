@@ -12,6 +12,8 @@ from typing import List, Tuple, Optional
 
 from langchain_openai.embeddings import OpenAIEmbeddings
 
+import logging
+
 from dotenv import load_dotenv, find_dotenv
 
 # Load environment variables from .env file
@@ -33,7 +35,7 @@ class GraphAccessor:
                 cur.execute(sql, params)
                 return cur.fetchall()
         except Exception as e:
-            print(f"Error executing SQL: {e}")
+            logging.error(f"Error executing SQL: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
@@ -44,7 +46,7 @@ class GraphAccessor:
             with self.conn.cursor() as cur:
                 cur.execute(sql, params)
         except Exception as e:
-            print(f"Error executing SQL: {e}")
+            logging.error(f"Error executing SQL: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
@@ -61,7 +63,7 @@ class GraphAccessor:
                 result = cur.fetchone()
                 return result is not None
         except Exception as e:
-            print(f"Error checking paper existence: {e}")
+            logging.error(f"Error checking paper existence: {e}")
             return False
         finally:
             self.conn.rollback()
@@ -88,7 +90,7 @@ class GraphAccessor:
                     cur.execute ("INSERT INTO entity_tags (entity_id, tag_name, tag_value, tag_embed) VALUES (%s, %s, %s, %s);", (paper_id, "summary", summary, self.generate_embedding(summary)))
             self.conn.commit()
         except Exception as e:
-            print(f"Error adding paper: {e}")
+            logging.error(f"Error adding paper: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
@@ -104,7 +106,7 @@ class GraphAccessor:
                     cur.execute("UPDATE entities SET crawl_time = %s WHERE entity_id = %s;", (crawl_time, paper_id))
             self.conn.commit()
         except Exception as e:
-            print(f"Error updating paper: {e}")
+            logging.error(f"Error updating paper: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
@@ -117,7 +119,7 @@ class GraphAccessor:
                 paragraphs = [row[0] for row in cur.fetchall()]
             return paragraphs
         except Exception as e:
-            print(f"Error fetching paper paragraphs: {e}")
+            logging.error(f"Error fetching paper paragraphs: {e}")
             self.conn.rollback()
             return []
 
@@ -130,7 +132,7 @@ class GraphAccessor:
             self.conn.commit()
             return source_id
         except Exception as e:
-            print(f"Error adding source: {e}")
+            logging.error(f"Error adding source: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
@@ -146,7 +148,7 @@ class GraphAccessor:
                     cur.execute("INSERT INTO entity_link (from_id, to_id, entity_strength, link_type) VALUES (%s, %s, 'source');", (source_id, paper_id,1))
             self.conn.commit()
         except Exception as e:
-            print(f"Error linking source to paper: {e}")
+            logging.error(f"Error linking source to paper: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
@@ -162,7 +164,7 @@ class GraphAccessor:
                     cur.execute("INSERT INTO entity_link (from_id, to_id, entity_strength, link_type) VALUES (%s, %s, %s, 'author');", (author_id, paper_id, 1))
             self.conn.commit()
         except Exception as e:
-            print(f"Error linking author to paper: {e}")
+            logging.error(f"Error linking author to paper: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
@@ -184,7 +186,7 @@ class GraphAccessor:
                     paragraph_id = cur.fetchone()[0]
             self.conn.commit()
         except Exception as e:
-            print(f"Error adding paragraph: {e}")
+            logging.error(f"Error adding paragraph: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
@@ -207,7 +209,7 @@ class GraphAccessor:
                     cur.execute("UPDATE entities SET entity_detail = %s WHERE entity_id = %s;", (organization, author_id))
             self.conn.commit()
         except Exception as e:
-            print(f"Error adding author: {e}")
+            logging.error(f"Error adding author: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
@@ -223,7 +225,7 @@ class GraphAccessor:
                     cur.execute("UPDATE entities SET entity_embed = %s WHERE entity_id = %s;", (embedding, paragraph_id))
             self.conn.commit()
         except Exception as e:
-            print(f"Error updating paragraph: {e}")
+            logging.error(f"Error updating paragraph: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
@@ -242,7 +244,7 @@ class GraphAccessor:
                     cur.execute("UPDATE paragraph_tags SET tag_value = %s WHERE paragraph_id = %s AND tag_name = %s;", (tag_value, paragraph_id, tag))
             self.conn.commit()
         except Exception as e:
-            print(f"Error adding tag to paragraph: {e}")
+            logging.error(f"Error adding tag to paragraph: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
@@ -261,7 +263,7 @@ class GraphAccessor:
                     cur.execute("UPDATE entity_tags SET tag_value = %s WHERE entity_id = %s AND tag_name = %s;", (tag_value, paper_id, tag))
             self.conn.commit()
         except Exception as e:
-            print(f"Error adding tag to entity: {e}")
+            logging.error(f"Error adding tag to entity: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
@@ -274,7 +276,7 @@ class GraphAccessor:
                 paragraph_ids = [row[0] for row in cur.fetchall()]
             return paragraph_ids
         except Exception as e:
-            print(f"Error finding paragraphs by tag: {e}")
+            logging.error(f"Error finding paragraphs by tag: {e}")
             self.conn.rollback()
             return []
 
@@ -286,7 +288,7 @@ class GraphAccessor:
                 tags = [row[0] for row in cur.fetchall()]
             return tags
         except Exception as e:
-            print(f"Error finding tags for paragraph: {e}")
+            logging.error(f"Error finding tags for paragraph: {e}")
             self.conn.rollback()
             return []
 
@@ -308,7 +310,7 @@ class GraphAccessor:
                 similar_paragraph_ids = [row[0] for row in cur.fetchall()]
             return similar_paragraph_ids
         except Exception as e:
-            print(f"Error finding similar entities: {e}")
+            logging.error(f"Error finding similar entities: {e}")
             self.conn.rollback()
             return []
 
@@ -321,7 +323,7 @@ class GraphAccessor:
             embedding = embeddings.embed_query(content)
             return embedding
         except Exception as e:
-            print(f"Error generating embedding: {e}")
+            logging.error(f"Error generating embedding: {e}")
             return [0.0] * 1536  # Return a zero vector as a fallback
         
     def add_to_crawl_queue(self, url: str):
@@ -331,7 +333,7 @@ class GraphAccessor:
                 cur.execute("INSERT INTO crawl_queue (url) VALUES (%s);", (url,))
             self.conn.commit()
         except Exception as e:
-            print(f"Error adding to crawl queue: {e}")
+            logging.error(f"Error adding to crawl queue: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
@@ -348,7 +350,7 @@ class GraphAccessor:
                     return result[0]
             return None
         except Exception as e:
-            print(f"Error fetching from crawl queue: {e}")
+            logging.error(f"Error fetching from crawl queue: {e}")
             self.conn.rollback()
             return None
 
@@ -445,7 +447,7 @@ class GraphAccessor:
         query += " ORDER BY (entity_embed <-> %s::vector) ASC LIMIT %s;"
         params.extend([str(concept_embedding), k])
         
-        print("Query: ", query)
+        logging.debug("Query: ", query)
 
         try:
             with self.conn.cursor() as cur:
@@ -454,7 +456,7 @@ class GraphAccessor:
 
             return related_entity_ids
         except Exception as e:
-            print(f"Error executing query: {e}")
+            logging.error(f"Error executing query: {e}")
             self.conn.rollback()
             return []
         
@@ -491,14 +493,14 @@ class GraphAccessor:
         query += " ORDER BY (entity_embed <-> %s::vector) ASC LIMIT %s;"
         params.extend([str(concept_embedding), k])
         
-        print("Query: ", query)
+        logging.debug("Query: ", query)
 
         try:
             with self.conn.cursor() as cur:
                 cur.execute(query, tuple(params))
                 related_entity_ids = [row[0] for row in cur.fetchall()]
         except Exception as e:
-            print(f"Error executing query: {e}")
+            logging.error(f"Error executing query: {e}")
             self.conn.rollback()
             return []
 
@@ -540,7 +542,7 @@ class GraphAccessor:
                 cur.execute(query, params)
                 matching_entity_ids = [row[0] for row in cur.fetchall()]
         except Exception as e:
-            print(f"Error executing query: {e}")
+            logging.error(f"Error executing query: {e}")
             self.conn.rollback()
             return []
 
@@ -582,7 +584,7 @@ class GraphAccessor:
                 cur.execute(query, params)
                 matching_entity_ids = [row[0] for row in cur.fetchall()]
         except Exception as e:
-            print(f"Error executing query: {e}")
+            logging.error(f"Error executing query: {e}")
             self.conn.rollback()
             return []
 
@@ -608,7 +610,7 @@ class GraphAccessor:
                 result = [{"id": c[0], "name": c[1], "prompt": c[2], "scope": c[3]} for c in cur.fetchall()]
             return result
         except Exception as e:
-            print(f"Error fetching assessment criteria: {e}")
+            logging.error(f"Error fetching assessment criteria: {e}")
             self.conn.rollback()
             return []
     
@@ -626,7 +628,7 @@ class GraphAccessor:
                 criterion_id = cur.fetchone()[0]
             self.conn.commit()
         except Exception as e:
-            print(f"Error adding assessment criterion: {e}")
+            logging.error(f"Error adding assessment criterion: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
@@ -652,17 +654,20 @@ class GraphAccessor:
 
         # Add filtering by entity_ids if provided
         if entity_ids:
-            query += " AND e.entity_id = ANY(%s)"
-            params.append(entity_ids)
+            list_of_ids = ', '.join(map(str, entity_ids))
+        
+            query += " AND e.entity_id IN (" + list_of_ids + ")"
+            # params.append(entity_ids)
 
         query += " ORDER BY e.entity_name ASC;"
+        
+        logging.debug("Query: ", query)
 
         try:
-            with self.conn.cursor() as cur:
-                self.exec_sql(query, params)
-                results = [{"name": row[0], "summary": row[1]} for row in cur.fetchall()]
+            results = self.exec_sql(query, ())#params)
+            results = [{"name": row[0], "summary": row[1]} for row in results]
         except Exception as e:
-            print(f"Error getting entities with summaries: {e}")
+            logging.error(f"Error getting entities with summaries: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
@@ -691,13 +696,12 @@ class GraphAccessor:
                 LIMIT %s;
             """
             
-            with self.conn.cursor() as cur:
-                results = self.exec_sql(query, (str(field_embedding), k))
-            
-                return [{'entity_id': r[0], 'entity_name': r[1], 'tag_value': r[2]} for r in results]
+            results = self.exec_sql(query, (str(field_embedding), k))
+        
+            return [{'entity_id': r[0], 'entity_name': r[1], 'tag_value': r[2]} for r in results]
             
         except Exception as e:
-            print(f"An error occurred: {e}")
+            logging.error(f"An error occurred: {e}")
             self.conn.rollback()
 
     def get_untagged_papers_by_field(self, field: str, tag: str, k: int = 1):
@@ -731,7 +735,7 @@ class GraphAccessor:
                 return [{'entity_id': r[0], 'entity_name': r[1], 'tag_value': r[2]} for r in results]
             
         except Exception as e:
-            print(f"An error occurred: {e}")
+            logging.error(f"An error occurred: {e}")
             self.conn.rollback()
 
     def get_entities_from_db(self, paper_id: int):
@@ -750,23 +754,22 @@ class GraphAccessor:
                     ) GROUP BY entity_id, paper;
         """    
         try:
-            with self.conn.cursor() as cur:
-                result = self.exec_sql(query, (paper_id,))
-                new_results = []
-                for row in result:
-                    (paper_id, paper_desc, nested) = row
-                    
-                    n = '['
-                    for n2 in nested:
-                        n += n2 + ', '
-                    n = n[:-2] + ']'
-                    
-                    description = '{' + paper_desc.replace('\n', ' ').replace('\r', ' ') + ', "authors": ' + n.replace('\n', ' ').replace('\r', ' ') + '}'
-                    new_results.append({"id": paper_id, "json": description})
-                    # print(f"Paper ID: {paper_id}, Description: {description}")
-                return new_results
+            result = self.exec_sql(query, (paper_id,))
+            new_results = []
+            for row in result:
+                (paper_id, paper_desc, nested) = row
+                
+                n = '['
+                for n2 in nested:
+                    n += n2 + ', '
+                n = n[:-2] + ']'
+                
+                description = '{' + paper_desc.replace('\n', ' ').replace('\r', ' ') + ', "authors": ' + n.replace('\n', ' ').replace('\r', ' ') + '}'
+                new_results.append({"id": paper_id, "json": description})
+                # print(f"Paper ID: {paper_id}, Description: {description}")
+            return new_results
         except Exception as e:
-            print(f"Error fetching entities from DB: {e}")
+            logging.error(f"Error fetching entities from DB: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
@@ -787,23 +790,22 @@ class GraphAccessor:
                     ) GROUP BY entity_id, paper;
         """    
         try:
-            with self.conn.cursor() as cur:
-                result = self.exec_sql(query, (paper_id,tag))
-                new_results = []
-                for row in result:
-                    (paper_id, paper_desc, nested) = row
-                    
-                    n = '['
-                    for n2 in nested:
-                        n += n2 + ', '
-                    n = n[:-2] + ']'
-                    
-                    description = '{' + paper_desc.replace('\n', ' ').replace('\r', ' ') + ', "authors": ' + n.replace('\n', ' ').replace('\r', ' ') + '}'
-                    new_results.append({"id": paper_id, "json": description})
-                    # print(f"Paper ID: {paper_id}, Description: {description}")
-                return new_results
+            result = self.exec_sql(query, (paper_id,tag))
+            new_results = []
+            for row in result:
+                (paper_id, paper_desc, nested) = row
+                
+                n = '['
+                for n2 in nested:
+                    n += n2 + ', '
+                n = n[:-2] + ']'
+                
+                description = '{' + paper_desc.replace('\n', ' ').replace('\r', ' ') + ', "authors": ' + n.replace('\n', ' ').replace('\r', ' ') + '}'
+                new_results.append({"id": paper_id, "json": description})
+                # print(f"Paper ID: {paper_id}, Description: {description}")
+            return new_results
         except Exception as e:
-            print(f"Error fetching untagged entities: {e}")
+            logging.error(f"Error fetching untagged entities: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
@@ -832,7 +834,7 @@ class GraphAccessor:
                 task_id = cur.fetchone()[0]
             self.conn.commit()
         except Exception as e:
-            print(f"Error adding task to queue: {e}")
+            logging.error(f"Error adding task to queue: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
@@ -865,7 +867,7 @@ class GraphAccessor:
                     }
             return None
         except Exception as e:
-            print(f"Error fetching next task: {e}")
+            logging.error(f"Error fetching next task: {e}")
             self.conn.rollback()
             return None
 
@@ -882,7 +884,7 @@ class GraphAccessor:
                 cur.execute(query, (task_id,))
             self.conn.commit()
         except Exception as e:
-            print(f"Error deleting task: {e}")
+            logging.error(f"Error deleting task: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
