@@ -1,7 +1,3 @@
-[submodule "dblp-parser"]
-	path = dblp-parser
-	url = https://github.com/algenosalatino/dblp-parser.git
-
 [submodule "dblp_parser"]
 	path = dblp_parser
 	url = https://github.com/angelosalatino/dblp-parser.git
