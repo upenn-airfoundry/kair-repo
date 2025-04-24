@@ -10,6 +10,7 @@
 import traceback
 import os
 import json
+import pandas as pd
 
 from files.pdfs import split_pdf_with_langchain, get_presplit_aryn_file, chunk_and_partition_pdf_file
 from files.text import index_split_paragraphs
@@ -26,6 +27,7 @@ from aryn_sdk.partition import partition_file
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from graph_db import GraphAccessor
+from files.tables import read_xml
 
 from dotenv import load_dotenv, find_dotenv
 
@@ -36,7 +38,7 @@ DOWNLOAD_DIR = os.getenv("PDF_PATH", os.path.expanduser("~/Downloads"))
 graph_db = GraphAccessor()
 
         
-def handle_file(path: str, use_aryn: bool = False):
+def handle_file(path: str, url: str, use_aryn: bool = False):
     pdf_path = os.path.join(DOWNLOAD_DIR, path)
     # Get today's date
     the_date = datetime.now().date()
@@ -55,7 +57,7 @@ def handle_file(path: str, use_aryn: bool = False):
         split_docs = get_presplit_aryn_file(pdf_path)
     
     if len(split_docs):
-        index_split_paragraphs(split_docs, path, the_date)
+        index_split_paragraphs(split_docs, url, path, the_date)
         
     graph_db.commit()
     
@@ -67,9 +69,10 @@ def parse_pdfs_and_index(use_aryn: bool = False):
     for paper in papers:
         paper_id = paper['id']
         path = paper['path']
+        url = paper['url']
         try:
             if not GraphAccessor().paper_exists(path):
-                handle_file(path, use_aryn)
+                handle_file(path, url, use_aryn)
             else:
                 print(f"Paper {path} is already indexed with ID {paper_id}.")
 
@@ -78,4 +81,7 @@ def parse_pdfs_and_index(use_aryn: bool = False):
             traceback.print_exc()
             
 if __name__ == "__main__":
-    parse_pdfs_and_index()
+    #parse_pdfs_and_index()
+    
+    df = read_xml(os.path.join(DOWNLOAD_DIR, 'dblp-2025-04-01.xml'))
+    df.to_html('result.html')
