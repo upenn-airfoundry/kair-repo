@@ -22,6 +22,11 @@ from prompts.prompt_from_items import answer_from_summary
 
 from search import search_over_criteria, search_multiple_criteria
 from search import generate_rag_answer
+import logging
+ 
+ # Configure APScheduler
+class Config:
+    SCHEDULER_API_ENABLED = True
 
 app = Flask("KAIR")
 app.config.from_object(Config)
