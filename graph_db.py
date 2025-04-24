@@ -809,6 +809,35 @@ class GraphAccessor:
             self.conn.rollback()
             # throw the exception again
             raise e
+        
+    def link_entity_to_document(self, entity_id: int, indexed_url: str, indexed_path: str, indexed_type: str = 'pdf', indexed_json: str = None): 
+        """
+        Link an entity to a document in the database.
+
+        Args:
+            entity_id (int): The ID of the entity to link.
+            indexed_url (str): The URL of the document.
+            indexed_path (str): The path of the document.
+        """
+        try:
+            indexed_embed = ''
+            if indexed_json:
+                indexed_embed = self.generate_embedding(indexed_json)
+            else:
+                indexed_embed = self.generate_embedding(indexed_path.split('/')[-1])
+            with self.conn.cursor() as cur:
+                # Check if the link already exists
+                cur.execute("SELECT 1 FROM indexed_documents WHERE entity_id = %s;", (entity_id, ))
+                the_link = cur.fetchone()
+                if the_link is None:
+                    cur.execute("INSERT INTO indexed_documents (entity_id, document_name, document_url, document_type, document_json, document_embed) VALUES (%s, %s, 'document');", (entity_id, indexed_path, indexed_url, indexed_type, indexed_json, indexed_embed))
+            self.conn.commit()
+        except Exception as e:
+            logging.error(f"Error linking entity to document: {e}")
+            self.conn.rollback()
+            # throw the exception again
+            raise e
+        
 
     def add_task_to_queue(self, name: str, scope: str, prompt: str, description: str) -> int:
         """

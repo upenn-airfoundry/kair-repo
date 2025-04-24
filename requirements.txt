@@ -15,3 +15,8 @@ bs4
 flask-apscheduler
 flask-socketio
 zon
+arxiv
+datasketch
+pytest
+lxml
+

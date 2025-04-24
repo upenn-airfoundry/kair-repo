@@ -154,9 +154,9 @@ def get_crawled_paths() -> List[Dict[str, str]]:
         List[Dict[str, str]]: A list of dictionaries containing the crawl ID and file path.
     """
     
-    rows = graph_db.exec_sql("SELECT id, path FROM crawled ORDER BY id ASC;")
+    rows = graph_db.exec_sql("SELECT id, path, url FROM crawled LEFT JOIN crawl_queue ON crawled.id = crawl_queue.id ORDER BY id ASC;")
     
-    return [{"id": row[0], "path": row[1]} for row in rows]
+    return [{"id": row[0], "path": row[1], "url": row[2]} for row in rows]
 
 def get_crawled_paths_by_date(date: str) -> List[Dict[str, str]]:
     """Fetch all files/paths from the crawled table by date.
