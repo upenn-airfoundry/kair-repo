@@ -16,6 +16,9 @@ from files.pdfs import split_pdf_with_langchain, get_presplit_aryn_file, chunk_a
 from files.text import index_split_paragraphs
 from crawl.crawler_queue import get_crawled_paths
 
+from files.tables import read_csv, read_json, read_jsonl, read_mat, read_xml, sample_rows_to_string
+from files.tables import create_table_entity
+
 from datetime import datetime
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -27,7 +30,6 @@ from aryn_sdk.partition import partition_file
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from graph_db import GraphAccessor
-from files.tables import read_xml
 
 from dotenv import load_dotenv, find_dotenv
 
@@ -52,6 +54,19 @@ def handle_file(path: str, url: str, use_aryn: bool = False):
         else:               
             # Parse the PDF using Langchain PDF parser
             split_docs = split_pdf_with_langchain(pdf_path)  # Use the Langchain splitter to split the documents
+    elif path.endswith('.jsonl') or path.endswith('.json') or path.endswith('.csv') or path.endswith('.mat') or path.endswith('.xml'):
+        if path.endswith('.jsonl'):
+            df = read_jsonl(path)
+        elif path.endswith('.json'):
+            df = read_json(path)
+        elif path.endswith('.csv'):
+            df = read_csv(path)
+        elif path.endswith('.mat'):
+            df = read_mat(path)
+        elif path.endswith('.xml'):
+            df = read_xml(path)
+
+        create_table_entity(df, graph_db)        
     else:
         print(f"Non-PDF file: {pdf_path}")
         split_docs = get_presplit_aryn_file(pdf_path)
@@ -61,27 +76,25 @@ def handle_file(path: str, url: str, use_aryn: bool = False):
         
     graph_db.commit()
     
-def parse_pdfs_and_index(use_aryn: bool = False):
+def parse_files_and_index(use_aryn: bool = False):
     # Fetch all papers
     #papers = graph_db.exec_sql("SELECT id, path FROM crawled;")
-    papers = get_crawled_paths()
+    files = get_crawled_paths()
 
-    for paper in papers:
-        paper_id = paper['id']
-        path = paper['path']
-        url = paper['url']
+    for doc in files:
+        doc_id = doc['id']
+        path = doc['path']
+        url = doc['url']
         try:
-            if not GraphAccessor().paper_exists(path):
+            if not GraphAccessor().exists_document(path):
                 handle_file(path, url, use_aryn)
             else:
-                print(f"Paper {path} is already indexed with ID {paper_id}.")
+                print(f"Document {path} is already indexed with ID {doc_id}.")
 
         except Exception as e:
             print(f"Error processing PDF {path}: {e}")
             traceback.print_exc()
             
 if __name__ == "__main__":
-    #parse_pdfs_and_index()
+    parse_files_and_index()
     
-    df = read_xml(os.path.join(DOWNLOAD_DIR, 'dblp-2025-04-01.xml'))
-    df.to_html('result.html')

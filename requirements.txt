@@ -19,4 +19,5 @@ arxiv
 datasketch
 pytest
 lxml
+hurry.filesize
 

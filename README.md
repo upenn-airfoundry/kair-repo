@@ -125,8 +125,8 @@ Details for *data enrichment* can be found [here](enrichment.md).
 You will probably want to run the web modules as specified above. However, there are additional scriptable sub-modules that may be of interest.
 
 1. `create_db.sql`: Creates the host database in PostgreSQL
-2. `frontier_queue.py`: Adds a number of URLs to the table representing the frontier queue for crawling
-3. `crawler.py`: Fetches the URLs from the frontier queue and pulls the PDF files to a local directory
+2. `cli.py add_crawl_list`: Adds a number of URLs to the table representing the frontier queue for crawling
+3. `cli.py crawl`: Fetches the URLs from the frontier queue and pulls the PDF files to a local directory
 4. `generate_doc_info.py`: Parses the PDFs in the local directory, chunks them for RAG, and generates a paper descriptor, author info (+ links), a summary.
 
 5. *Not yet inimplemented*: `generate_source_info.py` should **enrich** the corpus with information about authors, organizations, etc. and use these as the basis of **trust**.  In turn, once computed this trust could be propagated as tags to all documents.

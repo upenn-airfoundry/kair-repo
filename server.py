@@ -6,7 +6,7 @@ from enrichment.iterative_enrichment import process_next_task
 from flask import request
 from flask_cors import CORS
 
-from generate_doc_info import parse_pdfs_and_index
+from generate_doc_info import parse_files_and_index
 from enrichment.langchain_ops import AssessmentOps
 from enrichment.iterative_enrichment import iterative_enrichment
 import json
@@ -19,7 +19,7 @@ from dotenv import load_dotenv, find_dotenv
 _ = load_dotenv(find_dotenv())
 
 
-from crawler import fetch_and_crawl
+from crawler import fetch_and_crawl_frontier
 
 from search import search_over_criteria, search_multiple_criteria
 from search import generate_rag_answer
@@ -113,25 +113,25 @@ def add_to_crawl_queue():
     return jsonify({"message": "URL added to crawl queue"}), 201
 
 
-@app.route('/crawl_pdf', methods=['POST'])
-def crawl_pdf():
+@app.route('/crawl_files', methods=['POST'])
+def crawl_files():
     """
     Endpoint to crawl PDFs from the crawl queue.
     """
     try:
-        fetch_and_crawl()
+        fetch_and_crawl_frontier()
         return jsonify({"message": "Crawling completed successfully"}), 200
     except Exception as e:
         return jsonify({"error": f"An error occurred during crawling: {e}"}), 500
 
 
 @app.route('/parse_pdfs_and_index', methods=['POST'])
-def parse_pdfs_and_index_endpoint():
+def parse_files_and_index_endpoint():
     """
     Endpoint to parse PDFs and index them into the database.
     """
     try:
-        parse_pdfs_and_index(use_aryn=False)
+        parse_files_and_index(use_aryn=False)
         return jsonify({"message": "PDF parsing and indexing completed successfully"}), 200
     except Exception as e:
         return jsonify({"error": f"An error occurred during parsing and indexing: {e}"}), 500

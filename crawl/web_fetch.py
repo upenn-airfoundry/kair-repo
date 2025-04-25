@@ -16,7 +16,7 @@ from graph_db import GraphAccessor
 import logging
 from datetime import datetime
 
-from pennsieve import get_dataset_metadata
+#from pennsieve import get_dataset_metadata
 
 from dotenv import load_dotenv, find_dotenv
 _ = load_dotenv(find_dotenv())
@@ -94,23 +94,23 @@ def get_pdf_protocol(url, filename, retry_delay=12, retries=3):
           return
 
 
-start_id, end_id = 0, 420
+# start_id, end_id = 0, 420
 
-publication_links_df = pd.DataFrame(columns=['DatasetID', 'Publications'])
+# publication_links_df = pd.DataFrame(columns=['DatasetID', 'Publications'])
 
-for dataset_id in range(start_id, end_id + 1):
-    try:
-        response = get_dataset_metadata(dataset_id)
-        if len(response['datasets']) > 0 and len(response['datasets'][0]['externalPublications']) > 1:
-            # print(f"Dataset ID {dataset_id}:")
-            # print(response['datasets'][0]['externalPublications'])
-            publications = response['datasets'][0]['externalPublications']
-            refined_pubs = [{'relationshipType': publication['relationshipType'], 'url': get_redirected_url(publication['doi'])} for publication in publications]
-            publication_links_df = pd.concat([publication_links_df, pd.DataFrame({'DatasetID': [dataset_id], 'Publications': [refined_pubs]})], ignore_index=True)
-        else:
-            print(f"Dataset ID {dataset_id}: Failed: {response}")
-    except Exception as e:
-        print(f"Dataset ID {dataset_id}: Error - {e}")
+# for dataset_id in range(start_id, end_id + 1):
+#     try:
+#         response = get_dataset_metadata(dataset_id)
+#         if len(response['datasets']) > 0 and len(response['datasets'][0]['externalPublications']) > 1:
+#             # print(f"Dataset ID {dataset_id}:")
+#             # print(response['datasets'][0]['externalPublications'])
+#             publications = response['datasets'][0]['externalPublications']
+#             refined_pubs = [{'relationshipType': publication['relationshipType'], 'url': get_redirected_url(publication['doi'])} for publication in publications]
+#             publication_links_df = pd.concat([publication_links_df, pd.DataFrame({'DatasetID': [dataset_id], 'Publications': [refined_pubs]})], ignore_index=True)
+#         else:
+#             print(f"Dataset ID {dataset_id}: Failed: {response}")
+#     except Exception as e:
+#         print(f"Dataset ID {dataset_id}: Error - {e}")
         
         
 def get_pdf_bioRxiv(url, filename):
@@ -222,24 +222,25 @@ def fetch_and_crawl_frontier():
                 if add_to_crawled(crawl_id, "dataset_papers/" + pdf_base):  # Mark this PDF as crawled in the database
                     logging.debug(f"Registered pre-crawled file: {pdf_filename}")
             else:
-                # Save the PDF locally
-                pdf_base = f"{crawl_id}.pdf"
-                pdf_filename = os.path.join(DOWNLOADS_DIR, pdf_base)
+                file_base = url.split('/')[-1]
+                # Save the file locally
+                ext_file = f"{crawl_id}-{file_base}"
+                filename = os.path.join(DOWNLOADS_DIR, ext_file)
                 
-                if os.path.exists(pdf_filename):
-                    logging.debug(f"File {pdf_filename} already exists. Skipping download.")
-                    add_to_crawled(crawl_id, pdf_base)
+                if os.path.exists(filename):
+                    logging.debug(f"File {filename} already exists. Skipping download.")
+                    add_to_crawled(crawl_id, ext_file)
                     continue
 
                 # Fetch the PDF from the URL
                 response = requests.get(url, timeout=10)
                 response.raise_for_status()  # Raise an error for HTTP errors
 
-                with open(pdf_filename, "wb") as pdf_file:
+                with open(filename, "wb") as pdf_file:
                     pdf_file.write(response.content)
                     
-                if add_to_crawled(crawl_id, pdf_base):  # Mark this PDF as crawled in the database
-                    logging.info(f"Successfully crawled and saved: {url}")
+                if add_to_crawled(crawl_id, ext_file):  # Mark this PDF as crawled in the database
+                    logging.info(f"Successfully crawled and saved: {url} to {ext_file}")
 
         except requests.RequestException as e:
             print(f"Failed to fetch URL {url}: {e}")

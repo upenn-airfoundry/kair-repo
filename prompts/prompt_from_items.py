@@ -10,7 +10,7 @@ from typing import Union, Literal
 import pandas as pd
 
 from enrichment.llms import analysis_llm
-from files.tables import TableProcessor
+from files.tables import sample_rows_to_string
 
 # Define the Pydantic Model
 class ConditionalAnswer(BaseModel):
@@ -113,7 +113,7 @@ def summarize_table(df: pd.DataFrame) -> str:
     schema = ", ".join([f"{col} ({dtype})" for col, dtype in zip(df.columns, df.dtypes)])
 
     # Sample rows
-    sample_rows = TableProcessor.sample_rows_to_string(df)
+    sample_rows = sample_rows_to_string(df)
 
     # Combine schema and sample rows into a context
     context = f"Schema: {schema}\n\nSample Rows:\n{sample_rows}"
