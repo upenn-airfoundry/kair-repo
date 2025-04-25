@@ -114,7 +114,7 @@ function App() {
 
   const handleCrawlPDF = async () => {
     try {
-      const response = await axios.post(url2 + "/crawl_pdf");
+      const response = await axios.post(url2 + "/crawl_files");
       setMessage(response.data.message);
     } catch (error) {
       setMessage(`Error: ${error.response?.data?.error || error.message}`);

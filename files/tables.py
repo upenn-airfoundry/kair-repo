@@ -18,6 +18,12 @@ def read_json(file_path: str) -> pd.DataFrame:
     """
     return pd.read_json(file_path)
 
+def read_jsonl(file_path: str) -> pd.DataFrame:
+    """
+    Read a JSON file into a DataFrame.
+    """
+    return pd.read_json(file_path, )
+
 def read_xml(file_path: str) -> pd.DataFrame:
     """
     Read an XML file into a DataFrame.
@@ -44,3 +50,10 @@ def sample_rows_to_string(df: pd.DataFrame) -> str:
     sampled_df = df.sample(n=sample_size, random_state=42)
     return sampled_df.to_string(index=False)
 
+def create_table_entity(df: pd.DataFrame, graph_db: GraphAccessor):
+    sample_content = sample_rows_to_string(df)
+    
+    # TODO: (1) generate schema description alongside sample, (2) create entity, (3) create annotation
+    # (Should we create a sample annotation per column? A sketch per column?)
+    # Also create a table in the indexed_tables schema, with a well-chosen name
+    return
