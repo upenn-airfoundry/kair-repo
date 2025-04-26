@@ -19,7 +19,7 @@ from dotenv import load_dotenv, find_dotenv
 _ = load_dotenv(find_dotenv())
 
 
-from crawler import fetch_and_crawl_frontier
+from crawl.web_fetch import fetch_and_crawl_frontier
 
 from search import search_over_criteria, search_multiple_criteria
 from search import generate_rag_answer

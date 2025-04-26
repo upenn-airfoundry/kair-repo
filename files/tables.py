@@ -22,7 +22,7 @@ def read_jsonl(file_path: str) -> pd.DataFrame:
     """
     Read a JSON file into a DataFrame.
     """
-    return pd.read_json(file_path, )
+    return pd.read_json(file_path,lines=True )
 
 def read_xml(file_path: str) -> pd.DataFrame:
     """
