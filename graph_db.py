@@ -8,7 +8,7 @@
 
 import psycopg2
 import os
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Any
 
 from langchain_openai.embeddings import OpenAIEmbeddings
 
@@ -59,7 +59,7 @@ class GraphAccessor:
         """Check if a paper exists in the database by URL."""
         try:
             with self.conn.cursor() as cur:
-                cur.execute("SELECT entity_id FROM entities WHERE entity_type = 'paper' OR entity_type = 'table' AND entity_url = %s;", (url, ))
+                cur.execute("SELECT entity_id FROM entities WHERE (entity_type = 'paper' OR entity_type = 'table') AND entity_url = %s;", (url, ))
                 result = cur.fetchone()
                 return result is not None
         except Exception as e:
@@ -810,7 +810,7 @@ class GraphAccessor:
             # throw the exception again
             raise e
         
-    def link_entity_to_document(self, entity_id: int, indexed_url: str, indexed_path: str, indexed_type: str = 'pdf', indexed_json: str = None): 
+    def link_entity_to_document(self, entity_id: int, indexed_url: str, indexed_path: str, indexed_type: str = 'pdf', indexed_json: Any = None): 
         """
         Link an entity to a document in the database.
 
@@ -822,7 +822,7 @@ class GraphAccessor:
         try:
             indexed_embed = ''
             if indexed_json:
-                indexed_embed = self.generate_embedding(indexed_json)
+                indexed_embed = self.generate_embedding(indexed_json['summary'])
             else:
                 indexed_embed = self.generate_embedding(indexed_path.split('/')[-1])
             with self.conn.cursor() as cur:
@@ -830,7 +830,8 @@ class GraphAccessor:
                 cur.execute("SELECT 1 FROM indexed_documents WHERE entity_id = %s;", (entity_id, ))
                 the_link = cur.fetchone()
                 if the_link is None:
-                    cur.execute("INSERT INTO indexed_documents (entity_id, document_name, document_url, document_type, document_json, document_embed) VALUES (%s, %s, 'document');", (entity_id, indexed_path, indexed_url, indexed_type, indexed_json, indexed_embed))
+                    # TODO: add JSON?
+                    cur.execute("INSERT INTO indexed_documents (entity_id, document_name, document_url, document_type, document_json, document_embed) VALUES (%s, %s, %s, %s, %s, %s);", (entity_id, indexed_path, indexed_url, indexed_type, None, indexed_embed))
             self.conn.commit()
         except Exception as e:
             logging.error(f"Error linking entity to document: {e}")

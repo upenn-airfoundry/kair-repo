@@ -6,10 +6,11 @@
 ##################
 
 import argparse
+import os
 from datetime import datetime
 from graph_db import GraphAccessor
 from dblp_parser.dblp_parser import DBLP
-
+from dotenv import load_dotenv, find_dotenv
 
 from crawl.crawler_queue import add_to_crawled
 from crawl.web_fetch import fetch_and_crawl_frontier
@@ -17,13 +18,19 @@ from crawl.web_fetch import fetch_and_crawl_frontier
 from crawl.crawler_queue import add_local_downloads_to_crawl_queue
 from crawl.crawler_queue import add_urls_to_crawl_queue
 
+from generate_doc_info import parse_files_and_index
+
 graph_db = GraphAccessor()
 
+find_dotenv()
+_ = load_dotenv()
+
+PDFS_DIR = os.getenv("PDF_PATH", os.path.expanduser("~/Downloads") + '/pdfs')
+DATA_DIR = os.getenv("DATA_PATH", os.path.expanduser("~/Downloads") + '/data')
 
 def add_urls_to_frontier():
     """Main function to add URLs to the crawl queue."""
-    count = 0
-    count += add_urls_to_crawl_queue([
+    count = add_urls_to_crawl_queue([
         "https://onlinelibrary.wiley.com/doi/pdf/10.1111/pbi.13913",
         "https://onlinelibrary.wiley.com/doi/pdfdirect/10.1111/pbi.12657",
         "https://onlinelibrary.wiley.com/doi/epdf/10.1111/pbi.14591",
@@ -49,9 +56,9 @@ def add_urls_to_frontier():
     
     print(f"Added {count} URLs to the crawl queue.")
     
-def crawl_local_files():
-    count += add_local_downloads_to_crawl_queue()
-    print(f"Added {count} URLs to the crawl queue.")
+def crawl_local_files(directory: str = PDFS_DIR):
+    count = add_local_downloads_to_crawl_queue(directory)
+    print(f"Added {count} local files to the crawl queue.")
     
 def split_dblp():
     dblp = DBLP()
@@ -70,18 +77,24 @@ def main():
 
     if args.command == "add_crawl_list":
         add_urls_to_frontier()
-    elif args.command == "add_local_files":
-        crawl_local_files()
-    elif args.command == "crawl":
         fetch_and_crawl_frontier()
+    elif args.command == "add_local_files":
+        crawl_local_files(PDFS_DIR)
+        crawl_local_files(DATA_DIR)
+        fetch_and_crawl_frontier()
+    elif args.command == "process":
+        parse_files_and_index()
     elif args.command == "dblp":
-        split_dblp()
+        if not os.path.exists('dblp.jsonl'):
+            print("DBLP file not found. Downloading and parsing...")
+            split_dblp()
+        crawl_local_files(DATA_DIR)
     else:
         print("Usage:")
-        print("  python cli.py add_crawl_list   # Add URLs to the crawl queue")
-        print("  python cli.py add_local_files  # Add local files to the crawl queue")
-        print("  python cli.py crawl            # Fetch and crawl documents")
-        print("  python cli.py dblp             # Fetch and crawl documents")
+        print("  python cli.py dblp             # Generate DBLP JSONL file")
+        print("  python cli.py add_crawl_list   # Add URLs to the crawl queue, fetch")
+        print("  python cli.py add_local_files  # Add local files to the crawl queue, fetch")
+        print("  python cli.py process          # Parse and index documents")
         print("  python cli.py --help           # Show this help message")
 
 if __name__ == "__main__":

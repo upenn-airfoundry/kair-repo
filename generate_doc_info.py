@@ -55,6 +55,7 @@ def handle_file(path: str, url: str, use_aryn: bool = False):
             # Parse the PDF using Langchain PDF parser
             split_docs = split_pdf_with_langchain(pdf_path)  # Use the Langchain splitter to split the documents
     elif path.endswith('.jsonl') or path.endswith('.json') or path.endswith('.csv') or path.endswith('.mat') or path.endswith('.xml'):
+        path = path[7:] # Remove file://
         if path.endswith('.jsonl'):
             df = read_jsonl(path)
         elif path.endswith('.json'):

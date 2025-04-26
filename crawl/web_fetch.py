@@ -202,9 +202,9 @@ def get_pdf(row):
     else:
         pass
     
-def fetch_and_crawl_frontier():
+def fetch_and_crawl_frontier(downloads_dir: str = DOWNLOADS_DIR):
     # Ensure the downloads directory exists
-    os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+    os.makedirs(downloads_dir, exist_ok=True)
 
     rows = get_urls_to_crawl()
 
@@ -214,13 +214,13 @@ def fetch_and_crawl_frontier():
         try:
             if url.startswith('file://'):
                 pdf_base = url.split('/')[-1]  # Extract the filename from the URL
-                pdf_filename = os.path.join(DOWNLOADS_DIR + "/dataset_papers/" + pdf_base)  # Construct the local file path
+                pdf_filename = url[7:]  # Remove the 'file://' prefix
                 # if os.path.exists(DOWNLOADS_DIR + "/chunked_files/" + pdf_base + ".json"):
                 #     if add_to_crawled(crawl_id, "chunked_files/" + pdf_base + ".json"):  # Mark this PDF as crawled in the database
                 #         print(f"Registered pre-chunked file: {pdf_filename}")
                 # else:
-                if add_to_crawled(crawl_id, "dataset_papers/" + pdf_base):  # Mark this PDF as crawled in the database
-                    logging.debug(f"Registered pre-crawled file: {pdf_filename}")
+                if add_to_crawled(crawl_id, url):  # Mark this PDF as crawled in the database
+                    logging.debug(f"Registered pre-crawled file: {pdf_base}")
             else:
                 file_base = url.split('/')[-1]
                 # Save the file locally
@@ -229,7 +229,7 @@ def fetch_and_crawl_frontier():
                 
                 if os.path.exists(filename):
                     logging.debug(f"File {filename} already exists. Skipping download.")
-                    add_to_crawled(crawl_id, ext_file)
+                    add_to_crawled(crawl_id, 'file://' + filename)
                     continue
 
                 # Fetch the PDF from the URL
@@ -243,9 +243,9 @@ def fetch_and_crawl_frontier():
                     logging.info(f"Successfully crawled and saved: {url} to {ext_file}")
 
         except requests.RequestException as e:
-            print(f"Failed to fetch URL {url}: {e}")
+            logging.error(f"Failed to fetch URL {url}: {e}")
         except Exception as e:
-            print(f"Error processing crawl ID {crawl_id}: {e}")
+            logging.error(f"Error processing crawl ID {crawl_id}: {e}")
 
     graph_db.commit()
     
