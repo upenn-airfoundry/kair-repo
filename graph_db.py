@@ -7,8 +7,11 @@
 ##################
 
 import psycopg2
+from psycopg2.extras import execute_values
 import os
 from typing import List, Tuple, Optional, Any
+import pandas as pd
+import uuid
 
 from langchain_openai.embeddings import OpenAIEmbeddings
 
@@ -68,7 +71,7 @@ class GraphAccessor:
         finally:
             self.conn.rollback()
         
-    def add_paper(self, url: str, crawl_time: str, title: str, summary: str) -> int:
+    def add_paper(self, url: str, title: str, summary: str) -> int:
         """Store a paper by URL and return its paper ID."""
         try:
             with self.conn.cursor() as cur:
@@ -95,6 +98,35 @@ class GraphAccessor:
             # throw the exception again
             raise e
         return paper_id
+
+    def add_table(self, url: str, path: str, summary: str) -> int:
+        """Store a table by URL and return its entity ID."""
+        try:
+            with self.conn.cursor() as cur:
+                # See if paper already exists
+                # cur.execute("SELECT entity_id FROM entities WHERE entity_type = 'paper' AND entity_url = %s;", (url, ))
+                cur.execute("SELECT entity_id FROM entities WHERE entity_name = %s and entity_type = 'table';", (path, ))
+                table_id = cur.fetchone()
+                if table_id is not None:
+                    table_id = table_id[0]
+                    
+                    # Make sure the summary is updated
+                    cur.execute("SELECT tag_value FROM entity_tags WHERE entity_id = %s AND tag_name = %s;", (table_id, "summary"))
+                    the_tag = cur.fetchone()
+                    if the_tag is None:
+                        cur.execute ("INSERT INTO entity_tags (entity_id, tag_name, tag_value, tag_embed) VALUES (%s, %s, %s, %s);", (table_id, "summary", summary, self.generate_embedding(summary)))
+                else:            
+                    cur.execute("INSERT INTO entities (entity_url, entity_type, entity_name) VALUES (%s, %s, %s) RETURNING entity_id;", (url,'table',path))
+                    table_id = cur.fetchone()[0]
+                
+                    cur.execute ("INSERT INTO entity_tags (entity_id, tag_name, tag_value, tag_embed) VALUES (%s, %s, %s, %s);", (table_id, "summary", summary, self.generate_embedding(summary)))
+                self.conn.commit()
+                return table_id
+        except Exception as e:
+            logging.error(f"Error adding table: {e}")
+            self.conn.rollback()
+            # throw the exception again
+            raise e
     
     def update_paper(self, paper_id: int, url: Optional[str] = None, crawl_time: Optional[str] = None):
         """Update all fields of a paper given its ID."""
@@ -839,6 +871,79 @@ class GraphAccessor:
             # throw the exception again
             raise e
         
+    def index_dataframe(self, df: pd.DataFrame, entity_id: int) -> str:
+        """
+        Index a Pandas DataFrame by creating a new table in the indexed_tables schema
+        and adding a row to the indexed_tables table in the public schema.
+
+        Args:
+            df (pd.DataFrame): The Pandas DataFrame to index.
+            entity_id (int): The entity ID to associate with the table.
+
+        Returns:
+            str: The name of the created table (unique ID).
+        """
+        # Generate a unique table name
+        table_name = f"table_{uuid.uuid4().hex[:8]}"
+
+        try:
+            with self.conn.cursor() as cur:
+                # Create the table in the indexed_tables schema
+                create_table_query = f"""
+                    CREATE TABLE indexed_tables.{table_name} (
+                        {', '.join([f'"{col}" {self._get_sql_type(dtype)}' for col, dtype in zip(df.columns, df.dtypes)])}
+                    );
+                """
+                cur.execute(create_table_query)
+
+                # Insert the DataFrame data into the new table
+                insert_query = f"""
+                    INSERT INTO indexed_tables.{table_name} ({', '.join([f'"{col}"' for col in df.columns])})
+                    VALUES %s;
+                """#({', '.join(['%s' for _ in df.columns])});
+                
+                # for _, row in df.iterrows():
+                    # cur.execute(insert_query, tuple(row))
+                data_to_insert = [tuple(row) for row in df.values.tolist()]
+                execute_values(cur, insert_query, data_to_insert)
+
+                # Add a row to the indexed_tables table in the public schema
+                cur.execute("""
+                    INSERT INTO indexed_tables (entity_id, table_name, table_type)
+                    VALUES (%s, %s, %s);
+                """, (entity_id, table_name, 'dataframe'))
+
+            # Commit the transaction
+            self.conn.commit()
+
+        except Exception as e:
+            logging.error(f"Error indexing DataFrame: {e}")
+            self.conn.rollback()
+            raise e
+
+        return table_name
+
+    def _get_sql_type(self, dtype: Any) -> str:
+        """
+        Map Pandas data types to SQL data types.
+
+        Args:
+            dtype (pd.api.types.DtypeObj): The Pandas data type.
+
+        Returns:
+            str: The corresponding SQL data type.
+        """
+        if pd.api.types.is_integer_dtype(dtype):
+            return "INTEGER"
+        elif pd.api.types.is_float_dtype(dtype):
+            return "DOUBLE PRECISION"
+        elif pd.api.types.is_bool_dtype(dtype):
+            return "BOOLEAN"
+        elif pd.api.types.is_datetime64_any_dtype(dtype):
+            return "TIMESTAMP"
+        else:
+            return "TEXT"
+    
 
     def add_task_to_queue(self, name: str, scope: str, prompt: str, description: str) -> int:
         """

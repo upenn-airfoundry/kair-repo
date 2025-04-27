@@ -19,7 +19,7 @@ from langchain.prompts import ChatPromptTemplate
 from langchain.schema.output_parser import StrOutputParser
 
 from prompts.restructure import truncate_text_to_token_limit
-from prompts.prompt_from_items import summarize_web_page
+from prompts.prompt_for_documents import summarize_web_page
 from crawl.semscholar import fetch_author_from_semantic_scholar
 from crawl.duckduckgo import get_author_homepage
 

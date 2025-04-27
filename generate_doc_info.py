@@ -48,12 +48,12 @@ def handle_file(path: str, url: str, use_aryn: bool = False):
     if path.endswith('.pdf.json'):
         path = path.replace('.json', '')
         
-    if path.endswith('.pdf'):                    
+    if path.endswith('.pdf'):
         if use_aryn:
             split_docs = chunk_and_partition_pdf_file(pdf_path)
         else:               
             # Parse the PDF using Langchain PDF parser
-            split_docs = split_pdf_with_langchain(pdf_path)  # Use the Langchain splitter to split the documents
+            pass#split_docs = split_pdf_with_langchain(pdf_path)  # Use the Langchain splitter to split the documents
     elif path.endswith('.jsonl') or path.endswith('.json') or path.endswith('.csv') or path.endswith('.mat') or path.endswith('.xml'):
         path = path[7:] # Remove file://
         if path.endswith('.jsonl'):
@@ -67,13 +67,13 @@ def handle_file(path: str, url: str, use_aryn: bool = False):
         elif path.endswith('.xml'):
             df = read_xml(path)
 
-        create_table_entity(df, graph_db)        
+        create_table_entity(path, df, graph_db)        
     else:
         print(f"Non-PDF file: {pdf_path}")
         split_docs = get_presplit_aryn_file(pdf_path)
     
-    if len(split_docs):
-        index_split_paragraphs(split_docs, url, path, the_date)
+        if len(split_docs):
+            index_split_paragraphs(split_docs, url, path, the_date)
         
     graph_db.commit()
     
