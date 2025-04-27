@@ -96,7 +96,7 @@ def index_split_paragraphs(split_docs: list, path: str, url: str, the_date) -> i
         title = extracted_info.get("title", "Unknown Title")
         field = extracted_info.get("field", "Unknown Field")
         summary = extracted_info.get("summary", "No Summary Available")
-        paper_id = graph_db.add_paper(url=path, crawl_time=str(the_date), title=title, summary=summary)
+        paper_id = graph_db.add_paper(url=path, title=title, summary=summary)
         
         # Store the link to the actual document
         graph_db.link_entity_to_document(paper_id, url, path, 'pdf', extracted_info)

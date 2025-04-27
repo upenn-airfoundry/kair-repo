@@ -8,7 +8,7 @@ from langchain.output_parsers import PydanticOutputParser
 from typing import List, Dict, Any, Callable as Fun, Optional
 
 from enrichment.core_ops import EnrichmentCoreOps
-from prompts.prompt_from_items import answer_from_summary
+from prompts.prompt_for_documents import answer_from_summary
 
 def entity_retriever(entity_id: str, graph_db: GraphAccessor) -> list[str]:
     """

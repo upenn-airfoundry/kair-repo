@@ -292,3 +292,13 @@ grant select, insert, update, delete on all tables in schema public to kair;
 create schema indexed_tables;
 
 grant select, insert, update, delete on all tables in schema public to kair;
+
+grant create on schema indexed_tables to kair;
+
+GRANT USAGE ON SCHEMA indexed_tables TO kair;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA indexed_tables GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO kair;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO kair;
+
+grant select, insert, update, delete on all tables in schema indexed_tables to kair;

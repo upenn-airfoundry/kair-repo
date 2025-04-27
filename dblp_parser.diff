@@ -1,0 +1,40 @@
+diff --git a/dblp_parser.py b/dblp_parser.py
+index da57a31..0f6a38c 100644
+--- a/dblp_parser.py
++++ b/dblp_parser.py
+@@ -9,7 +9,7 @@ import requests
+ from hurry.filesize import size
+ import gzip
+ import shutil
+-
++from lxml import html
+ 
+ class DBLP:
+     """ The DBLP class that parses the XML DBLP dump """
+@@ -173,7 +173,7 @@ class DBLP:
+                                      load_dtd=True,
+                                      no_network=False,
+                                      encoding="ISO-8859-1")
+-            tree = etree.parse(dblp_path, parser=parser)
++            tree = html.parse(dblp_path)#, parser=parser)
+             root = tree.getroot()
+             self.__log_msg("Successfully loaded \"{}\".".format(dblp_path))
+             return root
+@@ -643,6 +643,17 @@ class DBLP:
+ 
+             with open(save_path, 'w', encoding='utf8') as file:
+ 
++                if root.tag.lower() == 'html' and len(root.xpath('/html/body/*')) > 0:
++                    print("HTML parser added <html><body> tags, adjusting root...")
++                    # If the original root was <data>, it might now be /html/body/data
++                    actual_root = root.xpath('/html/body/*[1]') # Get the first element within body
++                    if actual_root:
++                        root = actual_root[0]
++                    else: # Handle cases where body might be empty or structure is different
++                        print("Could not find original root within html/body.")
++                        raise ValueError("Invalid structure after parsing HTML.")
++                        # Fallback or specific handling needed here
++
+                 for element in root:
+                     if element.tag in self.all_elements:
+                         attrib_values = self.__extract_features(element, features_to_extract, include_key_and_mdate)
