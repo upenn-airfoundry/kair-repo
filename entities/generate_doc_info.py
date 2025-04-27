@@ -11,6 +11,7 @@ import traceback
 import os
 import json
 import pandas as pd
+import logging
 
 from files.pdfs import split_pdf_with_langchain, get_presplit_aryn_file, chunk_and_partition_pdf_file
 from files.text import index_split_paragraphs
@@ -69,7 +70,7 @@ def handle_file(path: str, url: str, use_aryn: bool = False):
 
         create_table_entity(path, df, graph_db)        
     else:
-        print(f"Non-PDF file: {pdf_path}")
+        logging.info(f"Non-PDF file: {pdf_path}")
         split_docs = get_presplit_aryn_file(pdf_path)
     
         if len(split_docs):
@@ -78,8 +79,16 @@ def handle_file(path: str, url: str, use_aryn: bool = False):
     graph_db.commit()
     
 def parse_files_and_index(use_aryn: bool = False):
-    # Fetch all papers
-    #papers = graph_db.exec_sql("SELECT id, path FROM crawled;")
+    """
+    Parse files and index them in the database.  These could be PDFs or tables.
+    This function will check if the document is already indexed in the database.
+    If it is, it will skip the indexing process.
+    If it is not, it will parse the document and index it.
+    This function will also handle any errors that occur during the parsing and indexing process.
+
+    Args:
+        use_aryn (bool, optional): Uses the Aryn parser. Defaults to False.
+    """
     files = get_crawled_paths()
 
     for doc in files:
@@ -87,15 +96,12 @@ def parse_files_and_index(use_aryn: bool = False):
         path = doc['path']
         url = doc['url']
         try:
-            if not GraphAccessor().exists_document(path):
+            if not GraphAccessor().exists_document(url):
                 handle_file(path, url, use_aryn)
             else:
-                print(f"Document {path} is already indexed with ID {doc_id}.")
+                logging.info(f"Document {path} is already indexed with ID {doc_id}.")
 
         except Exception as e:
-            print(f"Error processing PDF {path}: {e}")
+            logging.error(f"Error processing PDF {path}: {e}")
             traceback.print_exc()
             
-if __name__ == "__main__":
-    parse_files_and_index()
-    

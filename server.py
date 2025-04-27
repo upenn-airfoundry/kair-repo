@@ -5,23 +5,34 @@ from graph_db import GraphAccessor
 from enrichment.iterative_enrichment import process_next_task
 from flask import request
 from flask_cors import CORS
+
+from generate_doc_info import parse_files_and_index
+from enrichment.langchain_ops import AssessmentOps
+from enrichment.iterative_enrichment import iterative_enrichment
 import json
 from datetime import datetime
 
 
-from dotenv import load_dotenv
-from dotenv import find_dotenv
+from dotenv import load_dotenv, find_dotenv
 
 # Load environment variables from .env file
 _ = load_dotenv(find_dotenv())
 
 
+from crawl.web_fetch import fetch_and_crawl_frontier
 from crawler import fetch_and_crawl
 from generate_detection_info import get_papers_by_field, get_entities_from_db
 from prompts.prompt_from_items import answer_from_summary
 
 from search import search_over_criteria, search_multiple_criteria
 from search import generate_rag_answer
+
+import logging
+
+# Configure APScheduler
+class Config:
+    SCHEDULER_API_ENABLED = True
+
 
 app = Flask("KAIR")
 app.config.from_object(Config)
@@ -105,25 +116,25 @@ def add_to_crawl_queue():
     return jsonify({"message": "URL added to crawl queue"}), 201
 
 
-@app.route('/crawl_pdf', methods=['POST'])
-def crawl_pdf():
+@app.route('/crawl_files', methods=['POST'])
+def crawl_files():
     """
     Endpoint to crawl PDFs from the crawl queue.
     """
     try:
-        fetch_and_crawl()
+        fetch_and_crawl_frontier()
         return jsonify({"message": "Crawling completed successfully"}), 200
     except Exception as e:
         return jsonify({"error": f"An error occurred during crawling: {e}"}), 500
 
 
 @app.route('/parse_pdfs_and_index', methods=['POST'])
-def parse_pdfs_and_index_endpoint():
+def parse_files_and_index_endpoint():
     """
     Endpoint to parse PDFs and index them into the database.
     """
     try:
-        parse_pdfs_and_index(use_aryn=False)
+        parse_files_and_index(use_aryn=False)
         return jsonify({"message": "PDF parsing and indexing completed successfully"}), 200
     except Exception as e:
         return jsonify({"error": f"An error occurred during parsing and indexing: {e}"}), 500

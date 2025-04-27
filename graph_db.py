@@ -7,10 +7,15 @@
 ##################
 
 import psycopg2
+from psycopg2.extras import execute_values
 import os
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Any
+import pandas as pd
+import uuid
 
 from langchain_openai.embeddings import OpenAIEmbeddings
+
+import logging
 
 from dotenv import load_dotenv, find_dotenv
 
@@ -33,7 +38,7 @@ class GraphAccessor:
                 cur.execute(sql, params)
                 return cur.fetchall()
         except Exception as e:
-            print(f"Error executing SQL: {e}")
+            logging.error(f"Error executing SQL: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
@@ -44,7 +49,7 @@ class GraphAccessor:
             with self.conn.cursor() as cur:
                 cur.execute(sql, params)
         except Exception as e:
-            print(f"Error executing SQL: {e}")
+            logging.error(f"Error executing SQL: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
@@ -53,20 +58,20 @@ class GraphAccessor:
         """Commit the current transaction."""
         self.conn.commit()
         
-    def paper_exists(self, url: str) -> bool:
+    def exists_document(self, url: str) -> bool:
         """Check if a paper exists in the database by URL."""
         try:
             with self.conn.cursor() as cur:
-                cur.execute("SELECT entity_id FROM entities WHERE entity_type = 'paper' AND entity_url = %s;", (url, ))
+                cur.execute("SELECT entity_id FROM entities WHERE (entity_type = 'paper' OR entity_type = 'table') AND entity_url = %s;", (url, ))
                 result = cur.fetchone()
                 return result is not None
         except Exception as e:
-            print(f"Error checking paper existence: {e}")
+            logging.error(f"Error checking paper existence: {e}")
             return False
         finally:
             self.conn.rollback()
         
-    def add_paper(self, url: str, crawl_time: str, title: str, summary: str) -> int:
+    def add_paper(self, url: str, title: str, summary: str) -> int:
         """Store a paper by URL and return its paper ID."""
         try:
             with self.conn.cursor() as cur:
@@ -88,11 +93,40 @@ class GraphAccessor:
                     cur.execute ("INSERT INTO entity_tags (entity_id, tag_name, tag_value, tag_embed) VALUES (%s, %s, %s, %s);", (paper_id, "summary", summary, self.generate_embedding(summary)))
             self.conn.commit()
         except Exception as e:
-            print(f"Error adding paper: {e}")
+            logging.error(f"Error adding paper: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
         return paper_id
+
+    def add_table(self, url: str, path: str, summary: str) -> int:
+        """Store a table by URL and return its entity ID."""
+        try:
+            with self.conn.cursor() as cur:
+                # See if paper already exists
+                # cur.execute("SELECT entity_id FROM entities WHERE entity_type = 'paper' AND entity_url = %s;", (url, ))
+                cur.execute("SELECT entity_id FROM entities WHERE entity_name = %s and entity_type = 'table';", (path, ))
+                table_id = cur.fetchone()
+                if table_id is not None:
+                    table_id = table_id[0]
+                    
+                    # Make sure the summary is updated
+                    cur.execute("SELECT tag_value FROM entity_tags WHERE entity_id = %s AND tag_name = %s;", (table_id, "summary"))
+                    the_tag = cur.fetchone()
+                    if the_tag is None:
+                        cur.execute ("INSERT INTO entity_tags (entity_id, tag_name, tag_value, tag_embed) VALUES (%s, %s, %s, %s);", (table_id, "summary", summary, self.generate_embedding(summary)))
+                else:            
+                    cur.execute("INSERT INTO entities (entity_url, entity_type, entity_name) VALUES (%s, %s, %s) RETURNING entity_id;", (url,'table',path))
+                    table_id = cur.fetchone()[0]
+                
+                    cur.execute ("INSERT INTO entity_tags (entity_id, tag_name, tag_value, tag_embed) VALUES (%s, %s, %s, %s);", (table_id, "summary", summary, self.generate_embedding(summary)))
+                self.conn.commit()
+                return table_id
+        except Exception as e:
+            logging.error(f"Error adding table: {e}")
+            self.conn.rollback()
+            # throw the exception again
+            raise e
     
     def update_paper(self, paper_id: int, url: Optional[str] = None, crawl_time: Optional[str] = None):
         """Update all fields of a paper given its ID."""
@@ -104,7 +138,7 @@ class GraphAccessor:
                     cur.execute("UPDATE entities SET crawl_time = %s WHERE entity_id = %s;", (crawl_time, paper_id))
             self.conn.commit()
         except Exception as e:
-            print(f"Error updating paper: {e}")
+            logging.error(f"Error updating paper: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
@@ -117,7 +151,7 @@ class GraphAccessor:
                 paragraphs = [row[0] for row in cur.fetchall()]
             return paragraphs
         except Exception as e:
-            print(f"Error fetching paper paragraphs: {e}")
+            logging.error(f"Error fetching paper paragraphs: {e}")
             self.conn.rollback()
             return []
 
@@ -130,7 +164,7 @@ class GraphAccessor:
             self.conn.commit()
             return source_id
         except Exception as e:
-            print(f"Error adding source: {e}")
+            logging.error(f"Error adding source: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
@@ -146,7 +180,7 @@ class GraphAccessor:
                     cur.execute("INSERT INTO entity_link (from_id, to_id, entity_strength, link_type) VALUES (%s, %s, 'source');", (source_id, paper_id,1))
             self.conn.commit()
         except Exception as e:
-            print(f"Error linking source to paper: {e}")
+            logging.error(f"Error linking source to paper: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
@@ -162,7 +196,7 @@ class GraphAccessor:
                     cur.execute("INSERT INTO entity_link (from_id, to_id, entity_strength, link_type) VALUES (%s, %s, %s, 'author');", (author_id, paper_id, 1))
             self.conn.commit()
         except Exception as e:
-            print(f"Error linking author to paper: {e}")
+            logging.error(f"Error linking author to paper: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
@@ -184,7 +218,7 @@ class GraphAccessor:
                     paragraph_id = cur.fetchone()[0]
             self.conn.commit()
         except Exception as e:
-            print(f"Error adding paragraph: {e}")
+            logging.error(f"Error adding paragraph: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
@@ -207,7 +241,7 @@ class GraphAccessor:
                     cur.execute("UPDATE entities SET entity_detail = %s WHERE entity_id = %s;", (organization, author_id))
             self.conn.commit()
         except Exception as e:
-            print(f"Error adding author: {e}")
+            logging.error(f"Error adding author: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
@@ -223,7 +257,7 @@ class GraphAccessor:
                     cur.execute("UPDATE entities SET entity_embed = %s WHERE entity_id = %s;", (embedding, paragraph_id))
             self.conn.commit()
         except Exception as e:
-            print(f"Error updating paragraph: {e}")
+            logging.error(f"Error updating paragraph: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
@@ -242,7 +276,7 @@ class GraphAccessor:
                     cur.execute("UPDATE paragraph_tags SET tag_value = %s WHERE paragraph_id = %s AND tag_name = %s;", (tag_value, paragraph_id, tag))
             self.conn.commit()
         except Exception as e:
-            print(f"Error adding tag to paragraph: {e}")
+            logging.error(f"Error adding tag to paragraph: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
@@ -261,7 +295,7 @@ class GraphAccessor:
                     cur.execute("UPDATE entity_tags SET tag_value = %s WHERE entity_id = %s AND tag_name = %s;", (tag_value, paper_id, tag))
             self.conn.commit()
         except Exception as e:
-            print(f"Error adding tag to entity: {e}")
+            logging.error(f"Error adding tag to entity: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
@@ -274,7 +308,7 @@ class GraphAccessor:
                 paragraph_ids = [row[0] for row in cur.fetchall()]
             return paragraph_ids
         except Exception as e:
-            print(f"Error finding paragraphs by tag: {e}")
+            logging.error(f"Error finding paragraphs by tag: {e}")
             self.conn.rollback()
             return []
 
@@ -286,7 +320,7 @@ class GraphAccessor:
                 tags = [row[0] for row in cur.fetchall()]
             return tags
         except Exception as e:
-            print(f"Error finding tags for paragraph: {e}")
+            logging.error(f"Error finding tags for paragraph: {e}")
             self.conn.rollback()
             return []
 
@@ -308,7 +342,7 @@ class GraphAccessor:
                 similar_paragraph_ids = [row[0] for row in cur.fetchall()]
             return similar_paragraph_ids
         except Exception as e:
-            print(f"Error finding similar entities: {e}")
+            logging.error(f"Error finding similar entities: {e}")
             self.conn.rollback()
             return []
 
@@ -321,7 +355,7 @@ class GraphAccessor:
             embedding = embeddings.embed_query(content)
             return embedding
         except Exception as e:
-            print(f"Error generating embedding: {e}")
+            logging.error(f"Error generating embedding: {e}")
             return [0.0] * 1536  # Return a zero vector as a fallback
         
     def add_to_crawl_queue(self, url: str):
@@ -331,7 +365,7 @@ class GraphAccessor:
                 cur.execute("INSERT INTO crawl_queue (url) VALUES (%s);", (url,))
             self.conn.commit()
         except Exception as e:
-            print(f"Error adding to crawl queue: {e}")
+            logging.error(f"Error adding to crawl queue: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
@@ -348,7 +382,7 @@ class GraphAccessor:
                     return result[0]
             return None
         except Exception as e:
-            print(f"Error fetching from crawl queue: {e}")
+            logging.error(f"Error fetching from crawl queue: {e}")
             self.conn.rollback()
             return None
 
@@ -445,7 +479,7 @@ class GraphAccessor:
         query += " ORDER BY (entity_embed <-> %s::vector) ASC LIMIT %s;"
         params.extend([str(concept_embedding), k])
         
-        print("Query: ", query)
+        logging.debug("Query: ", query)
 
         try:
             with self.conn.cursor() as cur:
@@ -454,7 +488,7 @@ class GraphAccessor:
 
             return related_entity_ids
         except Exception as e:
-            print(f"Error executing query: {e}")
+            logging.error(f"Error executing query: {e}")
             self.conn.rollback()
             return []
         
@@ -491,14 +525,14 @@ class GraphAccessor:
         query += " ORDER BY (entity_embed <-> %s::vector) ASC LIMIT %s;"
         params.extend([str(concept_embedding), k])
         
-        print("Query: ", query)
+        logging.debug("Query: ", query)
 
         try:
             with self.conn.cursor() as cur:
                 cur.execute(query, tuple(params))
                 related_entity_ids = [row[0] for row in cur.fetchall()]
         except Exception as e:
-            print(f"Error executing query: {e}")
+            logging.error(f"Error executing query: {e}")
             self.conn.rollback()
             return []
 
@@ -540,7 +574,7 @@ class GraphAccessor:
                 cur.execute(query, params)
                 matching_entity_ids = [row[0] for row in cur.fetchall()]
         except Exception as e:
-            print(f"Error executing query: {e}")
+            logging.error(f"Error executing query: {e}")
             self.conn.rollback()
             return []
 
@@ -582,7 +616,7 @@ class GraphAccessor:
                 cur.execute(query, params)
                 matching_entity_ids = [row[0] for row in cur.fetchall()]
         except Exception as e:
-            print(f"Error executing query: {e}")
+            logging.error(f"Error executing query: {e}")
             self.conn.rollback()
             return []
 
@@ -608,7 +642,7 @@ class GraphAccessor:
                 result = [{"id": c[0], "name": c[1], "prompt": c[2], "scope": c[3]} for c in cur.fetchall()]
             return result
         except Exception as e:
-            print(f"Error fetching assessment criteria: {e}")
+            logging.error(f"Error fetching assessment criteria: {e}")
             self.conn.rollback()
             return []
     
@@ -626,7 +660,7 @@ class GraphAccessor:
                 criterion_id = cur.fetchone()[0]
             self.conn.commit()
         except Exception as e:
-            print(f"Error adding assessment criterion: {e}")
+            logging.error(f"Error adding assessment criterion: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
@@ -652,17 +686,20 @@ class GraphAccessor:
 
         # Add filtering by entity_ids if provided
         if entity_ids:
-            query += " AND e.entity_id = ANY(%s)"
-            params.append(entity_ids)
+            list_of_ids = ', '.join(map(str, entity_ids))
+        
+            query += " AND e.entity_id IN (" + list_of_ids + ")"
+            # params.append(entity_ids)
 
         query += " ORDER BY e.entity_name ASC;"
+        
+        logging.debug("Query: ", query)
 
         try:
-            with self.conn.cursor() as cur:
-                self.exec_sql(query, params)
-                results = [{"name": row[0], "summary": row[1]} for row in cur.fetchall()]
+            results = self.exec_sql(query, ())#params)
+            results = [{"name": row[0], "summary": row[1]} for row in results]
         except Exception as e:
-            print(f"Error getting entities with summaries: {e}")
+            logging.error(f"Error getting entities with summaries: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
@@ -691,13 +728,12 @@ class GraphAccessor:
                 LIMIT %s;
             """
             
-            with self.conn.cursor() as cur:
-                results = self.exec_sql(query, (str(field_embedding), k))
-            
-                return [{'entity_id': r[0], 'entity_name': r[1], 'tag_value': r[2]} for r in results]
+            results = self.exec_sql(query, (str(field_embedding), k))
+        
+            return [{'entity_id': r[0], 'entity_name': r[1], 'tag_value': r[2]} for r in results]
             
         except Exception as e:
-            print(f"An error occurred: {e}")
+            logging.error(f"An error occurred: {e}")
             self.conn.rollback()
 
     def get_untagged_papers_by_field(self, field: str, tag: str, k: int = 1):
@@ -731,7 +767,7 @@ class GraphAccessor:
                 return [{'entity_id': r[0], 'entity_name': r[1], 'tag_value': r[2]} for r in results]
             
         except Exception as e:
-            print(f"An error occurred: {e}")
+            logging.error(f"An error occurred: {e}")
             self.conn.rollback()
 
     def get_entities_from_db(self, paper_id: int):
@@ -750,23 +786,22 @@ class GraphAccessor:
                     ) GROUP BY entity_id, paper;
         """    
         try:
-            with self.conn.cursor() as cur:
-                result = self.exec_sql(query, (paper_id,))
-                new_results = []
-                for row in result:
-                    (paper_id, paper_desc, nested) = row
-                    
-                    n = '['
-                    for n2 in nested:
-                        n += n2 + ', '
-                    n = n[:-2] + ']'
-                    
-                    description = '{' + paper_desc.replace('\n', ' ').replace('\r', ' ') + ', "authors": ' + n.replace('\n', ' ').replace('\r', ' ') + '}'
-                    new_results.append({"id": paper_id, "json": description})
-                    # print(f"Paper ID: {paper_id}, Description: {description}")
-                return new_results
+            result = self.exec_sql(query, (paper_id,))
+            new_results = []
+            for row in result:
+                (paper_id, paper_desc, nested) = row
+                
+                n = '['
+                for n2 in nested:
+                    n += n2 + ', '
+                n = n[:-2] + ']'
+                
+                description = '{' + paper_desc.replace('\n', ' ').replace('\r', ' ') + ', "authors": ' + n.replace('\n', ' ').replace('\r', ' ') + '}'
+                new_results.append({"id": paper_id, "json": description})
+                # print(f"Paper ID: {paper_id}, Description: {description}")
+            return new_results
         except Exception as e:
-            print(f"Error fetching entities from DB: {e}")
+            logging.error(f"Error fetching entities from DB: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
@@ -787,26 +822,128 @@ class GraphAccessor:
                     ) GROUP BY entity_id, paper;
         """    
         try:
-            with self.conn.cursor() as cur:
-                result = self.exec_sql(query, (paper_id,tag))
-                new_results = []
-                for row in result:
-                    (paper_id, paper_desc, nested) = row
-                    
-                    n = '['
-                    for n2 in nested:
-                        n += n2 + ', '
-                    n = n[:-2] + ']'
-                    
-                    description = '{' + paper_desc.replace('\n', ' ').replace('\r', ' ') + ', "authors": ' + n.replace('\n', ' ').replace('\r', ' ') + '}'
-                    new_results.append({"id": paper_id, "json": description})
-                    # print(f"Paper ID: {paper_id}, Description: {description}")
-                return new_results
+            result = self.exec_sql(query, (paper_id,tag))
+            new_results = []
+            for row in result:
+                (paper_id, paper_desc, nested) = row
+                
+                n = '['
+                for n2 in nested:
+                    n += n2 + ', '
+                n = n[:-2] + ']'
+                
+                description = '{' + paper_desc.replace('\n', ' ').replace('\r', ' ') + ', "authors": ' + n.replace('\n', ' ').replace('\r', ' ') + '}'
+                new_results.append({"id": paper_id, "json": description})
+                # print(f"Paper ID: {paper_id}, Description: {description}")
+            return new_results
         except Exception as e:
-            print(f"Error fetching untagged entities: {e}")
+            logging.error(f"Error fetching untagged entities: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
+        
+    def link_entity_to_document(self, entity_id: int, indexed_url: str, indexed_path: str, indexed_type: str = 'pdf', indexed_json: Any = None): 
+        """
+        Link an entity to a document in the database.
+
+        Args:
+            entity_id (int): The ID of the entity to link.
+            indexed_url (str): The URL of the document.
+            indexed_path (str): The path of the document.
+        """
+        try:
+            indexed_embed = ''
+            if indexed_json:
+                indexed_embed = self.generate_embedding(indexed_json['summary'])
+            else:
+                indexed_embed = self.generate_embedding(indexed_path.split('/')[-1])
+            with self.conn.cursor() as cur:
+                # Check if the link already exists
+                cur.execute("SELECT 1 FROM indexed_documents WHERE entity_id = %s;", (entity_id, ))
+                the_link = cur.fetchone()
+                if the_link is None:
+                    # TODO: add JSON?
+                    cur.execute("INSERT INTO indexed_documents (entity_id, document_name, document_url, document_type, document_json, document_embed) VALUES (%s, %s, %s, %s, %s, %s);", (entity_id, indexed_path, indexed_url, indexed_type, None, indexed_embed))
+            self.conn.commit()
+        except Exception as e:
+            logging.error(f"Error linking entity to document: {e}")
+            self.conn.rollback()
+            # throw the exception again
+            raise e
+        
+    def index_dataframe(self, df: pd.DataFrame, entity_id: int) -> str:
+        """
+        Index a Pandas DataFrame by creating a new table in the indexed_tables schema
+        and adding a row to the indexed_tables table in the public schema.
+
+        Args:
+            df (pd.DataFrame): The Pandas DataFrame to index.
+            entity_id (int): The entity ID to associate with the table.
+
+        Returns:
+            str: The name of the created table (unique ID).
+        """
+        # Generate a unique table name
+        table_name = f"table_{uuid.uuid4().hex[:8]}"
+
+        try:
+            with self.conn.cursor() as cur:
+                # Create the table in the indexed_tables schema
+                create_table_query = f"""
+                    CREATE TABLE indexed_tables.{table_name} (
+                        {', '.join([f'"{col}" {self._get_sql_type(dtype)}' for col, dtype in zip(df.columns, df.dtypes)])}
+                    );
+                """
+                cur.execute(create_table_query)
+
+                # Insert the DataFrame data into the new table
+                insert_query = f"""
+                    INSERT INTO indexed_tables.{table_name} ({', '.join([f'"{col}"' for col in df.columns])})
+                    VALUES %s;
+                """#({', '.join(['%s' for _ in df.columns])});
+                
+                # for _, row in df.iterrows():
+                    # cur.execute(insert_query, tuple(row))
+                data_to_insert = [tuple(row) for row in df.values.tolist()]
+                execute_values(cur, insert_query, data_to_insert)
+
+                # Add a row to the indexed_tables table in the public schema
+                cur.execute("""
+                    INSERT INTO indexed_tables (entity_id, table_name, table_type)
+                    VALUES (%s, %s, %s);
+                """, (entity_id, table_name, 'dataframe'))
+
+            # Commit the transaction
+            self.conn.commit()
+
+        except Exception as e:
+            logging.error(f"Error indexing DataFrame: {e}")
+            self.conn.rollback()
+            raise e
+
+        return table_name
+
+    def _get_sql_type(self, dtype: Any) -> str:
+        """
+        Map Pandas data types to SQL data types.
+
+        Args:
+            dtype (pd.api.types.DtypeObj): The Pandas data type.
+
+        Returns:
+            str: The corresponding SQL data type.
+        """
+        if pd.api.types.is_integer_dtype(dtype):
+            return "INTEGER"
+        elif pd.api.types.is_float_dtype(dtype):
+            return "DOUBLE PRECISION"
+        elif pd.api.types.is_bool_dtype(dtype):
+            return "BOOLEAN"
+        elif pd.api.types.is_datetime64_any_dtype(dtype):
+            return "TIMESTAMP"
+        else:
+            return "TEXT"
+    
 
     def add_task_to_queue(self, name: str, scope: str, prompt: str, description: str) -> int:
         """
@@ -832,7 +969,7 @@ class GraphAccessor:
                 task_id = cur.fetchone()[0]
             self.conn.commit()
         except Exception as e:
-            print(f"Error adding task to queue: {e}")
+            logging.error(f"Error adding task to queue: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
@@ -865,7 +1002,7 @@ class GraphAccessor:
                     }
             return None
         except Exception as e:
-            print(f"Error fetching next task: {e}")
+            logging.error(f"Error fetching next task: {e}")
             self.conn.rollback()
             return None
 
@@ -882,7 +1019,7 @@ class GraphAccessor:
                 cur.execute(query, (task_id,))
             self.conn.commit()
         except Exception as e:
-            print(f"Error deleting task: {e}")
+            logging.error(f"Error deleting task: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e

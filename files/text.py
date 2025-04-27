@@ -22,7 +22,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from graph_db import GraphAccessor
 
-from enrichment import analysis_llm
+from enrichment.llms import analysis_llm
 
 from dotenv import load_dotenv, find_dotenv
 
@@ -32,7 +32,7 @@ DOWNLOAD_DIR = os.getenv("PDF_PATH", os.path.expanduser("~/Downloads"))
 
 graph_db = GraphAccessor()
 
-def index_split_paragraphs(split_docs, path, the_date) -> int:
+def index_split_paragraphs(split_docs: list, path: str, url: str, the_date) -> int:
     """
     Indexes the paragraphs from the split documents into the graph database.
     This function takes the split documents, concatenates the first two splits,
@@ -96,7 +96,10 @@ def index_split_paragraphs(split_docs, path, the_date) -> int:
         title = extracted_info.get("title", "Unknown Title")
         field = extracted_info.get("field", "Unknown Field")
         summary = extracted_info.get("summary", "No Summary Available")
-        paper_id = graph_db.add_paper(url=path, crawl_time=str(the_date), title=title, summary=summary)
+        paper_id = graph_db.add_paper(url=path, title=title, summary=summary)
+        
+        # Store the link to the actual document
+        graph_db.link_entity_to_document(paper_id, url, path, 'pdf', extracted_info)
         
         print ("Added paper " + str(paper_id) + " with title " + title)
         

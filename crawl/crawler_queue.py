@@ -22,10 +22,10 @@ import os
 graph_db = GraphAccessor()
 
 # Directory to save downloaded PDFs
-DOWNLOADS_DIR = os.getenv("PDF_PATH", os.path.expanduser("~/Downloads")) + '/dataset_papers'
+DOWNLOADS_DIR = os.getenv("PDF_PATH", os.path.expanduser("~/Downloads") + '/pdfs')
 
 def add_local_downloads_to_crawl_queue(download_dir: str = DOWNLOADS_DIR) -> int:
-    """Add local PDFs to the crawl queue.
+    """Add local files to the crawl queue.
     This function scans a specified directory for PDF files and adds their URLs to the crawl queue in the database.
     It checks if the URL already exists in the crawl queue to avoid duplicates.
     The URLs are constructed based on the local file path, assuming a specific format.
@@ -44,8 +44,8 @@ def add_local_downloads_to_crawl_queue(download_dir: str = DOWNLOADS_DIR) -> int
         # Construct the full path to the file
         file_path = os.path.join(download_dir, filename)
         
-        # Check if the file is a PDF
-        if os.path.isfile(file_path) and filename.endswith(".pdf"):
+        # Check if the file is valid
+        if os.path.isfile(file_path):
             # Create the URL based on the filename (assuming a specific format)
             url = f"file://{file_path}"
             
@@ -139,9 +139,9 @@ def get_urls_to_crawl(max: int = None) -> List[Dict[str, str]]:
     """
     
     if max is not None:
-        rows = graph_db.exec_sql("SELECT id, url FROM crawl_queue ORDER BY id ASC LIMIT %s;", (max,))
+        rows = graph_db.exec_sql("SELECT id, url FROM crawl_queue c WHERE NOT EXISTS(SELECT * FROM crawled WHERE id=c.id) ORDER BY id ASC LIMIT %s;", (max,))
     else:
-        rows = graph_db.exec_sql("SELECT id, url FROM crawl_queue ORDER BY id ASC;")
+        rows = graph_db.exec_sql("SELECT id, url FROM crawl_queue c WHERE NOT EXISTS(SELECT * FROM crawled WHERE id=c.id) ORDER BY id ASC;")
     
     return [{"id": row[0], "url": row[1]} for row in rows]
 
@@ -154,9 +154,9 @@ def get_crawled_paths() -> List[Dict[str, str]]:
         List[Dict[str, str]]: A list of dictionaries containing the crawl ID and file path.
     """
     
-    rows = graph_db.exec_sql("SELECT id, path FROM crawled ORDER BY id ASC;")
+    rows = graph_db.exec_sql("SELECT c.id, path, url FROM crawled c LEFT JOIN crawl_queue ON c.id = crawl_queue.id ORDER BY id ASC;")
     
-    return [{"id": row[0], "path": row[1]} for row in rows]
+    return [{"id": row[0], "path": row[1], "url": row[2]} for row in rows]
 
 def get_crawled_paths_by_date(date: str) -> List[Dict[str, str]]:
     """Fetch all files/paths from the crawled table by date.

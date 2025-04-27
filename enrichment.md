@@ -36,6 +36,8 @@ The basic core of the enrichment operator set is in [core_ops](enrichment/core_o
 
 - **Aggregate/generalize**: These are of the form: $\Gamma: entitySet \rightarrow entity$.
 
+- **Paraphrase/transform**:
+
 - **Forget**: Removes an entity or annotation or association.
 
 - **Supersede** Replaces an entity, annotation, or association and creates a history link to its old version.
