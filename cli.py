@@ -18,7 +18,7 @@ from crawl.web_fetch import fetch_and_crawl_frontier
 from crawl.crawler_queue import add_local_downloads_to_crawl_queue
 from crawl.crawler_queue import add_urls_to_crawl_queue
 
-from generate_doc_info import parse_files_and_index
+from entities.generate_doc_info import parse_files_and_index
 
 graph_db = GraphAccessor()
 

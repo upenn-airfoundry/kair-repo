@@ -6,10 +6,11 @@ from enrichment.iterative_enrichment import process_next_task
 from flask import request
 from flask_cors import CORS
 
-from generate_doc_info import parse_files_and_index
+from entities.generate_doc_info import parse_files_and_index
 from enrichment.langchain_ops import AssessmentOps
 from enrichment.iterative_enrichment import iterative_enrichment
 import json
+
 from datetime import datetime
 
 
