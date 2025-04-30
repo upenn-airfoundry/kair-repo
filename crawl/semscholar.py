@@ -3,7 +3,7 @@ SEMANTIC_SCHOLAR_API_URL = "https://api.semanticscholar.org/v1/author/"
 import requests
 
 from prompts.restructure import truncate_text_to_token_limit
-from prompts.prompt_for_documents import summarize_web_page
+from prompts.prompt_from_items import summarize_web_page
 
 
 def fetch_author_from_semantic_scholar(author_name):
