@@ -36,7 +36,8 @@ From a terminal, run the following to build the Python / Flask backend:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip3 install -r requirements.txt` 
+pip3 install uv
+uv pip install -r requirements.txt 
 ```
 
 This should install dependencies.  Make sure your `.env` is updated with an OpenAI API key for access to the GPT APIs.  Now:
