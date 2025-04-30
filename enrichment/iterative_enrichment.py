@@ -21,43 +21,45 @@ def get_current_best_strategy(graph_accessor, task_description):
     return
 
 def enrich_entities(graph_accessor: GraphAccessor, task: str, entity_set: List[int] = None) -> List[str]:
-    criterion = graph_accessor.get_assessment_criteria(task)
+    criteria = graph_accessor.get_assessment_criteria(task)
     
     ret = []
     
-    if criterion is None:
+    if criteria is None:
         print(f"Criterion {task} not found.")
         return
-    name = criterion['name']
-    scope = criterion['scope']
-    prompt = criterion['prompt']
-    # promise = criterion['promise']
     
-    scoped_entities = entity_set;
-    if not scoped_entities:
-        # Get the relevant scope
-        scoped_entities = graph_accessor.get_untagged_papers_by_field(scope, name, DEFAULT_BATCH)
-
-    op = AssessmentOps(prompt, name, 1000)
-    
-    for paper in scoped_entities:
-        result = graph_accessor.get_untagged_entities_as_json(paper['entity_id'], name)
-        if result is None:
-            continue
+    for criterion in criteria:
+        name = criterion['name']
+        scope = criterion['scope']
+        prompt = criterion['prompt']
+        # promise = criterion['promise']
         
-        jsons = [json.loads(row['json']) for row in result]
-        for data in jsons:
-            result = op.enrich_data([data])                
+        scoped_entities = entity_set;
+        if not scoped_entities:
+            # Get the relevant scope
+            scoped_entities = graph_accessor.get_untagged_papers_by_field(scope, name, DEFAULT_BATCH)
 
-            if len(result) == 0:
-                print(f"Criterion {name} is empty for paper {paper['entity_id']}")
-                graph_accessor.add_tag_to_entity(paper['entity_id'], name, None)
+        op = AssessmentOps(prompt, name, 1000)
+        
+        for paper in scoped_entities:
+            result = graph_accessor.get_untagged_entities_as_json(paper['entity_id'], name)
+            if result is None:
                 continue
             
-            ret += result[name]
-            graph_accessor.add_tag_to_entity(paper['entity_id'], name, result[name])
+            jsons = [json.loads(row['json']) for row in result]
+            for data in jsons:
+                result = op.enrich_data([data])                
+
+                if len(result) == 0:
+                    print(f"Criterion {name} is empty for paper {paper['entity_id']}")
+                    graph_accessor.add_tag_to_entity(paper['entity_id'], name, None)
+                    continue
                 
-    return result                
+                ret += result[name]
+                graph_accessor.add_tag_to_entity(paper['entity_id'], name, result[name])
+                
+    return ret                
 
 def entity_enrichment(graph_accessor: GraphAccessor, entity_set: List[int] = []):
     criteria = graph_accessor.get_assessment_criteria(None)
@@ -74,13 +76,14 @@ def pairwise_enrichment(graph_accessor: GraphAccessor):
 
 def iterative_enrichment(graph_accessor: GraphAccessor, task: str = None):
     """
-    Enqueue the enrichment tasks.
+    Enqueue the most promising enrichment tasks for the next round.
     """
     # return entity_enrichment(graph_accessor)
     criteria = graph_accessor.get_assessment_criteria(task)
     
     for criterion in criteria:
-        graph_accessor.add_task_to_queue(criterion['name'], criterion['scope'])
+        # name: str, scope: str, prompt: str, description: str
+        graph_accessor.add_task_to_queue(criterion['name'], criterion['scope'], criterion['prompt'], criterion['name'])
 
 def process_next_task(graph_accessor: GraphAccessor):
     """

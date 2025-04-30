@@ -62,7 +62,7 @@ class GraphAccessor:
         """Check if a paper exists in the database by URL."""
         try:
             with self.conn.cursor() as cur:
-                cur.execute("SELECT entity_id FROM entities WHERE (entity_type = 'paper' OR entity_type = 'table') AND entity_url = %s;", (url, ))
+                cur.execute("SELECT entity_id FROM entities WHERE entity_url = %s;", (url, ))
                 result = cur.fetchone()
                 return result is not None
         except Exception as e:
