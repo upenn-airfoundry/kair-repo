@@ -32,7 +32,7 @@ class Config:
 
 app = Flask("KAIR")
 app.config.from_object(Config)
-CORS(app, resources={r"/*": {"origins": ["http://localhost:5173"], \
+CORS(app, resources={r"/*": {"origins": ["http://localhost:5173", "http://localhost:3000"], \
     "methods": ["GET", "POST", "PUT", "DELETE"],
     "allow_headers": ["Content-Type", "Authorization"],
     "expose_headers": ["X-Custom-Header"],
