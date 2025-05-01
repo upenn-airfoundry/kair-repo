@@ -1,16 +1,8 @@
-import ChatInput from '@/components/chat-input';
 import { AppSidebar } from '@/components/app-sidebar';
 import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar';
-import {
-  Card,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-  CardFooter,
-} from '@/components/ui/card';
 import { ChatHeader } from '@/components/chat-header';
 
-export default function ChatPage() {
+export default function RetrieverPage() {
   return (
     <SidebarProvider
       style={
@@ -22,16 +14,16 @@ export default function ChatPage() {
     >
       <AppSidebar variant="inset" />
       <SidebarInset>
-        <ChatHeader title="Chat" description="Chat with KAIR"/>
+        <ChatHeader title="Retriever"/>
         <div className="flex flex-1 flex-col">
           <div className="@container/main flex flex-1 flex-col gap-2">
             <div className="flex-grow p-4 overflow-y-auto border-t">
-              <p className="text-center text-muted-foreground">Chat messages with KAIR will appear here.</p>
+              <p className="text-center text-muted-foreground">Retriever management content will appear here.</p>
             </div>
-            <ChatInput />
+            {/* Add retriever specific components here later */}
           </div>
         </div>
       </SidebarInset>
     </SidebarProvider>
   );
-}
+} 
