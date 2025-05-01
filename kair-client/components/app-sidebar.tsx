@@ -18,6 +18,8 @@ import {
   IconSearch,
   IconSettings,
   IconUsers,
+  IconBrain,
+  IconAffiliate
 } from "@tabler/icons-react"
 
 import { NavDocuments } from "@/components/nav-documents"
@@ -62,9 +64,14 @@ const data = {
       icon: IconChartBar,
     },
     {
+      title: "Data",
+      url: "/data",
+      icon: IconDatabase,
+    },
+    {
       title: "Projects",
       url: "/projects",
-      icon: IconFolder,
+      icon: IconAffiliate,
     },
     {
       title: "Team",
@@ -128,12 +135,12 @@ const data = {
     },
     {
       title: "Get Help",
-      url: "#",
+      url: "mailto:zives@seas.upenn.edu",
       icon: IconHelp,
     },
     {
       title: "Search",
-      url: "#",
+      url: "/retriever",
       icon: IconSearch,
     },
   ],
@@ -167,7 +174,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               className="data-[slot=sidebar-menu-button]:!p-1.5"
             >
               <a href="#">
-                <IconInnerShadowTop className="!size-5" />
+                <IconBrain className="!size-5" />
                 <span className="text-base font-semibold">KAIR Prototype</span>
               </a>
             </SidebarMenuButton>

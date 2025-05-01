@@ -1,6 +1,20 @@
 import Image from "next/image";
+import { redirect } from 'next/navigation';
 
 export default function Home() {
+  // Dummy authentication state - replace with actual auth logic later
+  const isAuthenticated = true; // Set to false to test the /login redirect
+
+  if (isAuthenticated) {
+    redirect('/dashboard');
+  } else {
+    redirect('/login');
+  }
+
+  // The rest of the original component code is effectively unreachable
+  // due to the redirects, but we keep it here conceptually.
+  // In a real app, this page might render a loading state or nothing
+  // while the redirect happens.
   return (
     <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
       <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
