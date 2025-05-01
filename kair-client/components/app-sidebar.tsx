@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import {
+  IconMessage,
   IconCamera,
   IconChartBar,
   IconDashboard,
@@ -35,34 +36,39 @@ import {
 
 const data = {
   user: {
-    name: "shadcn",
-    email: "m@example.com",
+    name: "kair-user",
+    email: "kair-user@seas.upenn.edu",
     avatar: "/avatars/shadcn.jpg",
   },
   navMain: [
     {
       title: "Dashboard",
-      url: "#",
+      url: "/dashboard",
       icon: IconDashboard,
     },
     {
-      title: "Lifecycle",
-      url: "#",
+      title: "Chat",
+      url: "/chat",
+      icon: IconMessage,
+    },
+    {
+      title: "Retriever",
+      url: "/retriever",
       icon: IconListDetails,
     },
     {
-      title: "Analytics",
-      url: "#",
+      title: "Crawler",
+      url: "/crawler",
       icon: IconChartBar,
     },
     {
       title: "Projects",
-      url: "#",
+      url: "/projects",
       icon: IconFolder,
     },
     {
       title: "Team",
-      url: "#",
+      url: "/team",
       icon: IconUsers,
     },
   ],
@@ -162,7 +168,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             >
               <a href="#">
                 <IconInnerShadowTop className="!size-5" />
-                <span className="text-base font-semibold">Acme Inc.</span>
+                <span className="text-base font-semibold">KAIR Prototype</span>
               </a>
             </SidebarMenuButton>
           </SidebarMenuItem>
@@ -170,7 +176,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       </SidebarHeader>
       <SidebarContent>
         <NavMain items={data.navMain} />
-        <NavDocuments items={data.documents} />
         <NavSecondary items={data.navSecondary} className="mt-auto" />
       </SidebarContent>
       <SidebarFooter>
