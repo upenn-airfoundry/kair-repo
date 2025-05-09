@@ -181,6 +181,14 @@ CREATE TABLE association_criteria (
 );
 
 ALTER TABLE association_criteria
+    drop column if exists entity1_id,
+    drop column if exists entity2_id,
+    drop column if exists association_strength;
+
+alter table association_criteria
+    add column association_promise float;
+
+ALTER TABLE association_criteria
     ADD COLUMN IF NOT EXISTS is_aggregate BOOLEAN default false;
 
 ALTER TABLE association_criteria
@@ -218,6 +226,9 @@ CREATE TABLE indexed_documents(
 ALTER TABLE indexed_documents
     ADD COLUMN entity_id INTEGER REFERENCES entities(entity_id) ON DELETE CASCADE,
     ADD CONSTRAINT unique_documents UNIQUE(document_name, document_url, document_type);
+
+ALTER TABLE indexed_documents
+    ADD COLUMN IF NOT EXISTS document_content TEXT;
 
 CREATE INDEX document_name_idx ON indexed_documents USING btree ("document_name");
 CREATE INDEX document_url_idx ON indexed_documents USING btree ("document_url");

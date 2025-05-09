@@ -13,7 +13,7 @@ from dblp_parser.dblp_parser import DBLP
 from dotenv import load_dotenv, find_dotenv
 
 from crawl.crawler_queue import add_to_crawled
-from crawl.web_fetch import fetch_and_crawl_frontier
+from crawl.web_fetch import fetch_and_crawl_frontier, parse_documents_into_segments
 
 from crawl.crawler_queue import add_local_downloads_to_crawl_queue
 from crawl.crawler_queue import add_urls_to_crawl_queue
@@ -78,10 +78,12 @@ def main():
     if args.command == "add_crawl_list":
         add_urls_to_frontier()
         fetch_and_crawl_frontier()
+        parse_documents_into_segments()
     elif args.command == "add_local_files":
         crawl_local_files(PDFS_DIR)
         crawl_local_files(DATA_DIR)
         fetch_and_crawl_frontier()
+        parse_documents_into_segments()
     elif args.command == "process":
         parse_files_and_index()
     elif args.command == "dblp":

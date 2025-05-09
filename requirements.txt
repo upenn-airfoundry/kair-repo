@@ -20,4 +20,6 @@ datasketch
 pytest
 lxml
 hurry.filesize
-
+grobid-client-python
+scholarly
+arxiv

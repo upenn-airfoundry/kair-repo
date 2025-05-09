@@ -15,6 +15,12 @@ from datetime import datetime
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.schema import Document
+from langchain_community.document_loaders.blob_loaders import FileSystemBlobLoader
+from langchain_core.document_loaders import Blob
+from langchain_community.document_loaders.generic import GenericLoader
+from langchain_community.document_loaders.parsers import GrobidParser
+from langchain_core.documents import Document
+
 
 from aryn_sdk.partition import partition_file
 
@@ -26,6 +32,38 @@ from dotenv import load_dotenv, find_dotenv
 _ = load_dotenv(find_dotenv())
 
 DOWNLOAD_DIR = os.getenv("PDF_PATH", os.path.expanduser("~/Downloads"))
+GROBID_SERVER = os.getenv("GROBID_SERVER", "http://localhost:8070")
+
+parser = GrobidParser(segment_sentences=False, grobid_server=GROBID_SERVER)
+
+def get_pdf_splits(pdf_path: str, method: int, dir: str = DOWNLOAD_DIR) -> list:
+    """
+    Load a PDF file and split it into smaller chunks.
+    :param pdf_path: The path to the PDF file.
+    :return: A list of split documents.
+    """
+    
+    # Aryn partitioning
+    if method == 0:
+        data = chunk_and_partition_pdf_file(pdf_path, '')
+        split_docs = []
+        for item in data['elements']:
+            if item['type'] == 'Text' and item['text_representation']:
+                # Replace null characters and split by new lines
+                for seg in item['text_representation'].replace("\x00", "fi").replace("\\n", "\n").split('\n\n'):
+                    split_docs.append(Document(page_content = seg.strip()))
+                    
+    # Langchain partitioning
+    elif method == 1:
+        return split_pdf_with_langchain(pdf_path)
+    
+    # Else use Grobid
+    else:
+        loader = FileSystemBlobLoader(path=pdf_path)
+        blob = loader.load()[0]
+        return list(parser.lazy_parse(blob))
+        
+
 
 def chunk_and_partition_pdf_file(filename, dir:str = DOWNLOAD_DIR) -> dict:
   data = None

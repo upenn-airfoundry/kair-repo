@@ -13,7 +13,7 @@ import json
 import pandas as pd
 import logging
 
-from files.pdfs import split_pdf_with_langchain, get_presplit_aryn_file, chunk_and_partition_pdf_file
+from files.pdfs import split_pdf_with_langchain, get_presplit_aryn_file, chunk_and_partition_pdf_file, get_pdf_splits
 from files.text import index_split_paragraphs
 from crawl.crawler_queue import get_crawled_paths
 
@@ -51,10 +51,10 @@ def handle_file(path: str, url: str, use_aryn: bool = False):
         
     if path.endswith('.pdf'):
         if use_aryn:
-            split_docs = chunk_and_partition_pdf_file(pdf_path)
+            split_docs = get_pdf_splits(pdf_path, 0)
         else:               
             # Parse the PDF using Langchain PDF parser
-            pass#split_docs = split_pdf_with_langchain(pdf_path)  # Use the Langchain splitter to split the documents
+            split_docs = get_pdf_splits(pdf_path, 1)  # Use the Langchain splitter to split the documents
     elif path.endswith('.jsonl') or path.endswith('.json') or path.endswith('.csv') or path.endswith('.mat') or path.endswith('.xml'):
         path = path[7:] # Remove file://
         if path.endswith('.jsonl'):

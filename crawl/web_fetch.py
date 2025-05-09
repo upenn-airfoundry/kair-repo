@@ -15,19 +15,22 @@ from graph_db import GraphAccessor
 
 import logging
 from datetime import datetime
-
-#from pennsieve import get_dataset_metadata
-
 from dotenv import load_dotenv, find_dotenv
+from grobid_client.grobid_client import GrobidClient # Note the module structure
+
 _ = load_dotenv(find_dotenv())
 
 from crawl.crawler_queue import add_to_crawled
-from crawl.crawler_queue import get_urls_to_crawl
+from crawl.crawler_queue import get_urls_to_crawl, get_crawled_paths
 
 graph_db = GraphAccessor()
 
 # Directory to save downloaded PDFs
 DOWNLOADS_DIR = os.getenv("PDF_PATH", os.path.expanduser("~/Downloads"))
+GROBID_SERVER = os.getenv("GROBID_SERVER", "http://localhost:8070")
+
+grobid_client = GrobidClient(grobid_server=GROBID_SERVER)
+
 
 # make a request and wait for it to redirect
 def get_redirected_url(doi_url):
@@ -249,3 +252,64 @@ def fetch_and_crawl_frontier(downloads_dir: str = DOWNLOADS_DIR):
 
     graph_db.commit()
     
+def parse_documents_into_segments(downloads_dir: str = DOWNLOADS_DIR):
+    """
+    Parse the downloaded documents into segments and index them in the database.
+    """
+    # Ensure the downloads directory exists
+    # os.makedirs(downloads_dir, exist_ok=True)
+    
+    # grobid_client.process_pdf(
+    #     service="processFulltextDocument",
+        
+    #     input_path=downloads_dir,
+    #     output=downloads_dir + "/tei_xml",
+    #     # n=10, # Optional: number of concurrent threads, default is usually number of CPU cores
+    #     # force=True, # Optional: force reprocessing of existing files
+    #     # tei_coordinates=True, # Optional: to include coordinates in the TEI XML
+    #     # segment_sentences=True, # Optional: to segment sentences
+    # )
+
+    # grobid_client.process(
+    #     service="processFulltextDocument",
+    #     input_path=downloads_dir,
+    #     output=downloads_dir + "/tei_xml",
+    #     # n=10, # Optional: number of concurrent threads, default is usually number of CPU cores
+    #     # force=True, # Optional: force reprocessing of existing files
+    #     # tei_coordinates=True, # Optional: to include coordinates in the TEI XML
+    #     # segment_sentences=True, # Optional: to segment sentences
+    # )
+
+    crawled_list = get_crawled_paths()
+    for row in crawled_list:
+        crawl_id = row['id']
+        path = row['path']
+        url = row['url']
+        try:
+            if path.startswith('file://'):
+                pdf_base = path.split('/')[-1]
+                pdf_filename = path[7:]
+                path = pdf_base
+            if path.endswith('.pdf') and not os.path.exists(DOWNLOADS_DIR + '/tei_xml/' + path + '.xml'):
+                # Parse the PDF and index it
+                (pdf_file, status, text) = grobid_client.process_pdf(
+                    service="processFulltextDocument",
+                    pdf_file=DOWNLOADS_DIR + '/' + path,
+                    generateIDs=True, # generateIDs
+                    consolidate_header=True, # consolidate_header
+                    consolidate_citations=True, # consolidate_citations
+                    include_raw_citations=True, # include_raw_citations
+                    include_raw_affiliations=True, # include_raw_affiliations
+                    tei_coordinates=False, # tei_coordinates
+                    segment_sentences=True, # segment_sentences
+                    start=-1, end=-1
+                )
+                # Handle non-PDF files if needed
+                if text is not None:
+                    print (path)
+                    with open (DOWNLOADS_DIR + '/tei_xml/' + path + '.xml', 'wt') as f:
+                        f.write(text)
+        except Exception as e:
+            logging.error(f"Error processing {path}: {e}")    
+        
+        

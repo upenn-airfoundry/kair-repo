@@ -20,7 +20,7 @@ from dotenv import load_dotenv, find_dotenv
 _ = load_dotenv(find_dotenv())
 
 
-from crawl.web_fetch import fetch_and_crawl_frontier
+from crawl.web_fetch import fetch_and_crawl_frontier, parse_documents_into_segments
 
 from search import search_over_criteria, search_multiple_criteria
 from search import generate_rag_answer
@@ -121,6 +121,7 @@ def crawl_files():
     """
     try:
         fetch_and_crawl_frontier()
+        parse_documents_into_segments()
         return jsonify({"message": "Crawling completed successfully"}), 200
     except Exception as e:
         return jsonify({"error": f"An error occurred during crawling: {e}"}), 500
