@@ -21,11 +21,17 @@ from langchain_community.document_loaders.generic import GenericLoader
 from langchain_community.document_loaders.parsers import GrobidParser
 from langchain_core.documents import Document
 
+from crawl.web_fetch import parse_tei_xml
+from doc2json.grobid2json.tei_to_json import convert_tei_xml_file_to_s2orc_json
+
+from typing import Tuple
 
 from aryn_sdk.partition import partition_file
 
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
+
+from files.text import get_metadata_from_docs
 
 from dotenv import load_dotenv, find_dotenv
 
@@ -34,14 +40,27 @@ _ = load_dotenv(find_dotenv())
 DOWNLOAD_DIR = os.getenv("PDF_PATH", os.path.expanduser("~/Downloads"))
 GROBID_SERVER = os.getenv("GROBID_SERVER", "http://localhost:8070")
 
-parser = GrobidParser(segment_sentences=False, grobid_server=GROBID_SERVER)
+grobid_parser = None
 
-def get_pdf_splits(pdf_path: str, method: int, dir: str = DOWNLOAD_DIR) -> list:
+
+def get_grobid_parser() -> GrobidParser:
+    """
+    Get the Grobid parser instance.
+    :return: GrobidParser instance.
+    """
+    global grobid_parser
+    if grobid_parser is None:
+        grobid_parser = GrobidParser(segment_sentences=True, grobid_server=GROBID_SERVER)
+    return grobid_parser
+
+def get_pdf_splits(pdf_path: str, method: int, dir: str = DOWNLOAD_DIR) -> Tuple[dict, list]:
     """
     Load a PDF file and split it into smaller chunks.
     :param pdf_path: The path to the PDF file.
     :return: A list of split documents.
     """
+    
+    metadata = {}
     
     # Aryn partitioning
     if method == 0:
@@ -53,15 +72,35 @@ def get_pdf_splits(pdf_path: str, method: int, dir: str = DOWNLOAD_DIR) -> list:
                 for seg in item['text_representation'].replace("\x00", "fi").replace("\\n", "\n").split('\n\n'):
                     split_docs.append(Document(page_content = seg.strip()))
                     
-    # Langchain partitioning
-    elif method == 1:
-        return split_pdf_with_langchain(pdf_path)
+        return get_metadata_from_docs(split_docs), split_docs
     
-    # Else use Grobid
+    # Grobid
+    elif method == 1 and os.path.exists(os.path.dirname(pdf_path) + '/tei_xml/' + os.path.basename(pdf_path) + '.xml'):
+        # Split the PDF directory from the PDF filename
+        pdf_dir = os.path.dirname(pdf_path)
+        pdf_filename = os.path.basename(pdf_path)
+        if os.path.exists(pdf_dir + '/tei_xml/' + pdf_filename + '.xml'):
+            
+            paper = convert_tei_xml_file_to_s2orc_json(pdf_dir + '/tei_xml/' + pdf_filename + '.xml')
+            print (paper.metadata.title)
+            split_docs = [Document(para.text) for para in paper.body_text]
+            md2 = get_metadata_from_docs(split_docs)
+            return ({"title": paper.metadata.title, "authors": paper.metadata.authors, "summary": md2['summary'], "year": paper.metadata.year},
+                split_docs)
+            
+    # Fallback to Langchain if no grobid
     else:
-        loader = FileSystemBlobLoader(path=pdf_path)
-        blob = loader.load()[0]
-        return list(parser.lazy_parse(blob))
+        if pdf_path.startswith('file://'):
+            pdf_path = pdf_path[7:]
+        split_docs = split_pdf_with_langchain(pdf_path)
+        return get_metadata_from_docs(split_docs), split_docs
+        
+    # Else use Grobid
+    # else:
+        # loader = FileSystemBlobLoader(path=pdf_path)
+        # blob = loader.load()[0]
+        # return (metadata, list(get_grobid_parser().lazy_parse(blob)))
+        raise ValueError("Invalid method. Use 0 for Aryn partitioning or 1 for Grobid.")
         
 
 

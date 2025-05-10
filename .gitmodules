@@ -1,3 +1,6 @@
 [submodule "dblp_parser"]
 	path = dblp_parser
 	url = https://github.com/angelosalatino/dblp-parser.git
+[submodule "s2orc-doc2json"]
+	path = s2orc-doc2json
+	url = https://github.com/allenai/s2orc-doc2json.git

@@ -2,6 +2,8 @@ import pandas as pd
 import random
 from scipy.io import loadmat
 
+import logging
+
 from prompts.prompt_for_tables import describe_table
 from graph_db import GraphAccessor
 

@@ -96,6 +96,31 @@ class GraphAccessor:
             raise e
         return paper_id
 
+    def get_table_info(self, url: str) -> dict:
+        """Store a table by URL and return its entity ID."""
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(f"SELECT entity_id, entity_type, entity_name, entity_url, entity_json FROM {self.schema}.entities WHERE entity_name = %s AND entity_type = 'table';", (path,))
+                result = cur.fetchone()
+                if result is not None:
+                    # Return
+                    return {
+                        "entity_id": result[0],
+                        "entity_type": result[1],
+                        "entity_name": result[2],
+                        "entity_url": result[3],
+                        "entity_json": result[4]
+                    }
+                else:
+                    # Return None if not found
+                    return None
+        except Exception as e:
+            logging.error(f"Error adding table: {e}")
+            self.conn.rollback()
+            # throw the exception again
+            raise e
+    
+
     def add_table(self, url: str, path: str, summary: str) -> int:
         """Store a table by URL and return its entity ID."""
         try:
@@ -146,6 +171,18 @@ class GraphAccessor:
             logging.error(f"Error fetching paper paragraphs: {e}")
             self.conn.rollback()
             return []
+        
+    def delete_paragraphs(self, paper_id: int):
+        """Delete all paragraphs for a given paper ID."""
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(f"DELETE FROM {self.schema}.entities WHERE entity_parent = %s AND entity_type = 'paragraph';", (paper_id,))
+            self.conn.commit()
+        except Exception as e:
+            logging.error(f"Error deleting paragraphs: {e}")
+            self.conn.rollback()
+            # throw the exception again
+            raise e
 
     def add_source(self, url: str) -> int:
         """Add a source by URL and return its source ID."""
@@ -866,7 +903,8 @@ class GraphAccessor:
             # throw the exception again
             raise e
         
-    def link_entity_to_document(self, entity_id: int, indexed_url: str, indexed_path: str, indexed_type: str = 'pdf', indexed_json: Any = None): 
+    def link_entity_to_document(self, entity_id: int, indexed_url: str, indexed_path: str, indexed_type: str = 'pdf', 
+                                summary: str = None): 
         """
         Link an entity to a document in the database.
 
@@ -874,11 +912,13 @@ class GraphAccessor:
             entity_id (int): The ID of the entity to link.
             indexed_url (str): The URL of the document.
             indexed_path (str): The path of the document.
+            indexed_type (str): The type of the document (default is 'pdf').
+            summary (str): An optional summary of the document.
         """
         try:
             indexed_embed = ''
-            if indexed_json:
-                indexed_embed = self.generate_embedding(indexed_json['summary'])
+            if summary:
+                indexed_embed = self.generate_embedding(summary)
             else:
                 indexed_embed = self.generate_embedding(indexed_path.split('/')[-1])
             with self.conn.cursor() as cur:

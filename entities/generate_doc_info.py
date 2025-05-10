@@ -46,16 +46,22 @@ def handle_file(path: str, url: str, use_aryn: bool = False):
     # Get today's date
     the_date = datetime.now().date()
     
+    metadata = {}
+    
     if path.endswith('.pdf.json'):
         path = path.replace('.json', '')
         
     if path.endswith('.pdf'):
         if use_aryn:
-            split_docs = get_pdf_splits(pdf_path, 0)
+            (metadata, split_docs) = get_pdf_splits(pdf_path, 0)
         else:               
             # Parse the PDF using Langchain PDF parser
-            split_docs = get_pdf_splits(pdf_path, 1)  # Use the Langchain splitter to split the documents
+            (metadata, split_docs) = get_pdf_splits(pdf_path, 1)  # Use the Langchain splitter to split the documents
     elif path.endswith('.jsonl') or path.endswith('.json') or path.endswith('.csv') or path.endswith('.mat') or path.endswith('.xml'):
+        if graph_db.get_table_info(path):
+            logging.info(f"Table {url} already exists in the graph database.")
+            return
+        
         path = path[7:] # Remove file://
         if path.endswith('.jsonl'):
             df = read_jsonl(path)
@@ -73,8 +79,8 @@ def handle_file(path: str, url: str, use_aryn: bool = False):
         logging.info(f"Non-PDF file: {pdf_path}")
         split_docs = get_presplit_aryn_file(pdf_path)
     
-        if len(split_docs):
-            index_split_paragraphs(split_docs, url, path, the_date)
+    if len(split_docs):
+        index_split_paragraphs(split_docs, url, path, the_date, metadata)
         
     graph_db.commit()
     

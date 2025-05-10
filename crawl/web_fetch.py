@@ -12,6 +12,10 @@ from urllib.parse import urlparse
 import time
 import os
 from graph_db import GraphAccessor
+import xml.etree.ElementTree as ET
+from typing import List, Dict, Any
+
+from doc2json.grobid2json.tei_to_json import convert_tei_xml_file_to_s2orc_json
 
 import logging
 from datetime import datetime
@@ -29,7 +33,8 @@ graph_db = GraphAccessor()
 DOWNLOADS_DIR = os.getenv("PDF_PATH", os.path.expanduser("~/Downloads"))
 GROBID_SERVER = os.getenv("GROBID_SERVER", "http://localhost:8070")
 
-grobid_client = GrobidClient(grobid_server=GROBID_SERVER)
+grobid_client = None
+
 
 
 # make a request and wait for it to redirect
@@ -252,39 +257,25 @@ def fetch_and_crawl_frontier(downloads_dir: str = DOWNLOADS_DIR):
 
     graph_db.commit()
     
+def get_grobid_client():
+    """
+    Initialize the GROBID client.
+    """
+    global grobid_client
+    if grobid_client is None:
+        logging.info("Initializing GROBID client...")
+        grobid_client = GrobidClient(grobid_server=GROBID_SERVER)
+
+    return grobid_client
+    
 def parse_documents_into_segments(downloads_dir: str = DOWNLOADS_DIR):
     """
     Parse the downloaded documents into segments and index them in the database.
     """
-    # Ensure the downloads directory exists
-    # os.makedirs(downloads_dir, exist_ok=True)
     
-    # grobid_client.process_pdf(
-    #     service="processFulltextDocument",
-        
-    #     input_path=downloads_dir,
-    #     output=downloads_dir + "/tei_xml",
-    #     # n=10, # Optional: number of concurrent threads, default is usually number of CPU cores
-    #     # force=True, # Optional: force reprocessing of existing files
-    #     # tei_coordinates=True, # Optional: to include coordinates in the TEI XML
-    #     # segment_sentences=True, # Optional: to segment sentences
-    # )
-
-    # grobid_client.process(
-    #     service="processFulltextDocument",
-    #     input_path=downloads_dir,
-    #     output=downloads_dir + "/tei_xml",
-    #     # n=10, # Optional: number of concurrent threads, default is usually number of CPU cores
-    #     # force=True, # Optional: force reprocessing of existing files
-    #     # tei_coordinates=True, # Optional: to include coordinates in the TEI XML
-    #     # segment_sentences=True, # Optional: to segment sentences
-    # )
-
     crawled_list = get_crawled_paths()
     for row in crawled_list:
-        crawl_id = row['id']
         path = row['path']
-        url = row['url']
         try:
             if path.startswith('file://'):
                 pdf_base = path.split('/')[-1]
@@ -292,7 +283,7 @@ def parse_documents_into_segments(downloads_dir: str = DOWNLOADS_DIR):
                 path = pdf_base
             if path.endswith('.pdf') and not os.path.exists(DOWNLOADS_DIR + '/tei_xml/' + path + '.xml'):
                 # Parse the PDF and index it
-                (pdf_file, status, text) = grobid_client.process_pdf(
+                (pdf_file, status, text) = get_grobid_client().process_pdf(
                     service="processFulltextDocument",
                     pdf_file=DOWNLOADS_DIR + '/' + path,
                     generateIDs=True, # generateIDs
@@ -313,3 +304,78 @@ def parse_documents_into_segments(downloads_dir: str = DOWNLOADS_DIR):
             logging.error(f"Error processing {path}: {e}")    
         
         
+def parse_tei_xml(file_path: str) -> Dict[str, Any]:
+    """
+    Parse a GROBID TEI XML file and extract paragraphs, citations, authors, organizations, and metadata.
+
+    Args:
+        file_path (str): Path to the TEI XML file.
+
+    Returns:
+        Dict[str, Any]: A dictionary containing extracted paragraphs, citations, authors, organizations, and metadata.
+    """
+    try:
+        tree = ET.parse(file_path)
+        root = tree.getroot()
+
+        # Namespace handling
+        ns = {'tei': 'http://www.tei-c.org/ns/1.0'}
+
+        # Extract paragraphs
+        paragraphs = [
+            p.text.strip() for p in root.findall(".//tei:body//tei:p", ns) if p.text
+        ]
+
+        # Extract citations
+        citations = []
+        for bibl in root.findall(".//tei:listBibl/tei:biblStruct", ns):
+            citation = {
+                "title": bibl.find(".//tei:title", ns).text if bibl.find(".//tei:title", ns) is not None else None,
+                "authors": [
+                    pers.find(".//tei:forename", ns).text + " " + pers.find(".//tei:surname", ns).text
+                    for pers in bibl.findall(".//tei:author/tei:persName", ns)
+                ],
+                "publication_date": bibl.find(".//tei:date", ns).get("when") if bibl.find(".//tei:date", ns) is not None else None,
+                "publisher": bibl.find(".//tei:publisher", ns).text if bibl.find(".//tei:publisher", ns) is not None else None,
+                "doi": bibl.find(".//tei:idno[@type='DOI']", ns).text if bibl.find(".//tei:idno[@type='DOI']", ns) is not None else None,
+            }
+            citations.append(citation)
+
+        # Extract authors and organizations
+        authors = []
+        organizations = []
+        for author in root.findall(".//tei:sourceDesc//tei:author", ns):
+            pers_name = author.find(".//tei:persName", ns)
+            if pers_name is not None:
+                author_name = (
+                    (pers_name.find(".//tei:forename", ns).text if pers_name.find(".//tei:forename", ns) is not None else "")
+                    + " "
+                    + (pers_name.find(".//tei:surname", ns).text if pers_name.find(".//tei:surname", ns) is not None else "")
+                ).strip()
+                authors.append(author_name)
+
+            affiliation = author.find(".//tei:affiliation/tei:orgName", ns)
+            if affiliation is not None:
+                organizations.append(affiliation.text.strip())
+
+        # Extract metadata
+        metadata = {
+            "title": root.find(".//tei:titleStmt/tei:title", ns).text if root.find(".//tei:titleStmt/tei:title", ns) is not None else None,
+            "abstract": " ".join([p.text.strip() for p in root.findall(".//tei:abstract//tei:p", ns) if p.text]),
+            "publication_date": root.find(".//tei:publicationStmt/tei:date", ns).get("when") if root.find(".//tei:publicationStmt/tei:date", ns) is not None else None,
+            "publisher": root.find(".//tei:publicationStmt/tei:publisher", ns).text if root.find(".//tei:publicationStmt/tei:publisher", ns) is not None else None,
+            "doi": root.find(".//tei:publicationStmt/tei:idno[@type='DOI']", ns).text if root.find(".//tei:publicationStmt/tei:idno[@type='DOI']", ns) is not None else None,
+        }
+
+        return {
+            "paragraphs": paragraphs,
+            "citations": citations,
+            "authors": authors,
+            "organizations": organizations,
+            "metadata": metadata,
+        }
+
+    except Exception as e:
+        logging.error(f"Error parsing TEI XML file {file_path}: {e}")
+        return {}
+
