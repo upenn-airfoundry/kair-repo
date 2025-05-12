@@ -6,6 +6,7 @@ bin/
 
 # temp and user files
 files/user_data
+files/pdf_outputs
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
