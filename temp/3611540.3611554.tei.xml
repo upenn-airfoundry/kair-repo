@@ -1,0 +1,1409 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TEI xml:space="preserve" xmlns="http://www.tei-c.org/ns/1.0" 
+xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
+xsi:schemaLocation="http://www.tei-c.org/ns/1.0 https://raw.githubusercontent.com/kermitt2/grobid/master/grobid-home/schemas/xsd/Grobid.xsd"
+ xmlns:xlink="http://www.w3.org/1999/xlink">
+	<teiHeader xml:lang="en">
+		<fileDesc>
+			<titleStmt>
+				<title level="a" type="main">TPCx-AI -An Industry Standard Benchmark for Artificial Intelligence and Machine Learning Systems</title>
+				<funder ref="#_76WC4B7">
+					<orgName type="full">European Union</orgName>
+				</funder>
+				<funder>
+					<orgName type="full">German Research Foundation</orgName>
+				</funder>
+			</titleStmt>
+			<publicationStmt>
+				<publisher/>
+				<availability status="unknown"><licence/></availability>
+			</publicationStmt>
+			<sourceDesc>
+				<biblStruct>
+					<analytic>
+						<author>
+							<persName><forename type="first">Christoph</forename><surname>Brücke</surname></persName>
+							<email>christoph.bruecke@bankmark.de</email>
+						</author>
+						<author>
+							<persName><surname>Germany</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">Escobar</forename><surname>Palacios</surname></persName>
+							<email>rodrigo.d.escobar.palacios@intel.com</email>
+						</author>
+						<author>
+							<persName><forename type="first">Hamesh</forename><surname>Patel</surname></persName>
+							<email>hamesh.s.patel@intel.com</email>
+						</author>
+						<author>
+							<persName><forename type="first">Tilmann</forename><surname>Rabl</surname></persName>
+							<email>tilmann.rabl@hpi.de</email>
+						</author>
+						<author>
+							<persName><forename type="first">Philipp</forename><surname>Härtling</surname></persName>
+							<email>philipp.haertling@bankmark.de</email>
+						</author>
+						<author>
+							<affiliation key="aff0">
+								<orgName type="institution">Intel Hillsboro</orgName>
+								<address>
+									<settlement>Oregon</settlement>
+								</address>
+							</affiliation>
+						</author>
+						<author>
+							<affiliation key="aff1">
+								<orgName type="institution">Intel Hillsboro</orgName>
+								<address>
+									<settlement>Oregon</settlement>
+								</address>
+							</affiliation>
+						</author>
+						<author>
+							<affiliation key="aff2">
+								<orgName type="department">TPCx-AI -An Industry Standard Benchmark for Artificial Intelligence and Machine Learning Systems . PVLDB</orgName>
+								<orgName type="institution" key="instit1">Hasso Plattner Institute</orgName>
+								<orgName type="institution" key="instit2">University of Potsdam</orgName>
+								<address>
+									<country>bankmark Germany</country>
+								</address>
+							</affiliation>
+						</author>
+						<title level="a" type="main">TPCx-AI -An Industry Standard Benchmark for Artificial Intelligence and Machine Learning Systems</title>
+					</analytic>
+					<monogr>
+						<imprint>
+							<date/>
+						</imprint>
+					</monogr>
+					<idno type="MD5">CE86A1815A15C55BBFB80DB0E18B4E0D</idno>
+					<idno type="DOI">10.14778/3611540.3611554</idno>
+				</biblStruct>
+			</sourceDesc>
+		</fileDesc>
+		<encodingDesc>
+			<appInfo>
+				<application version="0.8.3-SNAPSHOT" ident="GROBID" when="2025-05-12T19:39+0000">
+					<desc>GROBID - A machine learning software for extracting information from scholarly documents</desc>
+					<label type="revision">0.8.2-3-g65968aec5</label>
+					<label type="parameters">startPage=-1, endPage=-1, consolidateCitations=0, consolidateHeader=0, consolidateFunders=0, includeRawAffiliations=false, includeRawCitations=true, includeRawCopyrights=false, generateTeiIds=false, generateTeiCoordinates=[], flavor=null</label>
+					<ref target="https://github.com/kermitt2/grobid"/>
+				</application>
+			</appInfo>
+		</encodingDesc>
+		<profileDesc>
+			<abstract>
+<div xmlns="http://www.tei-c.org/ns/1.0"><p>Artificial intelligence (AI) and machine learning (ML) techniques have existed for years, but new hardware trends and advances in model training and inference have radically improved their performance. With an ever increasing amount of algorithms, systems, and hardware solutions, it is challenging to identify good deployments even for experts. Researchers and industry experts have observed this challenge and have created several benchmark suites for AI and ML applications and systems. While they are helpful in comparing several aspects of AI applications, none of the existing benchmarks measures end-to-end performance of ML deployments. Many have been rigorously developed in collaboration between academia and industry, but no existing benchmark is standardized.</p><p>In this paper, we introduce the TPC Express Benchmark for Artificial Intelligence (TPCx-AI), the first industry standard benchmark for end-to-end machine learning deployments. TPCx-AI is the first AI benchmark that represents the pipelines typically found in common ML and AI workloads. TPCx-AI provides a full software kit, which includes data generator, driver, and two full workload implementations, one based on Python libraries and one based on Apache Spark. We describe the complete benchmark and show benchmark results for various scale factors. TPCx-AI's core contributions are a novel unified data set covering structured and unstructured data; a fully scalable data generator that can generate realistic data from GB up to PB scale; and a diverse and representative workload using different data types and algorithms, covering a wide range of aspects of real ML workloads such as data integration, data processing, training, and inference.</p></div>
+			</abstract>
+		</profileDesc>
+	</teiHeader>
+	<text xml:lang="en">
+		<body>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="1">INTRODUCTION</head><p>Machine learning (ML) has been shown to be beneficial in industry and academia. Tasks that were considered very complex to solve with software systems, such as image or voice recognition, can be solved with high accuracy with ML-based artificial intelligence (AI) solutions <ref type="bibr" target="#b34">[34]</ref>. While many large companies have shown surprising results in various applications, this is hard to replicate for companies without well-funded and well-staffed AI departments. Today, improvements in accuracy and architecture come at costs that only major players can afford and that are not feasible or even reproducible for small scale deployments <ref type="bibr" target="#b10">[11]</ref>.</p><p>Contributing to this problem, current AI solutions are highly diverse and due to the great interest in the field, many new systems with different strategies and goals are developed. This creates a need for standardized methods to compare systems and solutions.</p><p>In the past, benchmarks have been pivotal for both, performance improvements in common applications and unification of interfaces for these applications. Previous database benchmarks by the Transaction Processing Performance Council (TPC) are a good example of this, which is shown by the many publications in database research that use these benchmarks as validation. Although they are a simplification of real world applications, the benchmarks serve as a common abstraction for use case scenarios and make systems and research comparable.</p><p>Researchers and practitioners have started several efforts to build similar benchmarks for AI domains. Most of these focus on the core ML training aspect, either from a micro-benchmark perspective, such as DeepBench <ref type="bibr" target="#b22">[22]</ref> or evaluating the training of different ML models, e.g., MLBench <ref type="bibr" target="#b16">[17]</ref>. While model training is at the heart of many AI applications, it does not reflect the various challenges AI applications face. More holistic approaches also incorporate serving <ref type="foot" target="#foot_0">1</ref> tasks, e.g., MLPerf <ref type="bibr" target="#b17">[18]</ref>, which allows for the evaluation of training or serving for a variety of ML models; or preprocessing and postprocessing stages, such as dcbench <ref type="bibr" target="#b6">[7]</ref>, which evaluates specific preprocessing tasks, such as data pruning.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Data preparation</head><p>• Explore • Wrangle • Clean • Filter • Organize Training (Modeling) Feature engineering Model Persistence • Visualize • Render • Explain Data acquisition • Load • Collect • Obtain • Capture Interpret/ Store Deployment • Archive • Warehouse • Parquet • CSV • Build data model: -Cluster -SVM -CNN, RNN -Linear Regression Format/Store Inference (Predict) Preprocessing Data load Post process • Feature select • Feature interaction • Transformations</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Model/Predict</head><p>• Use previously built model to make predictions In this paper, we go beyond these approaches and introduce the TPC Express Benchmark for Artificial Intelligence (TPCx-AI), a benchmark for end-to-end AI systems. TPCx-AI is based on AD-ABench <ref type="bibr" target="#b29">[29]</ref> and has recently been standardized by the TPC <ref type="bibr" target="#b3">[4]</ref>. TPCx-AI's workload comprises 10 use cases, implemented as endto-end AI processing pipelines that, unlike other AI benchmarks, include data ingestion, preprocessing, training, serving, and postprocessing stages. Figure <ref type="figure" target="#fig_0">1</ref> shows the set of tasks involved in a typical end-to-end AI processing pipeline. TPCx-AI's use cases are based on diverse retail scenario tasks with various data types and ML models, both traditional and deep learning. We use a study by <ref type="bibr">McKinsey</ref> Analytics <ref type="bibr" target="#b0">[1]</ref> on potential use cases for AI and ML techniques in retail and other verticals as an inspiration for the workloads.</p><p>TPCx-AI is released with a full implementation, also known as the toolkit or simply the kit. This kit contains a synthetic data generator, based on the Parallel Data Generation Framework (PDGF) <ref type="bibr" target="#b30">[30]</ref>, a driver that manages the complete execution of the benchmark, as well as two reference implementations, one based on Apache Spark <ref type="bibr" target="#b38">[38]</ref> and one based on established Python libraries. Other implementations can be added as well upon review and approval by the TPC. Despite being a young standard benchmark, there already exist 14 official benchmark submissions to the TPC, as of June 2023.</p><p>In this paper, we give an overview of TPCx-AI, the first industry standard benchmark for end-to-end AI and ML systems and make the following contributions:</p><p>• We give a detailed introduction to TPCx-AI. We describe its workload, data sets, run rules, and metrics. • We describe the internal benchmark implementation and compare the Spark-and Python-based versions.</p><p>• We analyze the benchmark data set and workload both qualitatively and experimentally.</p><p>The rest of this paper is structured as follows. Next, we discuss related work. Section 3 gives an overview of the benchmark and describes the workload, data model, run rules, and metrics. We analyze the data set in Section 4. Section 5 presents the benchmark kit and the two workload implementations. In Section 6, we execute the benchmark and discuss the results of both implementations. We present future extensions of the benchmark in Section 7 and conclude with future work in Section 8.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2">RELATED WORK</head><p>In this section, we will give an overview of related work. For a recent survey on several machine learning, big data, and high performance computing benchmarks see also <ref type="bibr">Ihde et al. [15]</ref>.</p><p>Due to the high interest in ML, many benchmarks have been developed to evaluate ML systems and applications. These can be categorized in benchmark data sets, micro-benchmarks, benchmark suites, component benchmarks, and application-level benchmarks.</p><p>Benchmark data sets have a long history in ML research. Well know examples are ImageNet <ref type="bibr" target="#b4">[5]</ref> and WordNet <ref type="bibr" target="#b19">[20]</ref>, as well as various collections of ML data sets, such as the UCI Machine Learning Repository<ref type="foot" target="#foot_1">foot_1</ref> , OpenML <ref type="bibr" target="#b36">[36]</ref>, and the Penn Machine Learning Benchmarks <ref type="bibr" target="#b31">[31]</ref>. These data sets are typically used to evaluate the accuracy of ML algorithms and approaches rather than their performance. While this has helped tremendously to improve ML algorithms, it does not provide the full picture required in practical deployments, where a trade-off in accuracy and latency is always required. Several benchmark proposals are based on these data sets, e.g., MLBench <ref type="bibr" target="#b16">[17]</ref> and MLPerf <ref type="bibr" target="#b17">[18]</ref>.</p><p>An example of a micro-benchmark is DeepBench <ref type="bibr" target="#b20">[21,</ref><ref type="bibr" target="#b22">22]</ref>, which benchmarks basic deep learning operations, such as matrix multiplication, all-reduce, or convolutions. Another example is SLAB <ref type="bibr" target="#b35">[35]</ref>, a benchmark for linear algebra primitives. Like other microbenchmarks, DeepBench and SLAB can give deep insights into performance behaviour of the underlying hardware for typical ML operations, but the results are hard to interpret for end-to-end scenarios in real world deployments.</p><p>Benchmark suites are collections of kernels, applications, tools, or other workload units, designed to represent certain workload scenarios in application domains. An example of a kernel based benchmark suite is High Performance Linpack<ref type="foot" target="#foot_2">foot_2</ref> (HPL), a collection of kernels for numerical calculations to measure raw compute performance. Like many benchmark suites, HPL extensions have added ML workloads (e.g., HPL-AI<ref type="foot" target="#foot_3">foot_3</ref> ) to their portfolio. Another example is BigDataBench <ref type="bibr" target="#b7">[8]</ref>, which includes AI workloads in its current version <ref type="foot" target="#foot_4">5</ref> . Some benchmark suites contain end-to-end application workloads, but are built to measure hardware performance rather than complete deployments.</p><p>Most research on AI has focused on ML training, which is also true for the majority of ML benchmarks. From a benchmarking perspective, this can be seen as one component (among several others) of the complete ML pipeline. Researchers have identified other tasks of ML pipelines to be relevant for end-to-end performance of ML deployments and systems <ref type="bibr" target="#b28">[28,</ref><ref type="bibr" target="#b37">37]</ref>, and some benchmarks have been developed especially for those other tasks. Example of tasks are data cleaning, such as presented by CleanML <ref type="bibr" target="#b15">[16]</ref>, a benchmark for data cleaning and ML; AutoML Benchmark <ref type="bibr" target="#b9">[10]</ref>, which benchmarks automated ML. In addition, dcbench <ref type="bibr" target="#b6">[7]</ref> is a benchmark that specifically focuses on ML pipeline stages other than training. Currently, the benchmark defines three components for data cleaning, pruning, and slicing.</p><p>Closest to TPCx-AI are MLPerf <ref type="bibr" target="#b17">[18]</ref> and its predecessor DAWN-Bench <ref type="bibr" target="#b2">[3]</ref>, which both include training and serving tasks and proposed novel metrics for time to accuracy and time per serving. Both metrics are relevant for real world deployments and are included in the TPCx-AI metric. Unlike TPCx-AI, both benchmarks do not include data ingestion, preprocessing or postprocessing stages, and users can choose to evaluate only training or serving, or both. To the best of our knowledge, TPCx-AI is the only official industry standard benchmark, which covers end-to-end ML and AI workloads at an application level.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3">BENCHMARK OVERVIEW</head><p>In this section, we give an overview of the benchmark specification, which includes the workload (use case pipelines and data set), as well as the run rules and benchmark metrics.</p><p>Major design goals for the benchmark were that it is realistic, representative, and relevant for ML and AI deployments. Section 3.1 gives a brief introduction to TPC benchmarks in general. In Section 3.2 we describe the TPCx-AI data model. Section 3.3 gives a detailed description of the ten use cases and their pipelines. Section 3.4 explains run rules and the different measured and unmeasured tests of the benchmark. Finally, Section 3.5 and 3.6 define TPCx-AI's quality and performance metric 𝐴𝐼𝑈 𝐶𝑝𝑚@𝑆𝐹 .</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.1">TPC Benchmarks</head><p>The Transaction Processing Performance Council (TPC) is a consortium with a history of more than 30 years developing successful benchmarks for data processing. Currently there are 10 active TPC benchmarks for different areas of data processing and data analysis. For instance, classical online analytical processing is benchmarked in TPC-H and TPC-DS <ref type="bibr" target="#b23">[23,</ref><ref type="bibr" target="#b24">24]</ref>, data integration systems can be evaluated using TPC-DI <ref type="bibr" target="#b26">[26]</ref>, and TPCx-BB is a big data analytics benchmark <ref type="bibr" target="#b8">[9]</ref>, which also includes several machine learning tasks. TPC benchmarks are typically used by member companies (e.g. original equipment manufacturers or independent software vendors) to demonstrate and promote the features and capabilities of their hardware or software systems when processing certain types of workloads. Companies that submit benchmark results for official publication are also known as test sponsors.</p><p>Each TPC benchmark belongs to one of two categories: Express or Enterprise. Both Express and Enterprise benchmarks include a specification document when released. The specification document contains information about the benchmark design, run rules, as well as implementation details, among others. In addition to the specification document, Express benchmarks include a kit released by the TPC along with the benchmark's specification document <ref type="bibr" target="#b13">[14]</ref>. Enterprise benchmarks, on the other hand, need to be implemented by the sponsor based on the specification document. The TPC introduced Express benchmarks in 2013 in an effort to make their benchmarks easier to adopt.</p><p>The following aspects are also integral to TPC benchmarks:</p><p>Audit requirement Before TPC benchmark results can be considered official they need be reviewed by an independent TPC certified auditor that will inspect the results thoroughly to confirm that all benchmark rules were followed and thus obtained under fair conditions to be compared to previous and future results. System Under Test pricing In addition to reporting the performance score obtained after running the benchmark, users also need to report in detail the price of the system under test (SUT) and its components (software and hardware) used to obtain their performance score <ref type="bibr" target="#b12">[13]</ref>. TPC benchmarks usually consolidate the price of the SUT under their price/performance metric that needs to be included in the results. This feature of TPC benchmarks allows for consumers to get a clearer perspective on the total cost of the system required to achieve a certain performance score. Recently, special clauses have been added to the pricing specification to permit running TPC benchmarks in the cloud rather than only in on-site deployments.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.2">Data Model</head><p>The core of the TPCx-AI data model is relational, i.e., there are multiple tables with relationships to each other. Figure <ref type="figure" target="#fig_1">2</ref> illustrates the different schema parts and highlights the relationships between the tables as well as their usage by the individual use cases. The relational schema represents an analytical database with orders consisting of line items as common in data warehouses. Additionally, several other relational tables give more insight into customers, their financial transactions, products, and marketplace prices. Besides the structured data, there are multiple unstructured data sets in the model. This also includes text, as in product reviews, as well as, audio files and customer images. Each use case utilizes a subset of the data model as shown in Figure <ref type="figure" target="#fig_1">2</ref>. All tables are generated scalably using the synthetic data generator PDGF <ref type="bibr" target="#b30">[30]</ref>, which we extended to enable image and audio generation.</p><p>The complete data set is scaled according to a scale factor (𝑆𝐹 ). Users specify the 𝑆𝐹 prior to running the benchmark to indicate the dataset size in GB for which they want to run the workload. Scale factors that can be used for official publications range from 1 GB up to several Petabytes in steps of 3 and 10 (i.e., 1, 3, 10, ...). The relational tables include common SQL data types, as well as text, and each table has between 2 and 12 columns. The audio files are WAV files and the images PNG files. Using synthetically generated  data also mitigates the risks of running into ethical or privacy issues, and enables the generation of correct ground truth data. For example, the audio files are customer conversations, which are initially generated as text files and then converted to audio using a text-to-speech conversion tool. The same is true for user images, which are generated in a deterministic manner based on the user ID in different conditions using a face generator.</p><p>For the training, serving, and scoring tests of the benchmark, separate data sets are generated. This is done by facilitating the descriptive nature of a PDGF data generator. For all three data sets the same data description is used but with a different seed and scaling factor. Changing the seed will give a different data set but with the same structure and data distributions. We generate three separate data sets in order to prevent information leaks and minimize attack surface for unfair benchmark users. The training data set is used in the Power Training Test and contains all tables with all columns and hence all features necessary for training as well as the labels. The training data set grows proportionally to the scaling factor. The serving data set is to be used for serving and consist of all the tables and columns but without the labels. Because this is different from the training data set, simply memorizing the training data will not help during serving. The serving data set is used for the Power Serving Test as well as the Serving Throughput Test. The last data set is the scoring data set and is conceptually a combination of the latter two data sets. As a first step a data set containing only the features but none of the labels is generated and must be used during the Scoring Test but in the same environment as the Power Serving Test. Afterwards the labels are generated in the benchmark driver to calculate the quality metric.</p><p>The data distributions within the data sets are modeled after real data sets or carefully designed to have certain characteristics. Some attributes are highly skewed whereas others contain a lot of noise. A good example for a skewed data set is the failures event log. This contains log event for different hard drives, one per day, monitoring the health status of hard drive using S.M.A.R.T. data. For the training case the failures log also contains a flag indicating if a hard drive failed. Under real conditions a hard drive rarely fails and if so it mostly fails catastrophically, which means there is a single event out of thousands which is a failure. Examples for noisy data sets are the financial_transactions and product_rating relations. These contain fraudulent transactions and spam reviews. But they also contain transactions and reviews that share the same characteristics as the fraudulent or spammy ones but are in fact valid transactions and reviews. Adding such noise prevents the models from characterizing fraud or spam too aggressively.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.3">Workload</head><p>TPCx-AI's workload consists of ten use cases, each covering a complete end-to-end ML pipeline as outlined by Polyzotis et al. <ref type="bibr" target="#b27">[27]</ref>, dealing with the technical challenges in ML systems <ref type="bibr" target="#b32">[32]</ref>. An abstract ML pipeline can be seen in Figure <ref type="figure" target="#fig_0">1</ref>. Unlike previous benchmarks, TPCx-AI's workloads cover all steps in this pipeline, although not all steps are covered in all pipelines. The use cases were inspired by real world use cases and based on an analysis by McKinsey Analytics <ref type="bibr" target="#b0">[1]</ref>. The workload covers traditional techniques as well as deep learning models. Each use case solves a specific ML challenge. In the following, we give an overview of the ten use cases, which are also summarized in Table <ref type="table" target="#tab_1">1</ref>.</p><p>UC01 -Customer Segmentation. In the first use case, customers are segmented based on their shopping behavior. It uses k-means clustering on the customer, order, lineitem, and order_returns tables to identify different types of customers. In the preprocessing step, duplicates and null values are removed, then in the training, the customers are clustered unsupervised by k-means. The clusters are used while serving to assign new users to groups.</p><p>UC02 -Customer Conversation Transcription. In UC02, transcripts of user calls are generated using audio to text conversion. This is done using the Deep Speech recurrent neural network (RNN) model <ref type="bibr" target="#b11">[12]</ref>. In the preprocessing step, the audio data is loaded and resampled to a common sample rate (16kHz). Then Mel Frequency Cepstral Coefficients (MFCC) are calculated from the raw audio and used to train the deep neural network infrastructure. During serving the same preprocessing steps are applied and the already trained model is used to generate transcriptions. The transcripts are then used to compute word error rates comparing to the ground truth data in the scoring test.</p><p>UC03 -Sales Forecasting. The objective in UC03 is to forecast the weekly sales for each department in each store given a limited history of sales data for the second to last year in the data set. The pipeline uses the tables orders, product, lineitem, and store_department. The use case utilizes an exponential smoothing technique (Holt-Winters) for time series forecasting. In the acquisition stage, the tables are loaded and joined, then aggregates for weekly sales are generated in preprocessing. The training fits the Holt-Winters model, which is used to forecast sales in the serving stage for up to one year per department per store. The scoring test checks the accuracy of the results.</p><p>UC04 -Spam Detection. In UC04, product reviews are searched for spam entries. This use case uses the product_rating text data. Our specification uses a classical Naïve Bayes model to identify spam entries. In the acquisition step, reviews are loaded and in the cleaning step, duplicates are eliminated. The text is transformed to n-grams and vectors in preprocessing and the model is fit during training. While serving, new reviews are classified as ham or spam and the resulting predictions are scored using Matthews correlation coefficient.</p><p>UC05 -Price Prediction. UC05 performs price predictions for individual retail items using a Recurrent Neural Network on the marketplace table. The prediction is based on the brand, product name, and description on an online market place. Initially, duplicates and null values are eliminated and the model is trained on the data. During serving, item prices are predicted and the predictions are scored using Root Mean Squared Log Error.</p><p>UC06 -Hardware Failure. In UC06 hardware failures of disk drives are predicted based on Self-Monitoring, Analysis, and Reporting Technology (SMART) data in the failures log data set. While this is not a pure retail use-case it is a typical infrastructure task and relevant in any larger hardware setup. The initial preprocessing performs duplicate and null value removal. A support vector machine is trained based on known data and failures. In the serving stage, impending failures are predicted and scored using the F-score metric.</p><p>UC07 -Product Rating. In UC07, cross-selling is improved by giving "next-to-buy" recommendations. Based on previously bought products, we give recommendations for products that the customer might also be interested in. The recommendation are found in the product ratings by comparing customers (by their products) and/ or products (by their customers). The ratings are loaded and transformed into a numerical format without duplicates. In the training step, matrix factorization is used and an alternating least squares regression between the item and user matrix. Predictions for user item pairs are served and scored using mean absolute error.</p><p>UC08 -Classification of Trips. In a brick and mortar store setup, it is useful to classify shopping trips into trip types. Examples of trip types are: a customer may make a small daily dinner trip, a weekly large grocery trip, a trip to buy gifts for an upcoming holiday, or a seasonal trip to buy clothes. In data acquisition, the shopping history is generated by joining the tables order, lineitem, and product. Items are aggregated and categorical values in the data are binarized (after data cleaning). We train gradient boosted trees to predict the trip type in the serving stage based on active shopping sessions. The scoring computes the classification accuracy.</p><p>UC09 -Facial Recognition. In UC09, we train a classifier to recognize faces. This can be used to identify frequent customers or enable face identification systems <ref type="foot" target="#foot_5">6</ref> . The data set contains a set of computer generated face images for a subset of the customers. For each customer image, we also generate a foreign key to the customer table as meta data, to enable labeling and scoring. After loading the data in the acquisition step, the names are encoded and the images are aligned and resized. During training, a pre-trained embedding (a convolutional neural network) is fine-tuned for the customer images and a logistic regression model is trained on the embedding and the names of the customers. The serving step recognizes customer images and the accuracy is scored. UC10 -Fraud Detection. In UC10, we cover a fraud detection use case. For this, there are separate financial transactions in the data set, which contain transaction time, transaction amount, sender, receiver, and transaction limits for accounts. Based on a predefined set of fraudulent transactions, a logistic regression model is trained for classification. The data is disaggregated and distributed in the tables financial_account and financial_transaction, which need to be joined and cleaned. The transaction data is normalized across the full tables before training the model. In the serving stage, transactions are classified and scored using classification accuracy.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.4">Benchmark Tests and Run Rules</head><p>A complete benchmark run consists of several tests, some of which are timed and part of the measured result. The following tests are run in sequential order:</p><p>(1) Data Generation (2) Load Test (3) Power Training Test (4) Power Serving Test I (5) Power Serving Test II (6) Scoring Test Data Acquisition Transcriptions Load CONVERSATION.CSV Audio Files Load Audio_[n].wav Load Audio_2.wav Load Audio_1.wav Data Transformation Features resample audio 16 kHz calculate MFCC Labels encode labels as padded sequences Serving Predictions create transcripts for audio Training Model train Bi-LSTM (7) Serving Throughput Test</p><p>During Data Generation all data sets are generated including training, serving, and scoring data sets. The data generation is not timed. In the Load Test the data is loaded into the system, which means the data is moved into the final position, where it will be used by the system. This could be just a copy operation or an ingestion into a system including data transformations, format changes, compression, encoding, etc. The Load Test is timed and the end-to-end elapse time is part of the final metric. The Power Training Test runs the training pipelines of the ten use cases sequentially, including all preprocessing, model training, and postprocessing tasks. The end-to-end elapse time of each use case is measured. In the Power Serving Test I and Power Serving Test II tests, the serving pipeline of all use cases are run sequentially and the elapse time of each use case is measured. In the Scoring Test, the quality of the predictions of each use case serving pipeline is measured against predefined thresholds. This test also embodies part of the model validation stage that is commonly found in production AI pipelines to decide whether a recently trained model should be deployed or discarded <ref type="bibr" target="#b37">[37]</ref>. The time of the scoring is not measured as its purpose is to measure the quality of the models created during the Power Training Test. In the Serving Throughput Test, concurrent streams of the ten serving pipelines are defined and run. Each stream consists of the sequential execution of a permutation of the serving pipelines of the ten use cases. The end-to-end time of the execution of all streams is measured.</p><p>A complete run consists of a Validation Run with Scale Factor 1, followed by the actual Benchmark Run with the scale factor selected by the user. The purpose of the Validation Run is to verify the system under test is in a good state for running the benchmark. The results of the Validation Run are compared to a predefined result set, which is part of the benchmark kit. As part of the validation, the result cardinalities and data set sizes are compared to predefined results and other sanity checks are performed.</p><p>An official TPCx-AI result mandates that modifications to the kit are done only as allowed by the benchmark specification, and that all components of the system are commercially available (including software frameworks and libraries). An exception are TPCx-AI approved compute libraries. The result of an official benchmark run is reported to the TPC in a full disclosure report, which additionally contains all hardware and software as well as all information and configurations necessary to rerun the benchmark on the SUT.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.5">Quality Metric</head><p>One of the acceptance criteria for a benchmark run is the quality metric. The quality metric for TPCx-AI is used to measure the quality of a trained machine learning model with previously unseen data against a ground truth data set. We call this process SCORING and it is embedded into to the benchmark driver. New test sponsors do not need to implement or measure the quality themselves. What is considered high or low quality is based on the particular use case and business requirements. Hence each use case has its own predefined quality metric and threshold. See Table <ref type="table" target="#tab_3">2</ref> for a full reference of the different metrics, their thresholds, and an indicator showing if a certain metric should be minimized or maximized. However, since the quality metric is seen as an acceptance criteria rather than being part of the performance metric it is enough if the threshold is met, i.e., deviations are neither penalized nor rewarded. This is quite similar to the time-to-accuracy metric of MLPerf <ref type="bibr" target="#b17">[18]</ref>, in the sense that it acknowledges the fact that perfect accuracy is not always necessary or achievable. Slight improvements in accuracy might not warrant the cost from a business standpoint if they entail significant increases in training time. On the other hand, having a quality metric threshold also acknowledges the fact that faster trained AI models may have bad prediction quality, for instance due to their sensitivity to batch sizes and learning-rate values.</p><p>We chose the following metrics for the use cases:</p><p>word_error_rate measures how many words are correctly transcribed, the lower the better, zero is a perfect score and one and above means that every word was transcribed incorrectly. mean_squared_log_error the Mean Squared Log Error 𝑀𝑆𝐿𝐸 is used mainly for regression problems and measures the error of the predicted value and the true value but is aware of the order of magnitude. An 𝑀𝑆𝐿𝐸 &lt;= 1.0 means that the predicted values are of the same order as the true values on average, hence lower is better and zero is the best. f1_score is a combined metric that takes precision and recall into consideration, i.e., how many of a certain category are found vs. how many of the predictions in this category are correct, higher is better and one would be a perfect categorization. matthews_corrcoef The Matthews Correlation Coefficient 𝑀𝐶𝐶 measures the correlation between the predicted and true values, a 𝑀𝐶𝐶 = 1 would mean a perfect correlation, 𝑀𝐶𝐶 = 0 would be the value of two independent random variables, and 𝑀𝐶𝐶 = -1 would mean a perfect anti-correlation, hence higher is better.</p><p>median_absolute_error in contrast to the 𝑀𝑆𝐿𝐸 the Median Absolute Error 𝑀𝐴𝐸 is used in cases where the predicted values are expected to be at the same order of magnitude and all deviations from the true values are treated the same. Hence the worst possible value would be the difference of the minimum and maximum value of the expected predictions 𝑀𝐴𝐸 = 𝑀𝐼 𝑁 -𝑀𝐴𝑋 and the best possible value would be 𝑀𝐴𝐸 = 0. The direct nature of this metric makes it easy to interpret, for instance an 𝑀𝐴𝐸 = 3.5 means that the predicted values are off by 3.5 on average from the true values. accuracy_score The accuracy score is a metric used for classification problems and is probably the most intuitive one. It simply measures the amount of correct classifications. This means it is quite easy to use for multi-class problems but it is also quite vulnerable to unbalanced classes. It ranges from 0 to 1 where 0 is the worst and 1 being a perfect score. Some metrics, such as the word_error_rate, are use-case dependent and some metrics are data dependant, such as the 𝑀𝐶𝐶 or 𝑀𝑆𝐿𝐸. The 𝑀𝐶𝐶 is used for highly skewed data sets where the category we are interested in, i.e., the failure case, is under represented. Using only accuracy will not catch classifiers that only predict the majority class for instance. The 𝑀𝑆𝐿𝐸 is used in use cases where bigger variances are permitted at higher orders of magnitude. For instance, in Use Case 5 a price is predicted. A deviation of one dollar for a real price of $1000 is not as bad as the same deviation for a real price of $10. One notable exception to the automated scoring is UC01. Since it is a clustering problem there is no good metric to score the results that is not prone to outliers. Hence for this particular use case a more manual approach is used by the auditor the check if the work was actually done. </p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3.6">Metric</head><p>TPCx-AI defines three primary metrics, the performance metric, 𝐴𝐼𝑈 𝐶𝑝𝑚@𝑆𝐹 ; a price-performance metric, $/𝐴𝐼𝑈 𝐶𝑝𝑚@𝑆𝐹 ; and the availability date. All three primary metrics need to be reported for an official benchmark result. 𝐴𝐼𝑈 𝐶𝑝𝑚@𝑆𝐹 stands for AI Use cases-per-minute at scale factor SF, and it is a combination of the elapse times in seconds of the benchmark runs. It is designed to prevent performance improvements in only small parts of the benchmark to massively impact the overall performance metric. To this end, geometric means are used to combine the separate run times. This way, relative improvements in individual parts of the training or serving pipelines have the same influence on the overall result. In contrast, an arithmetic mean would be mainly influenced by improvements in long running stages. The use of a geometric mean is in line with previously published TPC benchmarks, such as TPC-DS and TPCx-BB <ref type="bibr" target="#b8">[9,</ref><ref type="bibr" target="#b23">23]</ref> and also recently published experiments <ref type="bibr" target="#b5">[6]</ref>.</p><p>The important parts of the metric are:</p><p>𝑆𝐹 the user defined scale factor, which defines the size of the overall data set and approximates the data set size in GBs,</p><formula xml:id="formula_0">𝑁</formula><p>the number of use cases (i.e., 10 in the current version), 𝑆 the user defined number of concurrent streams to run in the Serving Throughput Test, 𝑇 𝐿𝐷 the loading factor, which is the overall time it takes to ingest the datasets into the data store used for training and serving, 𝑇 𝑃𝑇𝑇 the Power Training Test factor, defined as the geometric mean of the training times 𝑡 𝑡 of all use cases 𝑁 √︂ ∏︁ 𝑁 𝑖 𝑡 𝑖 𝑡 , 𝑇 𝑃𝑆𝑇 the Power Serving Test factor, defined as the geometric mean of the serving times 𝑡 𝑠 of all use cases 𝑁 √︂ ∏︁ 𝑁 𝑖 𝑡 𝑖 𝑠 , here the higher result of the two runs is taken. 𝑇 𝑇𝑇 and the Serving Throughput Test factor, defined as the total time spent running the throughput test divided by the number of use cases 𝑁 , and the number of streams in the Serving Throughput Test 𝑆. Intuitively this leads to test sponsors maximizing the value of 𝑆 until no gains are observed in the value of 𝑇 𝑇𝑇 , indicating compute resources are saturated.</p><p>The resulting performance metric 𝐴𝐼𝑈 𝐶𝑝𝑚@𝑆𝐹 is defined as:</p><formula xml:id="formula_1">𝐴𝐼𝑈 𝐶𝑝𝑚@𝑆𝐹 = 𝑆𝐹 * 𝑁 * 60 4 √ 𝑇 𝐿𝐷 * 𝑇 𝑃𝑇𝑇 * 𝑇 𝑃𝑆𝑇 * 𝑇 𝑇𝑇<label>(1)</label></formula><p>Elapsed times are always reported in seconds, hence the constant value 60 is introduced to match the semantics of the performance metric. Furthermore, the performance metric is always reported for the benchmarked scale factor, e.g., 𝐴𝐼𝑈 𝐶𝑝𝑚@10 for scale factor 10, and results are not comparable across scaling factors. The price performance, $/𝐴𝐼𝑈𝐶𝑝𝑚@𝑆𝐹 , is defined as the total system price divided by performance metric. The system price must include all software and hardware components of the deployment including operation, maintenance, and administration for one year. The system availability date specifies the date, from which on a customer can buy the deployment as it was used for the benchmark.</p><p>Besides the three primary metrics, a benchmark sponsor can also optionally report the energy metric, Watts/AIUCpm@SF. The energy measurement is centrally specified for all benchmarks in the TPC-Energy specification <ref type="bibr" target="#b25">[25]</ref>.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4">DATA SET CHARACTERISTICS</head><p>In this section, we give an overview of the data set scaling characteristics. One of the main contributions of TPCx-AI is its scalable data set. For ease of use each scale factor corresponds approximately to the size of the training data set in GB. Although the official data sizes are limited to scale factors 1, 3, 10, ..., 10,000, the data generator can produce any other data size in-between.</p><p>Figure <ref type="figure" target="#fig_3">4</ref> shows the data size at scale factors 1, 10, 100, and 1000. It can be seen that the data size is directly proportional to the scale factor and close to 1𝐺𝐵𝑥𝑆𝐹 . Since the data set is meant to be realistic, we do not scale all tables linearly but try to make them scale realistically in relation to the number of users and products. To this end, each table has an individual scaling function with respect to an internal scale factor and a solver is used to approximate the actual size on disk for the aforementioned internal scale factor and scale it to the official scale factor.</p><p>Figure <ref type="figure" target="#fig_5">5</ref> illustrates the size of the individual data tables at the same scale factors. Even though the data set as a whole grows linearly and proportional to the scale factor, the tables grow at different rates. For instance, the lineitem table accounts for approximately 50% of the data set at scale factor 𝑆𝐹 = 1 whereas at a higher scale factor 𝑆𝐹 = 1000 it makes up only 25% of the whole data set. As can be seen in Figure <ref type="figure" target="#fig_5">5</ref>, the number of customer entries grows linearly, but other tables grow faster, this is most notable with failures and customer images. Table <ref type="table" target="#tab_5">3</ref> gives a detailed list of the individual table size and row counts.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5">BENCHMARK IMPLEMENTATIONS</head><p>TPCx-AI is an express benchmark and comes with a full reference implementation. According to TPC rules, this implementation supersedes the specification in cases of divergence. This means alternative implementations have to do equivalent work and produce the same output as the reference implementation. The reference implementation also increases the ease of use of the benchmark. For other benchmarks, such as TPC-H or TPC-C, a test sponsor has to implement a complete driver framework, which then also has to be certified by an auditor. Unlike previous TPC benchmarks, TPCx-AI includes two reference implementations, one for single node setups and one for cluster deployments.</p><p>Regardless of the implementation each use-case has two AI processing pipelines; one for model training on a training data set, and one for serving the trained model to make predictions on a serving data set. Each pipeline includes loading, preprocessing, training or serving, and postprocessing tasks. Figure <ref type="figure" target="#fig_2">3 illustrates UC02's</ref> training and serving pipelines at a high level, which performs audio transcripts as described in Section 3.3. The first stage of the pipeline is data acquisition, which retrieves the data set from the data store and makes it available for further processing. In the second stage, data transformation is executed. The data set is transformed into features and potentially labels, if it is possible. The data transformation stage can include tasks such as, data cleaning, joining, aggregations, normalization, encoding, projections, or scaling. In the third stage, the model is trained. The transformed data is used to train one or several machine learning models. The last stage in the use case is the serving stage, which uses the model, as well as the transformed data set and its labels and features to make predictions.</p><p>The implemented pipelines are purposely kept simple, with a minimum number of libraries used. Furthermore, we follow best practices as outlined by the libraries and frameworks used, rather than fine tuning the use cases, in order to keep them portable and easy to maintain, as well as easy to understand as a reference. Listing 1 shows the structure of such a pipeline implementation. The decision for two reference implementations was made based on the observation that machine learning pipelines come in two flavors. Many applications only require limited compute resources and all data can fully fit into main memory of a single compute unit, in these cases, single node deployments are a good choice and can often be found in practice. However, there are also pipelines and data sets, for which a single computational unit is not sufficient and the computation is distributed among several compute units. To acknowledge this fact, we include a single node implementation and a distributed implementation for the benchmark.</p><p>Workload and data set are the same for both implementations, this means, we use the same type of ML models, which are trained with the same data sets in both implementations. From a benchmark point of view, we do not focus on algorithmic improvements, but rather focus on comparability across frameworks and hardware. The model complexity stays constant across scale factors, which means higher scale factors mainly test the data throughput of systems under test. On current hardware and libraries, the single node implementation is better for small scale factors, while the distributed implementation is targeted for larger scale factors, which then are executed in shared-nothing cluster setups. The overall constraints for both implementations and any future implementations are given by the specification <ref type="foot" target="#foot_6">7</ref> and the driver harness.</p><p>Besides the use case implementations, the kit contains the specification and the user guide, as well as configuration files to adapt the execution to the system under test. Furthermore, the kit includes the driver, which is based on a set of scripts. The scripts execute the benchmark, perform measurements, and compute the benchmark results. The kit also generates a report, which can be used as a basis for the full disclosure report, required by the TPC for an official benchmark result. Finally, the kit includes the data generator and reference data sets for verification. Additional implementations can be included in the kit to support for instance new machine learning frameworks, as well as other libraries, execution environments, or hardware components. These have to be accredited by the TPC before being used for submission of official results.  </p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5.1">Single-Node Implementation</head><p>The single-node implementation is tailored towards smaller scale factors were a single data set fits into memory. This setup is typically found during the development of machine learning pipelines and for prototyping. We use Python 8 as a programming language and framework because of its widely used data science and machine learning ecosystem. Similarly, Pandas 9 is used for most data manipulation and data transformation. We use DataFrames to transfer the data between stages. For training the machine learning pipelines, we use scikit-learn 10 and Tensorflow 11 and its Keras 12 API. Each use-case is implemented as a single command line application, which can be controlled by providing various command line arguments that specify the training or serving pipeline, the input paths, the working directory, the output directory, and hyper parameters that are allowed to be changed by the benchmark user.</p><p>The Python-based pipelines all follow a similar structure and due to the single node setup the execution does not require complex 8 Python -<ref type="url" target="https://www.python.org/">https://www.python.org/</ref> 9 pandas -<ref type="url" target="https://pandas.pydata.org/">https://pandas.pydata.org/</ref> 10 scikit-learn -<ref type="url" target="https://scikit-learn.org">https://scikit-learn.org</ref>  11 Tensorflow -<ref type="url" target="https://www.tensorflow.org/">https://www.tensorflow.org/</ref>  12 Keras -<ref type="url" target="https://keras.io/">https://keras.io/</ref> setup and tear down procedures. A single pipeline, as outlined in Listing 1, has the following steps:</p><p>(1) Load the data from one or more CSV files and merge them into a single pandas DataFrame, (2) transform the DataFrame into a feature matrix and a labels vector (numpy arrays or DataFrames depending on the usecase), (3) train the machine learning algorithm on the features and labels, (4) serve the model and create prediction for features extracted from previously unseen data and write a csv file to disk.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5.2">Distributed Implementation</head><p>For the distributed implementation, we use Apache Spark<ref type="foot" target="#foot_7">foot_7</ref>  <ref type="bibr" target="#b38">[38]</ref> as the data processing engine and its DataFrame API for data manipulation and data transformation. Apache Spark features a machine learning library <ref type="foot" target="#foot_8">14</ref> with distributed implementation for many popular machine learning algorithms <ref type="bibr" target="#b18">[19]</ref>. We use it for many pipelines in our implementation. The deep learning models are similar to the single-node implementation and we also use the Keras API of Tensorflow for the distributed implementation. To train the models a data parallel approach is used, i.e., the same model is trained on different partitions of the training data set and the gradients are gathered after each step. This approach in particular is called allgather/allreduce and implemented by Horovod <ref type="bibr" target="#b33">[33]</ref>.</p><p>The code structure is similar to the single-node implementation. However, the computational model is completely different. While the execution for the single-node implementation is procedural and imperative the distributed implementation is much more declarative. We use the DataFrame-API of Apache Spark to create an execution graph, which is then optimized and executed by the Spark runtime. The DataFrames used in the context of the distributed implementation are different from the single-node version. Using DataFrames enables working with data sets that do not fit into memory and can be stored in a distributed file system.</p><p>The structure of the Spark pipelines is similar to the Pythonbased pipelines and has the same steps of loading, data transformation, model training, and serving. Unlike the Python-based execution, the Spark engine can use lazy execution within a job and does not have to materialize all intermediate steps, such as data transformations before model training.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="6">EXPERIMENTS</head><p>In the following section, we present performance numbers for the single node Python-based implementation and a distributed execution using the Apache Spark implementation. While we present numbers for multiple scale factors, the results across scale factors are not comparable according to TPC rules. We perform the experiments without any special optimizations and the systems are not specifically designed for these workloads.</p><p>For all experiments, we use the same hardware setup. Our cluster has 11 nodes, each has 2 Intel ® Xeon ® CPUs E5-2699 V4 (with 22 cores, 2 threads each), 500 GB RAM, and 1.5 TB disk. For the Python experiments, we use a single node. For the Spark experiments, one node is configured as primary and ten servers as workers.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="6.1">Single Node -Python-based</head><p>We test Scale Factors 1, 5, 10, and 15 using the Python-based kit. For the Serving Throughput Test we use 2 streams. We were not able to run larger scale factors in Python, because of memory constraints of our testing setup and limitations in the libraries <ref type="foot" target="#foot_9">15</ref> that have been used. The performance metrics of the runs can be seen in Table <ref type="table" target="#tab_7">5</ref>. Officially, the numbers are not comparable across scale factors, which also makes sense, since not all tables scale linearly. However, as can be seen in the table, the partial metrics across different scale factors grow with the scale factor, but not linearly. All of the individual metrics are less than a factor of 10 larger in SF 10 than in SF 1. This results in a improved primary performance metric for SF 10 compared to SF 1. This is due to the structure of the metric, which incorporates the scaling factor in the final measure. Just looking at the performance metric one could conclude that with the hardware and software being used for these experiments that the single-node implementation performs best at scaling factor 𝑆𝐹 = 5 or in other words on a 5GB data set.</p><p>Looking at the quality metrics (see Table <ref type="table" target="#tab_6">4</ref>) it can be observed that each benchmark run at each scaling factor was valid since the thresholds were met for all use cases. Furthermore, it can seen that some use cases improve at higher scaling factors, some stay more or less constant and others even worsen slightly. Even though the first case is to be desired in some cases, it might be that the model was actually overfitting at low scaling factors and is becoming more generalized with more training data.</p><p>In Figure <ref type="figure" target="#fig_6">6</ref> the individual run times for each use case in the Python-based execution with scale factor 1 on our server is shown. In the plot the average run time for each use case is displayed for the Serving Throughput Test. It can be seen that the serving time is similar for the Power Serving Test and the Serving Throughput Test. However, in the metric, we get a better value, showing that multiple streams enable more parallelism on the server. The training is always much more costly than the serving stages. Additionally, we can see that the run times of the use case differ in more than two orders of magnitude, which is to be expected in real workloads.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="6.2">Multi Node -Apache Spark-based</head><p>For our multi node experiments, we use an 11 node setup (1 main node and 10 worker nodes). We execute Scale Factors 1, 10, 100, 200, 300, and 400 on our cluster and use two streams in the Serving Throughput Test. The performance metrics of the runs can be seen in Table <ref type="table" target="#tab_7">5</ref>. Interestingly, the performance numbers for smaller scale factors in the Spark-based experiments setup are slower than in the Python-based runs. This is due to the higher startup times of Spark. Additionally, we can see that the run times for Scale Factor 10 are similar to the run times of Scale Factor 1, which also shows that small scale factors are not properly utilizing the cluster. For Scale Factor 100, some of the stages seem to be performing more work and are taking considerably more time than in the smaller scale factors. Overall, the Spark cluster can execute larger scale factors and get better performance numbers for these scale factors. Similar to the performance metric the quality metric also performs worse at low scale factors than for the single-node implementation but improves at the high and very high scale factors for some use cases. An interesting observation is that for UC02 and UC03 the default parameters will not produce a valid benchmark run due to the quality metrics exceeding the thresholds, the values highlighted in red in Table <ref type="table" target="#tab_6">4</ref>. The reason is, especially for UC02, that the data is partitioned, a model is trained on each partition, and all partition models are then merged. When the partitions are too small then these partition-based models are not able to perform well. This can be changed by reducing the parallelism.</p><p>In Figure <ref type="figure" target="#fig_7">7</ref> the individual test run times of each use case for Scale Factor 10 are shown. Again, we report the average run time for the Serving Throughput Test. Overall, the performance characteristics are similar to the Python experiment in Figure <ref type="figure" target="#fig_6">6</ref>. An outlier is UC06, which is the slowest use case in Spark, while it is fast in Python. However, the failures table grows faster than the scaling factor, meaning in the larger scale factor disproportionately more work needs to be done for UC06.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="6.3">Official TPCx-AI Results</head><p>As of June 2023, 17 results have been published on the TPC website <ref type="foot" target="#foot_10">16</ref> . To give a comparison of our experiments to real benchmark results, we briefly discuss the first two results here.</p><p>The first result <ref type="foot" target="#foot_11">17</ref> was submitted by the Telecommunications Technology Association (TTA) <ref type="foot" target="#foot_12">18</ref> in April 2022. It is an SF 1000 run (1 TB) with with 10 streams executed on Apache Spark. The system under test consists of 3 servers with each 2x Intel ® Xeon ® Platinum 8380 CPU and 2,048GB memory. In total the system has 6 processors with 240 cores and 480 threads, and 6,144GB memory. The total disk space is 136TB. The primary metrics of the system are: Performance 1,205.43 AIUCpm@1000 Price/Performance ₩378,912.09 KRW/AIUCpm@1000 ( $290 US-D/AIUCpm@1000) Availability date April 18, 2022 Total System Cost ₩456,752,000 KRW ( $350,000 USD)</p><p>The second result <ref type="foot" target="#foot_13">19</ref> was submitted by Nettrix Information Industry<ref type="foot" target="#foot_14">foot_14</ref> in May 2022. It is an SF 10 run with 100 streams using the Python-based implementation. The system under test is a oneserver system consisting of 2x Intel ® Xeon ® Gold 6346 CPU (2 processors with 32 cores and 64 threads) with 512GB memory and a total disk space of 12TB.  The detailed result metrics of both benchmark runs are presented in Table <ref type="table" target="#tab_8">6</ref>. All details are available on the TPC website. Since then there have been additional results published by Dell Technologies, Hewlett Packard Enterprise, and Transwarp Technology in different scale factors, ranging from 3 to 3000.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="7">FUTURE USE CASES</head><p>In addition to the ten published use cases, we created a set of six new use cases to be added to the workload in future versions. The list of new use cases is shown in Table <ref type="table" target="#tab_9">7</ref>. This set of use cases focuses more on deep learning based models. These use cases add new tables and attributes to the data set and will, therefore, change the data set scaling behavior. The use cases are not available publicly yet. In the following sections, we give a brief introduction to each new use case. UC11/UC13 -Sentiment Analysis ML/DL In these use cases the sentiment of a product review is predicted either by using traditional ML or DL techniques, i.e., random forest model or a Recurrent Neural Network. In the preprocessing stage, the data is loaded and the classifier is trained using star ratings as labels.</p><p>UC12 -Product Description Translation In UC12, product descriptions are translated from English to German. A transformer model is used to translate the sentences in product descriptions, after it has been trained on example sentences in both languages.</p><p>UC14 -Credit Scoring UC14 predicts credit ratings for merchants based on existing loans using a multi-layer perceptron model. The preprocessing stage joins multiple tables and including new tables for merchants. The values are normalized and missing values imputed. In the serving stage, ratings for merchants applying for loans are predicted.</p><p>UC15 -Predict Retail Location In UC15, locations for new stores are predicted based on customer demographics. In the training stage, a decision tree is trained, which is then used to perform regression for new store locations.</p><p>UC16 -Click-Through-Rate Prediction UC16 predicts click conversion to purchases using a deep learning recommendation model. Click logs are used and converted in a click log model. In the serving stage, click sessions are classified by their conversion probability.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="8">CONCLUSION AND FUTURE WORK</head><p>In this paper, we present TPCx-AI, the Transaction Processing Performance Council's new industry standard benchmark for artificial intelligence and machine learning systems. TPCx-AI is modeled on a retail scenario and comprises ten realistic use cases -covering both deep learning and traditional machine learning algorithms -each of which is implemented as an end-to-end AI processing pipeline. The pipelines consist of data ingestion, preprocessing, training, serving, and postprocessing as well as model update. Since TPCx-AI is a TPC Express benchmark, it comes with a fully implemented kit, which is ready to run on common ML/AI hardware. Besides a single node Python-based implementation, it also features a distributed Apache Spark-based implementation. TPCx-AI has already received several independent officially audited result submissions after being officially standardized in September 2021, underlining the interest in industry for the benchmark.</p><p>In future work, we want to separate preprocessing and postprocessing from the training and serving stages into independent stages and, furthermore, enable a more fine grained optimization of pipelines as well as adding continuously evolving pipelines <ref type="bibr" target="#b37">[37]</ref>. Additionally, we hope to include the new use cases and more system implementations in future versions of the benchmark. A further extension can target other challenges found in production AI pipelines, such as model maintenance or update <ref type="bibr" target="#b1">[2]</ref>.</p></div><figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_0"><head>Figure 1 :</head><label>1</label><figDesc>Figure 1: End-to-end ML pipeline</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_1"><head>Figure 2 :</head><label>2</label><figDesc>Figure 2: TPCx-AI Data Schema</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_2"><head>Figure 3 :</head><label>3</label><figDesc>Figure 3: Process view for the UC02 Deep Learning pipeline</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_3"><head>Figure 4 :</head><label>4</label><figDesc>Figure 4: Data size for the all data sets per scaling factor</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_4"><head>Listing 1 :</head><label>1</label><figDesc>Simplified Code Structure of a Single-Node Use Case def l o a d _ d a t a ( p a t h ) : # ( 1 ) . . . def p r e _ p r o c e s s ( d a t a ) : # ( 2 ) . . . def t r a i n ( t r a i n i n g _ d a t a , l a b e l s ) : # ( 3 ) . . . def s e r v e ( model , d a t a ) : # ( 4 ) . . . def main ( ) : r a w _ d a t a = l o a d _ d a t a ( i n p u t _ p a t h ) ( l a b e l s , d a t a ) = p r e _ p r o c e s s ( r a w _ d a t a ) i f s t a g e == ' t r a i n i n g ' : model = t r a i n ( d a t a , l a b e l s ) dump ( model , w o r k _ d i r / f i l e _ n a m e ) i f s t a g e == ' s e r v i n g ' : model = l o a d ( w o r k _ d i r / f i l e _ n a m e ) p r e d i c t i o n s = s e r v e ( model , d a t a ) p r e d i c t i o n s . t o _ c s v ( ' p r e d i c t i o n s . c s v ' )</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_5"><head>Figure 5 :</head><label>5</label><figDesc>Figure 5: Data size for the all data sets per scaling factor</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_6"><head>Figure 6 :</head><label>6</label><figDesc>Figure 6: Runtimes of each use case in each test for the single-node implementation at 𝑆𝐹 = 1</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_7"><head>Figure 7 :</head><label>7</label><figDesc>Figure 7: Run times of each use case in each test for the distributed implementation at 𝑆𝐹 = 10</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_1"><head>Table 1 :</head><label>1</label><figDesc>Use Case Overview</figDesc><table><row><cell>ID</cell><cell>use case</cell><cell>Type</cell><cell>Class</cell><cell>Data</cell><cell>Algorithm</cell><cell>DL</cell></row><row><cell cols="2">UC01 Customer Segmentation</cell><cell>Triaging</cell><cell>Clustering</cell><cell cols="2">Number k-Means</cell><cell></cell></row><row><cell cols="2">UC02 Call Transcription</cell><cell>Convert Unstr. Data</cell><cell>Classification</cell><cell>Audio</cell><cell>Convolutional Neural Network</cell><cell>X</cell></row><row><cell cols="2">UC03 Sales Forecasting</cell><cell>Forecasting</cell><cell>Regression</cell><cell cols="2">Number Holt-Winters</cell><cell></cell></row><row><cell cols="2">UC04 Spam Detection</cell><cell>Discover Anomalies</cell><cell>Classification</cell><cell>Text</cell><cell>Naïve Bayes</cell><cell></cell></row><row><cell cols="2">UC05 Price Prediction</cell><cell>Predictive Analytics</cell><cell>Regression</cell><cell>Text</cell><cell>Recurrent Neural Network</cell><cell>X</cell></row><row><cell cols="2">UC06 Hardware Failure</cell><cell>Predictive Maintenance</cell><cell>Classification</cell><cell cols="2">Number Support Vector Machines</cell><cell></cell></row><row><cell cols="2">UC07 Product Rating</cell><cell>Hyper-Personalization</cell><cell cols="3">Recommendation Number Collaborative Filtering</cell><cell></cell></row><row><cell cols="2">UC08 Classification of Trips</cell><cell>Triaging</cell><cell>Classification</cell><cell cols="2">Number Gradient Boosted Trees</cell><cell></cell></row><row><cell cols="2">UC09 Facial Recognition</cell><cell>Hyper-Personalization</cell><cell>Classification</cell><cell>Image</cell><cell>CNN &amp; Logistic Regression</cell><cell>X</cell></row><row><cell cols="2">UC10 Fraud Detection</cell><cell>Discover Anomalies</cell><cell>Classification</cell><cell cols="2">Number Logistic Regression</cell><cell></cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_3"><head>Table 2 :</head><label>2</label><figDesc>Quality metric thresholds for each use-case</figDesc><table><row><cell>UC</cell><cell>Metric</cell><cell cols="2">Threshold Min/Max</cell></row><row><cell cols="2">UC01 N/A</cell><cell>-</cell><cell>-</cell></row><row><cell cols="2">UC02 word_error_rate</cell><cell>0.50</cell><cell>↓</cell></row><row><cell cols="2">UC03 mean_squared_log_error</cell><cell>5.40</cell><cell>↓</cell></row><row><cell cols="2">UC04 f1_score</cell><cell>0.65</cell><cell>↑</cell></row><row><cell cols="2">UC05 mean_squared_log_error</cell><cell>0.50</cell><cell>↓</cell></row><row><cell cols="2">UC06 matthews_corrcoef</cell><cell>0.19</cell><cell>↑</cell></row><row><cell cols="2">UC07 median_absolute_error</cell><cell>1.80</cell><cell>↓</cell></row><row><cell cols="2">UC08 accuracy_score</cell><cell>0.65</cell><cell>↑</cell></row><row><cell cols="2">UC09 accuracy_score</cell><cell>0.90</cell><cell>↑</cell></row><row><cell cols="2">UC10 accuracy_score</cell><cell>0.70</cell><cell>↑</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_5"><head>Table 3 :</head><label>3</label><figDesc>Table sizes and row counts</figDesc><table><row><cell>Scale Factor</cell><cell></cell><cell></cell><cell>1</cell><cell></cell><cell>10</cell><cell></cell><cell>100</cell><cell></cell><cell>1000</cell></row><row><cell></cell><cell></cell><cell cols="2">size row_count</cell><cell cols="2">size row_count</cell><cell>size</cell><cell>row_count</cell><cell>size</cell><cell>row_count</cell></row><row><cell>Table</cell><cell></cell><cell></cell><cell></cell><cell></cell><cell></cell><cell></cell><cell></cell><cell></cell></row><row><cell cols="2">conversation_audio</cell><cell>26.4 MB</cell><cell cols="2">387 134.0 MB</cell><cell cols="2">1,965 804.0 MB</cell><cell>11,787</cell><cell>4.3 GB</cell><cell>62,539</cell></row><row><cell cols="2">customer_images</cell><cell>8.0 MB</cell><cell cols="2">50 207.2 MB</cell><cell>1,287</cell><cell>7.5 GB</cell><cell cols="2">46,312 209.8 GB</cell><cell>1,303,712</cell></row><row><cell>product_rating</cell><cell></cell><cell>1.8 MB</cell><cell>139,292</cell><cell>9.8 MB</cell><cell>757,454</cell><cell>63.4 MB</cell><cell cols="2">4,877,735 358.0 MB</cell><cell>27,534,770</cell></row><row><cell>customer</cell><cell></cell><cell>8.5 MB</cell><cell>70,710</cell><cell>43.1 MB</cell><cell cols="2">358,817 258.2 MB</cell><cell>2,152,033</cell><cell>1.4 GB</cell><cell>11,418,023</cell></row><row><cell>failures</cell><cell></cell><cell>8.4 MB</cell><cell cols="2">50,000 215.0 MB</cell><cell>1,287,500</cell><cell>7.7 GB</cell><cell cols="2">46,312,500 217.7 GB</cell><cell>1,303,712,500</cell></row><row><cell cols="2">financial_account</cell><cell>96.9 kB</cell><cell>7,071</cell><cell>491.6 kB</cell><cell>35,881</cell><cell>2.9 MB</cell><cell>215,203</cell><cell>15.6 MB</cell><cell>1,141,802</cell></row><row><cell cols="3">financial_transactions 487.3 MB</cell><cell>6,247,036</cell><cell>4.5 GB</cell><cell>58,023,250</cell><cell>40.7 GB</cell><cell cols="2">522,118,524 283.2 GB</cell><cell>3,630,810,923</cell></row><row><cell>lineitem</cell><cell></cell><cell>426.4 MB</cell><cell>20,302,869</cell><cell cols="2">4.0 GB 188,575,563</cell><cell cols="4">35.6 GB 1,696,885,203 247.8 GB 11,800,135,500</cell></row><row><cell>marketplace</cell><cell></cell><cell>12.4 MB</cell><cell>70,710</cell><cell>63.2 MB</cell><cell cols="2">358,817 378.8 MB</cell><cell>2,152,033</cell><cell>2.0 GB</cell><cell>11,418,023</cell></row><row><cell>order</cell><cell></cell><cell>124.9 MB</cell><cell>3,123,518</cell><cell>1.2 GB</cell><cell>29,011,625</cell><cell>10.4 GB</cell><cell>261,059,262</cell><cell>72.6 GB</cell><cell>1,815,405,461</cell></row><row><cell>order_returns</cell><cell></cell><cell>16.2 MB</cell><cell cols="2">1,015,143 150.9 MB</cell><cell>9,428,778</cell><cell>1.4 GB</cell><cell>84,844,260</cell><cell>9.4 GB</cell><cell>590,006,775</cell></row><row><cell>product</cell><cell></cell><cell>24.0 kB</cell><cell>707</cell><cell>122.0 kB</cell><cell>3,588</cell><cell>731.7 kB</cell><cell>21,520</cell><cell>3.9 MB</cell><cell>114,180</cell></row><row><cell>Total</cell><cell></cell><cell>1.1 GB</cell><cell>31,027,497</cell><cell cols="4">10.7 GB 287,844,529 107.4 GB 2,620,696,376</cell><cell cols="2">1.1 TB 19,193,064,210</cell></row><row><cell></cell><cell></cell><cell cols="2">conversation audio</cell><cell cols="2">financial account</cell><cell>order</cell><cell></cell><cell></cell></row><row><cell></cell><cell>10 3</cell><cell>customer</cell><cell></cell><cell cols="2">financial transactions</cell><cell cols="2">order returns</cell><cell></cell></row><row><cell></cell><cell></cell><cell cols="2">customer images</cell><cell>lineitem</cell><cell></cell><cell>product</cell><cell></cell><cell></cell></row><row><cell>Size (GB) log</cell><cell>10 0 10 1 10 2</cell><cell>failures</cell><cell></cell><cell>marketplace</cell><cell></cell><cell cols="2">product rating</cell><cell></cell></row><row><cell></cell><cell>10 -1</cell><cell></cell><cell></cell><cell></cell><cell></cell><cell></cell><cell></cell><cell></cell></row><row><cell></cell><cell>10 -2</cell><cell>1</cell><cell></cell><cell>10</cell><cell></cell><cell>100</cell><cell>1000</cell><cell></cell></row><row><cell></cell><cell></cell><cell></cell><cell></cell><cell cols="2">Scale Factor</cell><cell></cell><cell></cell><cell></cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_6"><head>Table 4 :</head><label>4</label><figDesc>Quality metric for single-and multi-node experiments</figDesc><table><row><cell></cell><cell></cell><cell cols="3">Single-Node (Python)</cell><cell></cell><cell></cell><cell cols="4">Multi-Node (Apache Spark)</cell><cell></cell></row><row><cell cols="12">Use Case Metric SF=1 SF=5 SF=10 SF=15 SF=1 SF=10 SF=100 SF=200 SF=300 SF=400</cell></row><row><cell>UC01</cell><cell>N/A</cell><cell>-</cell><cell>-</cell><cell>-</cell><cell>-</cell><cell>-</cell><cell>-</cell><cell>-</cell><cell>-</cell><cell>-</cell><cell>-</cell></row><row><cell>UC02</cell><cell>WER</cell><cell>0.31</cell><cell>0.35</cell><cell>0.29</cell><cell>0.18</cell><cell>0.88</cell><cell>0.93</cell><cell>0.32</cell><cell>0.26</cell><cell>0.22</cell><cell>0.23</cell></row><row><cell>UC03</cell><cell>MSLE</cell><cell>4.60</cell><cell>3.34</cell><cell>3.62</cell><cell>3.30</cell><cell>5.73</cell><cell>3.70</cell><cell>3.87</cell><cell>4.25</cell><cell>4.36</cell><cell>4.48</cell></row><row><cell>UC04</cell><cell>F1</cell><cell>0.70</cell><cell>0.70</cell><cell>0.70</cell><cell>0.70</cell><cell>0.69</cell><cell>0.70</cell><cell>0.69</cell><cell>0.70</cell><cell>0.70</cell><cell>0.70</cell></row><row><cell>UC05</cell><cell>MSLE</cell><cell>0.01</cell><cell>0.04</cell><cell>0.02</cell><cell>0.02</cell><cell>0.30</cell><cell>0.21</cell><cell>0.04</cell><cell>0.03</cell><cell>0.02</cell><cell>0.02</cell></row><row><cell>UC06</cell><cell>MCC</cell><cell>0.46</cell><cell>0.53</cell><cell>0.54</cell><cell>0.54</cell><cell>0.23</cell><cell>0.23</cell><cell>0.20</cell><cell>0.23</cell><cell>0.22</cell><cell>0.21</cell></row><row><cell>UC07</cell><cell>MAE</cell><cell>0.89</cell><cell>0.98</cell><cell>1.02</cell><cell>1.01</cell><cell>1.71</cell><cell>1.62</cell><cell>1.31</cell><cell>1.44</cell><cell>1.43</cell><cell>1.47</cell></row><row><cell>UC08</cell><cell>Acc</cell><cell>0.71</cell><cell>0.73</cell><cell>0.74</cell><cell>0.74</cell><cell>0.72</cell><cell>0.73</cell><cell>0.76</cell><cell>0.75</cell><cell>0.77</cell><cell>0.72</cell></row><row><cell>UC09</cell><cell>Acc</cell><cell>0.99</cell><cell>0.99</cell><cell>0.99</cell><cell>0.99</cell><cell>0.99</cell><cell>0.99</cell><cell>0.99</cell><cell>0.99</cell><cell>0.99</cell><cell>0.99</cell></row><row><cell>UC10</cell><cell>Acc</cell><cell>0.82</cell><cell>0.82</cell><cell>0.82</cell><cell>0.82</cell><cell>0.82</cell><cell>0.82</cell><cell>0.82</cell><cell>0.82</cell><cell>0.82</cell><cell>0.82</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_7"><head>Table 5 :</head><label>5</label><figDesc>Performance metric for single-node and multi-node experiments</figDesc><table><row><cell></cell><cell></cell><cell cols="2">Single-Node (Python)</cell><cell></cell><cell></cell><cell cols="4">Multi-Node (Apache Spark)</cell><cell></cell></row><row><cell></cell><cell>SF=1</cell><cell cols="2">SF=5 SF=10</cell><cell>SF=15</cell><cell cols="6">SF=1 SF=10 SF=100 SF=200 SF=300 SF=400</cell></row><row><cell>𝑇 𝐿𝐷</cell><cell>2.38</cell><cell>4.99</cell><cell>15.19</cell><cell>14.63</cell><cell cols="2">94.19 138.12</cell><cell cols="4">797.76 1729.97 2735.43 5993.25</cell></row><row><cell>𝑇 𝑃𝑇𝑇</cell><cell cols="6">91.18 352.61 905.16 1432.03 130.02 153.21</cell><cell>328.58</cell><cell>441.98</cell><cell>588.84</cell><cell>761.54</cell></row><row><cell>𝑇 𝑃𝑆𝑇</cell><cell>9.92</cell><cell>23.11</cell><cell>52.39</cell><cell>65.33</cell><cell>58.59</cell><cell>64.07</cell><cell>77.70</cell><cell>91.27</cell><cell>96.30</cell><cell>105.02</cell></row><row><cell>𝑇 𝑇𝑇</cell><cell>14.26</cell><cell>38.04</cell><cell>97.62</cell><cell>165.86</cell><cell>35.70</cell><cell>41.66</cell><cell>58.19</cell><cell>84.34</cell><cell>102.42</cell><cell>124.46</cell></row><row><cell cols="2">𝐴𝐼𝑈 𝐶𝑝𝑚@𝑆𝐹 45.28</cell><cell>85.10</cell><cell>65.51</cell><cell>73.31</cell><cell>8.43</cell><cell>69.20</cell><cell>323.37</cell><cell>433.22</cell><cell>506.99</cell><cell>485.61</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_8"><head>Table 6 :</head><label>6</label><figDesc>Performance metrics of two official TPCx-AI results</figDesc><table><row><cell></cell><cell cols="2">Python SF=10 Spark SF=1000</cell></row><row><cell>𝑇 𝐿𝐷</cell><cell>4.53</cell><cell>4,405.47</cell></row><row><cell>𝑇 𝑃𝑇𝑇</cell><cell>314.80</cell><cell>981.90</cell></row><row><cell>𝑇 𝑃𝑆𝑇</cell><cell>26.89</cell><cell>128.21</cell></row><row><cell>𝑇 𝑇𝑇</cell><cell>4.69</cell><cell>110.67</cell></row><row><cell>𝐴𝐼𝑈 𝐶𝑝𝑚@𝑆𝐹</cell><cell>291.35</cell><cell>1,205.43</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_9"><head>Table 7 :</head><label>7</label><figDesc>Future use cases</figDesc><table><row><cell>ID</cell><cell>use case</cell><cell>Class</cell><cell>Data</cell><cell>Algorithm</cell><cell>DL</cell></row><row><cell cols="2">UC11 Sentiment Analysis</cell><cell>Classification</cell><cell>Text</cell><cell>Random Forest</cell><cell></cell></row><row><cell cols="2">UC12 Translate Product Descriptions</cell><cell>Machine Translation</cell><cell>Text</cell><cell>Transformer</cell><cell>X</cell></row><row><cell cols="2">UC13 Sentiment Analysis (DL)</cell><cell>Classification</cell><cell>Text</cell><cell>Recurrent Neural Network</cell><cell>X</cell></row><row><cell cols="2">UC14 Credit-Scoring for Merchants</cell><cell>Classification</cell><cell cols="2">Number Multilayer Perceptron</cell><cell>X</cell></row><row><cell cols="2">UC15 Predict Retail Location</cell><cell>Regression</cell><cell cols="2">Number Decision Tree</cell><cell></cell></row><row><cell cols="2">UC16 Click-Through-Rate Prediction</cell><cell>Recommendation</cell><cell>Mixed</cell><cell>DLRM</cell><cell>X</cell></row></table></figure>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="1" xml:id="foot_0"><p>Serving is also commonly known as Inference in the AI terminology.</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="2" xml:id="foot_1"><p>UCI Machine Learning Repository -https://archive-beta.ics.uci.edu/</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="3" xml:id="foot_2"><p>High Performance Linpack -https://www.netlib.org/benchmark/hpl/</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="4" xml:id="foot_3"><p>HPL-AI -https://icl.bitbucket.io/hpl-ai</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="5" xml:id="foot_4"><p>BigDataBench Version 5.0 -https://www.benchcouncil.org/BigDataBench/files/ BigDataBench5.0-User-Manual.pdf</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="6" xml:id="foot_5"><p>Given the ethical implications of facial recognition technologies UC09 will most likely be adapted to use object images instead of faces in future versions of TPCx-AI.</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="7" xml:id="foot_6"><p>TPCx-AI -https://www.tpc.org/tpcx-ai/default5.asp</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="13" xml:id="foot_7"><p>Apache Spark -https://spark.apache.org/</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="14" xml:id="foot_8"><p>Apache Spark MLlib -https://spark.apache.org/docs/latest/ml-guide.html</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="15" xml:id="foot_9"><p>see https://github.com/pandas-dev/pandas/pull/45084 for an issue that affected uc08 and has since been fixed</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="16" xml:id="foot_10"><p>TPCx-AI result webpage -https://www.tpc.org/tpcx-ai/results5.asp</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="17" xml:id="foot_11"><p>ID 12204211: TPCx-AI Result Highlights TTA KR580S2 -https://www.tpc.org/5401</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="18" xml:id="foot_12"><p>https://www.tta.or.kr/</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="19" xml:id="foot_13"><p>ID 12206151: TPCx-AI Result Highlights Nettrix R620 G40 -https://www.tpc.org/5402</p></note>
+			<note xmlns="http://www.tei-c.org/ns/1.0" place="foot" n="20" xml:id="foot_14"><p>https://www.nettrix.com.cn</p></note>
+		</body>
+		<back>
+
+			<div type="acknowledgement">
+<div><head>ACKNOWLEDGMENTS</head><p>This work was partially funded by the <rs type="funder">German Research Foundation</rs> (ref. 414984028), and the <rs type="funder">European Union</rs>'s <rs type="programName">Horizon 2020 research and innovation programme</rs> (ref. 957407).</p></div>
+			</div>
+			<listOrg type="funding">
+				<org type="funding" xml:id="_76WC4B7">
+					<orgName type="program" subtype="full">Horizon 2020 research and innovation programme</orgName>
+				</org>
+			</listOrg>
+			<div type="references">
+
+				<listBibl>
+
+<biblStruct xml:id="b0">
+	<monogr>
+		<title level="m" type="main">The age of analytics: competing in a data-driven world</title>
+		<author>
+			<persName><forename type="first">Mckinsey</forename><surname>Analytics</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2016">2016</date>
+			<publisher>McKinsey Global Institute</publisher>
+		</imprint>
+	</monogr>
+	<note type="report_type">Technical Report</note>
+	<note type="raw_reference">McKinsey Analytics. 2016. The age of analytics: competing in a data-driven world. Technical Report. McKinsey Global Institute.</note>
+</biblStruct>
+
+<biblStruct xml:id="b1">
+	<analytic>
+		<title level="a" type="main">TFX: A TensorFlow-Based Production-Scale Machine Learning Platform</title>
+		<author>
+			<persName><forename type="first">Denis</forename><surname>Baylor</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Eric</forename><surname>Breck</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Heng-Tze</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Noah</forename><surname>Cheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chuan</forename><surname>Fiedel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zakaria</forename><surname>Yu Foo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Salem</forename><surname>Haque</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mustafa</forename><surname>Haykal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Vihan</forename><surname>Ispir</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Levent</forename><surname>Jain</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Koc</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lukasz</forename><surname>Chiu Yuen Koo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Clemens</forename><surname>Lew</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Akshay Naresh</forename><surname>Mewald</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Neoklis</forename><surname>Modi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sukriti</forename><surname>Polyzotis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sudip</forename><surname>Ramesh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Steven</forename><forename type="middle">Euijong</forename><surname>Roy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Martin</forename><surname>Whang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jarek</forename><surname>Wicke</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xin</forename><surname>Wilkiewicz</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Martin</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Zinkevich</surname></persName>
+		</author>
+		<idno type="DOI">10.1145/3097983.3098021</idno>
+		<ptr target="https://doi.org/10.1145/3097983.3098021" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 23rd ACM SIGKDD International Conference on Knowledge Discovery and Data Mining</title>
+		<meeting>the 23rd ACM SIGKDD International Conference on Knowledge Discovery and Data Mining<address><addrLine>Halifax, NS, Canada; New York, NY, USA</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computing Machinery</publisher>
+			<date type="published" when="2017">2017</date>
+			<biblScope unit="page" from="1387" to="1395" />
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Denis Baylor, Eric Breck, Heng-Tze Cheng, Noah Fiedel, Chuan Yu Foo, Zakaria Haque, Salem Haykal, Mustafa Ispir, Vihan Jain, Levent Koc, Chiu Yuen Koo, Lukasz Lew, Clemens Mewald, Akshay Naresh Modi, Neoklis Polyzotis, Sukriti Ramesh, Sudip Roy, Steven Euijong Whang, Martin Wicke, Jarek Wilkiewicz, Xin Zhang, and Martin Zinkevich. 2017. TFX: A TensorFlow-Based Production-Scale Machine Learning Platform. In Proceedings of the 23rd ACM SIGKDD International Conference on Knowledge Discovery and Data Mining (Halifax, NS, Canada) (KDD &apos;17). Association for Computing Machinery, New York, NY, USA, 1387-1395. https://doi.org/10.1145/3097983.3098021</note>
+</biblStruct>
+
+<biblStruct xml:id="b2">
+	<monogr>
+		<title level="m" type="main">Analysis of DAWNBench, a Time-to-Accuracy Machine Learning Performance Benchmark</title>
+		<author>
+			<persName><forename type="first">Cody</forename><surname>Coleman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Daniel</forename><surname>Kang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Deepak</forename><surname>Narayanan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Luigi</forename><surname>Nardi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tian</forename><surname>Zhao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jian</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Peter</forename><surname>Bailis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kunle</forename><surname>Olukotun</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Christopher</forename><surname>Ré</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Matei</forename><surname>Zaharia</surname></persName>
+		</author>
+		<idno>CoRR abs/1806.01427</idno>
+		<imprint>
+			<date type="published" when="2018">2018. 2018</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Cody Coleman, Daniel Kang, Deepak Narayanan, Luigi Nardi, Tian Zhao, Jian Zhang, Peter Bailis, Kunle Olukotun, Christopher Ré, and Matei Zaharia. 2018. Analysis of DAWNBench, a Time-to-Accuracy Machine Learning Performance Benchmark. CoRR abs/1806.01427 (2018).</note>
+</biblStruct>
+
+<biblStruct xml:id="b3">
+	<analytic>
+		<title level="a" type="main">Transaction Processing Performance Council</title>
+		<ptr target="https://tpc.org/tpcx-ai/default5.asp" />
+	</analytic>
+	<monogr>
+		<title level="m">TPCx-AI</title>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Transaction Processing Performance Council. 2022. TPCx-AI. https://tpc.org/ tpcx-ai/default5.asp</note>
+</biblStruct>
+
+<biblStruct xml:id="b4">
+	<analytic>
+		<title level="a" type="main">Im-ageNet: A large-scale hierarchical image database</title>
+		<author>
+			<persName><forename type="first">Jia</forename><surname>Deng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wei</forename><surname>Dong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Richard</forename><surname>Socher</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Li-Jia</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kai</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Li</forename><surname>Fei-Fei</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">2009 IEEE Conference on Computer Vision and Pattern Recognition</title>
+		<imprint>
+			<date type="published" when="2009">2009</date>
+			<biblScope unit="page" from="248" to="255" />
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Jia Deng, Wei Dong, Richard Socher, Li-Jia Li, Kai Li, and Li Fei-Fei. 2009. Im- ageNet: A large-scale hierarchical image database. In 2009 IEEE Conference on Computer Vision and Pattern Recognition. 248-255.</note>
+</biblStruct>
+
+<biblStruct xml:id="b5">
+	<analytic>
+		<title level="a" type="main">Revisiting Issues in Benchmark Metric Selection</title>
+		<author>
+			<persName><forename type="first">Christopher</forename><surname>Elford</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dippy</forename><surname>Aggarwal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shreyas</forename><surname>Shekhar</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Performance Evaluation and Benchmarking</title>
+		<editor>
+			<persName><forename type="first">Raghunath</forename><surname>Nambiar</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Meikel</forename><surname>Poess</surname></persName>
+		</editor>
+		<meeting><address><addrLine>Cham</addrLine></address></meeting>
+		<imprint>
+			<publisher>Springer International Publishing</publisher>
+			<date type="published" when="2021">2021</date>
+			<biblScope unit="page" from="35" to="47" />
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Christopher Elford, Dippy Aggarwal, and Shreyas Shekhar. 2021. Revisiting Issues in Benchmark Metric Selection. In Performance Evaluation and Benchmarking, Raghunath Nambiar and Meikel Poess (Eds.). Springer International Publishing, Cham, 35-47.</note>
+</biblStruct>
+
+<biblStruct xml:id="b6">
+	<analytic>
+		<title level="a" type="main">Dcbench: A Benchmark for Data-Centric AI Systems</title>
+		<author>
+			<persName><forename type="first">Bojan</forename><surname>Sabri Eyuboglu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Christopher</forename><surname>Karlaš</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ce</forename><surname>Ré</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">James</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Zou</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the Sixth Workshop on Data Management for End-To-End Machine Learning</title>
+		<meeting>the Sixth Workshop on Data Management for End-To-End Machine Learning<address><addrLine>New York, NY, USA</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computing Machinery</publisher>
+			<date type="published" when="2022">2022</date>
+			<biblScope unit="volume">9</biblScope>
+		</imprint>
+	</monogr>
+	<note>4 pages</note>
+	<note type="raw_reference">Sabri Eyuboglu, Bojan Karlaš, Christopher Ré, Ce Zhang, and James Zou. 2022. Dcbench: A Benchmark for Data-Centric AI Systems. In Proceedings of the Sixth Workshop on Data Management for End-To-End Machine Learning. Association for Computing Machinery, New York, NY, USA, Article 9, 4 pages.</note>
+</biblStruct>
+
+<biblStruct xml:id="b7">
+	<monogr>
+		<author>
+			<persName><forename type="first">Wanling</forename><surname>Gao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jianfeng</forename><surname>Zhan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lei</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chunjie</forename><surname>Luo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Daoyi</forename><surname>Zheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xu</forename><surname>Wen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rui</forename><surname>Ren</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chen</forename><surname>Zheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiwen</forename><surname>He</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hainan</forename><surname>Ye</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:1802.08254</idno>
+		<title level="m">Bigdatabench: A scalable and unified big data and ai benchmark suite</title>
+		<imprint>
+			<date type="published" when="2018">2018. 2018</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+	<note type="raw_reference">Wanling Gao, Jianfeng Zhan, Lei Wang, Chunjie Luo, Daoyi Zheng, Xu Wen, Rui Ren, Chen Zheng, Xiwen He, Hainan Ye, et al. 2018. Bigdatabench: A scalable and unified big data and ai benchmark suite. arXiv preprint arXiv:1802.08254 (2018).</note>
+</biblStruct>
+
+<biblStruct xml:id="b8">
+	<analytic>
+		<title level="a" type="main">BigBench: Towards an Industry Standard Benchmark for Big Data Analytics</title>
+		<author>
+			<persName><forename type="first">Ahmad</forename><surname>Ghazal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tilmann</forename><surname>Rabl</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Minqing</forename><surname>Hu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Francois</forename><surname>Raab</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Meikel</forename><surname>Poess</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alain</forename><surname>Crolotte</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hans-Arno</forename><surname>Jacobsen</surname></persName>
+		</author>
+		<idno type="DOI">10.1145/2463676.2463712</idno>
+		<ptr target="https://doi.org/10.1145/2463676.2463712" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 2013 ACM SIGMOD International Conference on Management of Data</title>
+		<meeting>the 2013 ACM SIGMOD International Conference on Management of Data<address><addrLine>New York, New York, USA; New York, NY, USA</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computing Machinery</publisher>
+			<date type="published" when="2013">2013</date>
+			<biblScope unit="page" from="1197" to="1208" />
+		</imprint>
+	</monogr>
+	<note>SIG-MOD &apos;13)</note>
+	<note type="raw_reference">Ahmad Ghazal, Tilmann Rabl, Minqing Hu, Francois Raab, Meikel Poess, Alain Crolotte, and Hans-Arno Jacobsen. 2013. BigBench: Towards an Industry Stan- dard Benchmark for Big Data Analytics. In Proceedings of the 2013 ACM SIGMOD International Conference on Management of Data (New York, New York, USA) (SIG- MOD &apos;13). Association for Computing Machinery, New York, NY, USA, 1197-1208. https://doi.org/10.1145/2463676.2463712</note>
+</biblStruct>
+
+<biblStruct xml:id="b9">
+	<monogr>
+		<title level="m" type="main">An Open Source AutoML Benchmark</title>
+		<author>
+			<persName><forename type="first">Pieter</forename><surname>Gijsbers</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Erin</forename><surname>Ledell</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Janek</forename><surname>Thomas</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sébastien</forename><surname>Poirier</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bernd</forename><surname>Bischl</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Joaquin</forename><surname>Vanschoren</surname></persName>
+		</author>
+		<idno>CoRR abs/1907.00909</idno>
+		<ptr target="http://arxiv.org/abs/1907.00909" />
+		<imprint>
+			<date type="published" when="2019">2019. 2019</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Pieter Gijsbers, Erin LeDell, Janek Thomas, Sébastien Poirier, Bernd Bischl, and Joaquin Vanschoren. 2019. An Open Source AutoML Benchmark. CoRR abs/1907.00909 (2019). http://arxiv.org/abs/1907.00909</note>
+</biblStruct>
+
+<biblStruct xml:id="b10">
+	<analytic>
+		<title level="a" type="main">Transparency and reproducibility in artificial intelligence</title>
+		<author>
+			<persName><forename type="first">B</forename><surname>Haibe-Kains</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">G</forename><forename type="middle">A</forename><surname>Adam</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">A</forename><surname>Hosny</surname></persName>
+		</author>
+		<idno>14-E16</idno>
+	</analytic>
+	<monogr>
+		<title level="j">Nature</title>
+		<imprint>
+			<biblScope unit="volume">586</biblScope>
+			<date type="published" when="2020">2020. 2020</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">B. Haibe-Kains, G.A. Adam, A. Hosny, et al. 2020. Transparency and reproducibil- ity in artificial intelligence. Nature 586, E14-E16 (2020).</note>
+</biblStruct>
+
+<biblStruct xml:id="b11">
+	<monogr>
+		<title level="m" type="main">Deep Speech: Scaling up end-to-end speech recognition</title>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Awni</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Carl</forename><surname>Hannun</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jared</forename><surname>Case</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bryan</forename><surname>Casper</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Greg</forename><surname>Catanzaro</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Erich</forename><surname>Diamos</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ryan</forename><surname>Elsen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sanjeev</forename><surname>Prenger</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shubho</forename><surname>Satheesh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Adam</forename><surname>Sengupta</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Andrew</forename><forename type="middle">Y</forename><surname>Coates</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Ng</surname></persName>
+		</author>
+		<idno>CoRR abs/1412.5567</idno>
+		<imprint>
+			<date type="published" when="2014">2014. 2014</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Awni Y. Hannun, Carl Case, Jared Casper, Bryan Catanzaro, Greg Diamos, Erich Elsen, Ryan Prenger, Sanjeev Satheesh, Shubho Sengupta, Adam Coates, and Andrew Y. Ng. 2014. Deep Speech: Scaling up end-to-end speech recognition. CoRR abs/1412.5567 (2014).</note>
+</biblStruct>
+
+<biblStruct xml:id="b12">
+	<monogr>
+		<title level="m" type="main">In Performance Evaluation, Measurement and Characterization of Complex Systems</title>
+		<author>
+			<persName><forename type="first">Karl</forename><surname>Huppler</surname></persName>
+		</author>
+		<editor>Raghunath Nambiar and Meikel Poess</editor>
+		<imprint>
+			<date type="published" when="2011">2011</date>
+			<publisher>Springer</publisher>
+			<biblScope unit="page" from="73" to="84" />
+			<pubPlace>Berlin Heidelberg; Berlin, Heidelberg</pubPlace>
+		</imprint>
+	</monogr>
+	<note>Price and the TPC</note>
+	<note type="raw_reference">Karl Huppler. 2011. Price and the TPC. In Performance Evaluation, Measurement and Characterization of Complex Systems, Raghunath Nambiar and Meikel Poess (Eds.). Springer Berlin Heidelberg, Berlin, Heidelberg, 73-84.</note>
+</biblStruct>
+
+<biblStruct xml:id="b13">
+	<analytic>
+		<author>
+			<persName><forename type="first">Karl</forename><surname>Huppler</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Douglas</forename><surname>Johnson ; David Hutchison</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Takeo</forename><surname>Kanade</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Josef</forename><surname>Kittler</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jon</forename><forename type="middle">M</forename><surname>Kleinberg</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Friedemann</forename><surname>Mattern</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">John</forename><forename type="middle">C</forename><surname>Mitchell</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Moni</forename><surname>Naor</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Oscar</forename><surname>Nierstrasz</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">C</forename><surname>Pandu Rangan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bernhard</forename><surname>Steffen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Madhu</forename><surname>Sudan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Demetri</forename><surname>Terzopoulos</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Doug</forename><surname>Tygar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Moshe</forename><forename type="middle">Y</forename><surname>Vardi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Gerhard</forename><surname>Weikum</surname></persName>
+		</author>
+		<idno type="DOI">10.1007/978-3-319-04936-6_4</idno>
+		<ptr target="https://doi.org/10.1007/978-3-319-04936-6_4SeriesTitle" />
+	</analytic>
+	<monogr>
+		<title level="m">Performance Characterization and Benchmarking</title>
+		<title level="s">Lecture Notes in Computer Science</title>
+		<editor>
+			<persName><forename type="first">Meikel</forename><surname>Raghunath Nambiar</surname></persName>
+		</editor>
+		<editor>
+			<persName><surname>Poess</surname></persName>
+		</editor>
+		<meeting><address><addrLine>Cham</addrLine></address></meeting>
+		<imprint>
+			<publisher>Springer International Publishing</publisher>
+			<date type="published" when="2014">2014</date>
+			<biblScope unit="volume">8391</biblScope>
+			<biblScope unit="page" from="48" to="60" />
+		</imprint>
+	</monogr>
+	<note>TPC Express -A New Path for TPC Benchmarks</note>
+	<note type="raw_reference">Karl Huppler and Douglas Johnson. 2014. TPC Express -A New Path for TPC Benchmarks. In Performance Characterization and Benchmarking, David Hutchi- son, Takeo Kanade, Josef Kittler, Jon M. Kleinberg, Friedemann Mattern, John C. Mitchell, Moni Naor, Oscar Nierstrasz, C. Pandu Rangan, Bernhard Steffen, Madhu Sudan, Demetri Terzopoulos, Doug Tygar, Moshe Y. Vardi, Gerhard Weikum, Raghunath Nambiar, and Meikel Poess (Eds.). Vol. 8391. Springer International Publishing, Cham, 48-60. https://doi.org/10.1007/978-3-319-04936-6_4 Series Title: Lecture Notes in Computer Science.</note>
+</biblStruct>
+
+<biblStruct xml:id="b14">
+	<analytic>
+		<title level="a" type="main">A Survey of Big Data, High Performance Computing, and Machine Learning Benchmarks</title>
+		<author>
+			<persName><forename type="first">Nina</forename><surname>Ihde</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Paula</forename><surname>Marten</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ahmed</forename><surname>Eleliemy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Gabrielle</forename><surname>Poerwawinata</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Pedro</forename><surname>Silva</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ilin</forename><surname>Tolovski</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Florina</forename><forename type="middle">M</forename><surname>Ciorba</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tilmann</forename><surname>Rabl</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Performance Evaluation and Benchmarking: 13th TPC Technology Conference, TPCTC 2021</title>
+		<title level="s">Revised Selected Papers</title>
+		<meeting><address><addrLine>Copenhagen, Denmark; Copenhagen, Denmark; Berlin, Heidelberg</addrLine></address></meeting>
+		<imprint>
+			<publisher>Springer-Verlag</publisher>
+			<date type="published" when="2021-08-20">2021. August 20, 2021</date>
+			<biblScope unit="page" from="98" to="118" />
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Nina Ihde, Paula Marten, Ahmed Eleliemy, Gabrielle Poerwawinata, Pedro Silva, Ilin Tolovski, Florina M. Ciorba, and Tilmann Rabl. 2021. A Survey of Big Data, High Performance Computing, and Machine Learning Benchmarks. In Perfor- mance Evaluation and Benchmarking: 13th TPC Technology Conference, TPCTC 2021, Copenhagen, Denmark, August 20, 2021, Revised Selected Papers (Copenhagen, Denmark). Springer-Verlag, Berlin, Heidelberg, 98-118.</note>
+</biblStruct>
+
+<biblStruct xml:id="b15">
+	<monogr>
+		<author>
+			<persName><forename type="first">Peng</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xi</forename><surname>Rao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jennifer</forename><surname>Blase</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yue</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xu</forename><surname>Chu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ce</forename><surname>Zhang</surname></persName>
+		</author>
+		<idno>CoRR abs/1904.09483</idno>
+		<ptr target="http://arxiv.org/abs/1904.09483" />
+		<title level="m">CleanML: A Benchmark for Joint Data Cleaning and Machine Learning</title>
+		<imprint>
+			<date type="published" when="2019">2019. 2019</date>
+		</imprint>
+	</monogr>
+	<note>Experiments and Analysis</note>
+	<note type="raw_reference">Peng Li, Xi Rao, Jennifer Blase, Yue Zhang, Xu Chu, and Ce Zhang. 2019. CleanML: A Benchmark for Joint Data Cleaning and Machine Learning [Experiments and Analysis]. CoRR abs/1904.09483 (2019). http://arxiv.org/abs/1904.09483</note>
+</biblStruct>
+
+<biblStruct xml:id="b16">
+	<analytic>
+		<title/>
+		<author>
+			<persName><forename type="first">Yu</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hantian</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Luyuan</forename><surname>Zeng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wentao</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ce</forename><surname>Zhang</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">MLBench: Benchmarking Machine Learning Services Against Human Experts. PVLDB</title>
+		<imprint>
+			<biblScope unit="volume">11</biblScope>
+			<biblScope unit="page" from="1220" to="1232" />
+			<date type="published" when="2018">2018. 2018</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Yu Liu, Hantian Zhang, Luyuan Zeng, Wentao Wu, and Ce Zhang. 2018. MLBench: Benchmarking Machine Learning Services Against Human Experts. PVLDB 11, 10 (2018), 1220-1232.</note>
+</biblStruct>
+
+<biblStruct xml:id="b17">
+	<analytic>
+		<title level="a" type="main">MLPerf: An Industry Standard Benchmark Suite for Machine Learning Performance</title>
+		<author>
+			<persName><forename type="first">Peter</forename><surname>Mattson</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Vijay</forename><forename type="middle">Janapa</forename><surname>Reddi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Christine</forename><surname>Cheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Cody</forename><surname>Coleman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Greg</forename><surname>Diamos</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">David</forename><surname>Kanter</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Paulius</forename><surname>Micikevicius</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">David</forename><surname>Patterson</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Guenther</forename><surname>Schmuelling</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hanlin</forename><surname>Tang</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Gu-Yeon</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Carole-Jean</forename><surname>Wei</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Wu</surname></persName>
+		</author>
+		<idno type="DOI">10.1109/MM.2020.2974843</idno>
+		<ptr target="https://doi.org/10.1109/MM.2020.2974843" />
+	</analytic>
+	<monogr>
+		<title level="j">IEEE Micro</title>
+		<imprint>
+			<biblScope unit="volume">40</biblScope>
+			<biblScope unit="page" from="8" to="16" />
+			<date type="published" when="2020">2020. 2020</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Peter Mattson, Vijay Janapa Reddi, Christine Cheng, Cody Coleman, Greg Diamos, David Kanter, Paulius Micikevicius, David Patterson, Guenther Schmuelling, Hanlin Tang, Gu-Yeon Wei, and Carole-Jean Wu. 2020. MLPerf: An Industry Standard Benchmark Suite for Machine Learning Performance. IEEE Micro 40, 2 (2020), 8-16. https://doi.org/10.1109/MM.2020.2974843</note>
+</biblStruct>
+
+<biblStruct xml:id="b18">
+	<analytic>
+		<title level="a" type="main">Mllib: Machine learning in apache spark</title>
+		<author>
+			<persName><forename type="first">Xiangrui</forename><surname>Meng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Joseph</forename><surname>Bradley</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Burak</forename><surname>Yavuz</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">The Journal of Machine Learning Research</title>
+		<imprint>
+			<biblScope unit="volume">17</biblScope>
+			<biblScope unit="page" from="1235" to="1241" />
+			<date type="published" when="2016">2016. 2016</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Xiangrui Meng, Joseph Bradley, Burak Yavuz, et al. 2016. Mllib: Machine learning in apache spark. The Journal of Machine Learning Research 17, 1 (2016), 1235- 1241.</note>
+</biblStruct>
+
+<biblStruct xml:id="b19">
+	<monogr>
+		<title level="m" type="main">WordNet: A Lexical Database for English</title>
+		<author>
+			<persName><forename type="first">George</forename><forename type="middle">A</forename><surname>Miller</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="1995">1995. 1995</date>
+			<biblScope unit="volume">38</biblScope>
+			<biblScope unit="page" from="39" to="41" />
+		</imprint>
+	</monogr>
+	<note type="raw_reference">George A. Miller. 1995. WordNet: A Lexical Database for English. 38, 11 (1995), 39-41.</note>
+</biblStruct>
+
+<biblStruct xml:id="b20">
+	<monogr>
+		<title/>
+		<author>
+			<persName><forename type="first">Sharan</forename><surname>Narang</surname></persName>
+		</author>
+		<imprint/>
+	</monogr>
+	<note type="raw_reference">Sharan Narang. [n.d.].</note>
+</biblStruct>
+
+<biblStruct xml:id="b21">
+	<monogr>
+		<title/>
+		<author>
+			<persName><surname>Deepbench</surname></persName>
+		</author>
+		<ptr target="https://svail.github.io/DeepBench/" />
+		<imprint>
+			<biblScope unit="page" from="2021" to="2027" />
+		</imprint>
+	</monogr>
+	<note type="raw_reference">DeepBench. https://svail.github.io/DeepBench/. Accessed: 2021-07-03.</note>
+</biblStruct>
+
+<biblStruct xml:id="b22">
+	<monogr>
+		<title level="m" type="main">An update to DeepBench with a focus on deep learning inference</title>
+		<author>
+			<persName><forename type="first">Sharan</forename><surname>Narang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Greg</forename><surname>Diamos</surname></persName>
+		</author>
+		<ptr target="https://svail.github.io/DeepBench-update/" />
+		<imprint>
+			<biblScope unit="page" from="2021" to="2027" />
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Sharan Narang and Greg Diamos. [n.d.]. An update to DeepBench with a focus on deep learning inference. https://svail.github.io/DeepBench-update/. Accessed: 2021-07-03.</note>
+</biblStruct>
+
+<biblStruct xml:id="b23">
+	<analytic>
+		<title level="a" type="main">The making of tpc-ds</title>
+		<author>
+			<persName><forename type="first">Raghunath</forename><surname>Othayoth</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Meikel</forename><surname>Poess</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the International Conference on Very Large Data Bases</title>
+		<meeting>the International Conference on Very Large Data Bases</meeting>
+		<imprint>
+			<date type="published" when="1049">2006. 1049</date>
+			<biblScope unit="volume">32</biblScope>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Raghunath Othayoth and Meikel Poess. 2006. The making of tpc-ds. In Proceedings of the International Conference on Very Large Data Bases, Vol. 32. 1049.</note>
+</biblStruct>
+
+<biblStruct xml:id="b24">
+	<analytic>
+		<title level="a" type="main">New TPC benchmarks for decision support and web commerce</title>
+		<author>
+			<persName><forename type="first">Meikel</forename><surname>Poess</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chris</forename><surname>Floyd</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">ACM Sigmod Record</title>
+		<imprint>
+			<biblScope unit="volume">29</biblScope>
+			<biblScope unit="page" from="64" to="71" />
+			<date type="published" when="2000">2000. 2000</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Meikel Poess and Chris Floyd. 2000. New TPC benchmarks for decision support and web commerce. ACM Sigmod Record 29, 4 (2000), 64-71.</note>
+</biblStruct>
+
+<biblStruct xml:id="b25">
+	<analytic>
+		<title level="a" type="main">Energy benchmarks: a detailed analysis</title>
+		<author>
+			<persName><forename type="first">Meikel</forename><surname>Poess</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Raghunath</forename><surname>Othayoth Nambiar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kushagra</forename><surname>Vaid</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">John</forename><forename type="middle">M</forename><surname>Stephens</surname><genName>Jr</genName></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Karl</forename><surname>Huppler</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Evan</forename><surname>Haines</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 1st International Conference on Energy-Efficient Computing and Networking</title>
+		<meeting>the 1st International Conference on Energy-Efficient Computing and Networking</meeting>
+		<imprint>
+			<date type="published" when="2010">2010</date>
+			<biblScope unit="page" from="131" to="140" />
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Meikel Poess, Raghunath Othayoth Nambiar, Kushagra Vaid, John M Stephens Jr, Karl Huppler, and Evan Haines. 2010. Energy benchmarks: a detailed analysis. In Proceedings of the 1st International Conference on Energy-Efficient Computing and Networking. 131-140.</note>
+</biblStruct>
+
+<biblStruct xml:id="b26">
+	<analytic>
+		<title level="a" type="main">TPC-DI: The First Industry Benchmark for Data Integration</title>
+		<author>
+			<persName><forename type="first">Meikel</forename><surname>Poess</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tilmann</forename><surname>Rabl</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hans-Arno</forename><surname>Jacobsen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Brian</forename><surname>Caufield</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">PVLDB</title>
+		<imprint>
+			<biblScope unit="volume">7</biblScope>
+			<biblScope unit="page" from="1367" to="1378" />
+			<date type="published" when="2014">2014. 2014</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Meikel Poess, Tilmann Rabl, Hans-Arno Jacobsen, and Brian Caufield. 2014. TPC- DI: The First Industry Benchmark for Data Integration. PVLDB 7, 13 (2014), 1367-1378.</note>
+</biblStruct>
+
+<biblStruct xml:id="b27">
+	<analytic>
+		<title level="a" type="main">Data management challenges in production machine learning</title>
+		<author>
+			<persName><forename type="first">Neoklis</forename><surname>Polyzotis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sudip</forename><surname>Roy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Steven</forename><forename type="middle">Euijong</forename><surname>Whang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Martin</forename><surname>Zinkevich</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">SIGMOD</title>
+		<imprint>
+			<date type="published" when="2017">2017</date>
+			<biblScope unit="page" from="1723" to="1726" />
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Neoklis Polyzotis, Sudip Roy, Steven Euijong Whang, and Martin Zinkevich. 2017. Data management challenges in production machine learning. In SIGMOD. 1723-1726.</note>
+</biblStruct>
+
+<biblStruct xml:id="b28">
+	<analytic>
+		<title level="a" type="main">Machine Learning Pipelines: From Research to Production</title>
+		<author>
+			<persName><forename type="first">Alexandra</forename><surname>Posoldova</surname></persName>
+		</author>
+		<idno type="DOI">10.1109/MPOT.2020.3016280</idno>
+		<ptr target="https://doi.org/10.1109/MPOT.2020.3016280" />
+	</analytic>
+	<monogr>
+		<title level="j">IEEE Potentials</title>
+		<imprint>
+			<biblScope unit="volume">39</biblScope>
+			<biblScope unit="page" from="38" to="42" />
+			<date type="published" when="2020">2020. 2020</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Alexandra Posoldova. 2020. Machine Learning Pipelines: From Research to Production. IEEE Potentials 39, 6 (2020), 38-42. https://doi.org/10.1109/MPOT. 2020.3016280</note>
+</biblStruct>
+
+<biblStruct xml:id="b29">
+	<analytic>
+		<title level="a" type="main">ADABench -Towards an Industry Standard Benchmark for Advanced Analytics</title>
+		<author>
+			<persName><forename type="first">Tilmann</forename><surname>Rabl</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Christoph</forename><surname>Brücke</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Philipp</forename><surname>Härtling</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Stella</forename><surname>Stars</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rodrigo</forename><forename type="middle">Escobar</forename><surname>Palacios</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hamesh</forename><surname>Patel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Satyam</forename><surname>Srivastava</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Christoph</forename><surname>Boden</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jens</forename><surname>Meiners</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sebastian</forename><surname>Schelter</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Performance Evaluation and Benchmarking for the Era of Cloud(s)</title>
+		<editor>
+			<persName><forename type="first">Raghunath</forename><surname>Nambiar</surname></persName>
+		</editor>
+		<editor>
+			<persName><forename type="first">Meikel</forename><surname>Poess</surname></persName>
+		</editor>
+		<meeting><address><addrLine>Cham</addrLine></address></meeting>
+		<imprint>
+			<publisher>Springer International Publishing</publisher>
+			<date type="published" when="2020">2020</date>
+			<biblScope unit="page" from="47" to="63" />
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Tilmann Rabl, Christoph Brücke, Philipp Härtling, Stella Stars, Rodrigo Esco- bar Palacios, Hamesh Patel, Satyam Srivastava, Christoph Boden, Jens Meiners, and Sebastian Schelter. 2020. ADABench -Towards an Industry Standard Bench- mark for Advanced Analytics. In Performance Evaluation and Benchmarking for the Era of Cloud(s), Raghunath Nambiar and Meikel Poess (Eds.). Springer International Publishing, Cham, 47-63.</note>
+</biblStruct>
+
+<biblStruct xml:id="b30">
+	<monogr>
+		<title level="m" type="main">A Data Generator for Cloud-Scale Benchmarking. In Performance Evaluation, Measurement and Characterization of Complex Systems</title>
+		<author>
+			<persName><forename type="first">Tilmann</forename><surname>Rabl</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michael</forename><surname>Frank</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hatem</forename><surname>Mousselly Sergieh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Harald</forename><surname>Kosch</surname></persName>
+		</author>
+		<editor>Raghunath Nambiar and Meikel Poess</editor>
+		<imprint>
+			<date type="published" when="2011">2011</date>
+			<publisher>Springer</publisher>
+			<biblScope unit="page" from="41" to="56" />
+			<pubPlace>Berlin Heidelberg; Berlin, Heidelberg</pubPlace>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Tilmann Rabl, Michael Frank, Hatem Mousselly Sergieh, and Harald Kosch. 2011. A Data Generator for Cloud-Scale Benchmarking. In Performance Evaluation, Measurement and Characterization of Complex Systems, Raghunath Nambiar and Meikel Poess (Eds.). Springer Berlin Heidelberg, Berlin, Heidelberg, 41-56.</note>
+</biblStruct>
+
+<biblStruct xml:id="b31">
+	<monogr>
+		<title level="m" type="main">an open source dataset collection for benchmarking machine learning methods</title>
+		<author>
+			<persName><forename type="first">Trang</forename><forename type="middle">T</forename><surname>Joseph D Romano</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">William</forename><surname>Le</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">La</forename><surname>Cava</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">John</forename><forename type="middle">T</forename><surname>Gregg</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Daniel</forename><forename type="middle">J</forename><surname>Goldberg</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Praneel</forename><surname>Chakraborty</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Natasha</forename><forename type="middle">L</forename><surname>Ray</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Daniel</forename><surname>Himmelstein</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Weixuan</forename><surname>Fu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jason</forename><forename type="middle">H</forename><surname>Moore</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2012.00058v2</idno>
+		<imprint>
+			<date type="published" when="2021">2021. 2021</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">arXiv preprint</note>
+	<note type="raw_reference">Joseph D Romano, Trang T Le, William La Cava, John T Gregg, Daniel J Gold- berg, Praneel Chakraborty, Natasha L Ray, Daniel Himmelstein, Weixuan Fu, and Jason H Moore. 2021. PMLB v1.0: an open source dataset collection for benchmarking machine learning methods. arXiv preprint arXiv:2012.00058v2 (2021).</note>
+</biblStruct>
+
+<biblStruct xml:id="b32">
+	<analytic>
+		<title level="a" type="main">Hidden Technical Debt in Machine Learning Systems</title>
+		<author>
+			<persName><forename type="first">D</forename><surname>Sculley</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Gary</forename><surname>Holt</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Daniel</forename><surname>Golovin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Eugene</forename><surname>Davydov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Todd</forename><surname>Phillips</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dietmar</forename><surname>Ebner</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Vinay</forename><surname>Chaudhary</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michael</forename><surname>Young</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jean-Francois</forename><surname>Crespo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dan</forename><surname>Dennison</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 28th International Conference on Neural Information Processing Systems</title>
+		<title level="s">NIPS&apos;15</title>
+		<meeting>the 28th International Conference on Neural Information Processing Systems<address><addrLine>Montreal, Canada; Cambridge, MA, USA</addrLine></address></meeting>
+		<imprint>
+			<publisher>MIT Press</publisher>
+			<date type="published" when="2015">2015</date>
+			<biblScope unit="volume">2</biblScope>
+			<biblScope unit="page" from="2503" to="2511" />
+		</imprint>
+	</monogr>
+	<note type="raw_reference">D. Sculley, Gary Holt, Daniel Golovin, Eugene Davydov, Todd Phillips, Diet- mar Ebner, Vinay Chaudhary, Michael Young, Jean-Francois Crespo, and Dan Dennison. 2015. Hidden Technical Debt in Machine Learning Systems. In Pro- ceedings of the 28th International Conference on Neural Information Processing Systems -Volume 2 (Montreal, Canada) (NIPS&apos;15). MIT Press, Cambridge, MA, USA, 2503-2511.</note>
+</biblStruct>
+
+<biblStruct xml:id="b33">
+	<monogr>
+		<title level="m" type="main">Horovod: fast and easy distributed deep learning in TensorFlow</title>
+		<author>
+			<persName><forename type="first">Alexander</forename><surname>Sergeev</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mike</forename><surname>Del</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Balso</forename></persName>
+		</author>
+		<idno>CoRR abs/1802.05799</idno>
+		<imprint>
+			<date type="published" when="2018">2018. 2018</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Alexander Sergeev and Mike Del Balso. 2018. Horovod: fast and easy distributed deep learning in TensorFlow. CoRR abs/1802.05799 (2018).</note>
+</biblStruct>
+
+<biblStruct xml:id="b34">
+	<analytic>
+		<title level="a" type="main">Revisiting Unreasonable Effectiveness of Data in Deep Learning Era</title>
+		<author>
+			<persName><forename type="first">Chen</forename><surname>Sun</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Abhinav</forename><surname>Shrivastava</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Saurabh</forename><surname>Singh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Abhinav</forename><surname>Gupta</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">ICCV</title>
+		<imprint>
+			<date type="published" when="2017">2017</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Chen Sun, Abhinav Shrivastava, Saurabh Singh, and Abhinav Gupta. 2017. Re- visiting Unreasonable Effectiveness of Data in Deep Learning Era. In ICCV.</note>
+</biblStruct>
+
+<biblStruct xml:id="b35">
+	<analytic>
+		<title level="a" type="main">A Comparative Evaluation of Systems for Scalable Linear Algebra-Based Analytics</title>
+		<author>
+			<persName><forename type="first">Anthony</forename><surname>Thomas</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Arun</forename><surname>Kumar</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proc. VLDB Endow</title>
+		<meeting>VLDB Endow</meeting>
+		<imprint>
+			<date type="published" when="2018-09">2018. sep 2018</date>
+			<biblScope unit="volume">11</biblScope>
+			<biblScope unit="page" from="2168" to="2182" />
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Anthony Thomas and Arun Kumar. 2018. A Comparative Evaluation of Systems for Scalable Linear Algebra-Based Analytics. Proc. VLDB Endow. 11, 13 (sep 2018), 2168-2182.</note>
+</biblStruct>
+
+<biblStruct xml:id="b36">
+	<analytic>
+		<title level="a" type="main">OpenML: Networked science in machine learning</title>
+		<author>
+			<persName><forename type="first">Joaquin</forename><surname>Vanschoren</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jan</forename><surname>Van Rijn</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bernd</forename><surname>Bischl</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Luís</forename><surname>Torgo</surname></persName>
+		</author>
+		<idno type="DOI">10.1145/2641190.2641198</idno>
+		<ptr target="https://doi.org/10.1145/2641190.2641198" />
+	</analytic>
+	<monogr>
+		<title level="j">ACM SIGKDD Explorations Newsletter</title>
+		<imprint>
+			<biblScope unit="volume">15</biblScope>
+			<biblScope unit="page" from="49" to="60" />
+			<date type="published" when="2013-12">2013. 12 2013</date>
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Joaquin Vanschoren, Jan van Rijn, Bernd Bischl, and Luís Torgo. 2013. OpenML: Networked science in machine learning. ACM SIGKDD Explorations Newsletter 15 (12 2013), 49-60. https://doi.org/10.1145/2641190.2641198</note>
+</biblStruct>
+
+<biblStruct xml:id="b37">
+	<analytic>
+		<title level="a" type="main">Production Machine Learning Pipelines: Empirical Analysis and Optimization Opportunities</title>
+		<author>
+			<persName><forename type="first">Doris</forename><surname>Xin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hui</forename><surname>Miao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aditya</forename><surname>Parameswaran</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Neoklis</forename><surname>Polyzotis</surname></persName>
+		</author>
+		<idno type="DOI">10.1145/3448016.3457566</idno>
+		<ptr target="https://doi.org/10.1145/3448016.3457566" />
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 2021 International Conference on Management of Data (Virtual Event, China) (SIGMOD &apos;21)</title>
+		<meeting>the 2021 International Conference on Management of Data (Virtual Event, China) (SIGMOD &apos;21)<address><addrLine>New York, NY, USA</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computing Machinery</publisher>
+			<date type="published" when="2021">2021</date>
+			<biblScope unit="page" from="2639" to="2652" />
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Doris Xin, Hui Miao, Aditya Parameswaran, and Neoklis Polyzotis. 2021. Produc- tion Machine Learning Pipelines: Empirical Analysis and Optimization Opportu- nities. In Proceedings of the 2021 International Conference on Management of Data (Virtual Event, China) (SIGMOD &apos;21). Association for Computing Machinery, New York, NY, USA, 2639-2652. https://doi.org/10.1145/3448016.3457566</note>
+</biblStruct>
+
+<biblStruct xml:id="b38">
+	<monogr>
+		<title level="m" type="main">Spark: Cluster computing with working sets</title>
+		<author>
+			<persName><forename type="first">Matei</forename><surname>Zaharia</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mosharaf</forename><surname>Chowdhury</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">J</forename><surname>Michael</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Scott</forename><surname>Franklin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ion</forename><surname>Shenker</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Stoica</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2010">2010</date>
+			<biblScope unit="page" from="10" to="10" />
+		</imprint>
+	</monogr>
+	<note type="raw_reference">Matei Zaharia, Mosharaf Chowdhury, Michael J Franklin, Scott Shenker, and Ion Stoica. 2010. Spark: Cluster computing with working sets.. In HotCloud. 10-10.</note>
+</biblStruct>
+
+				</listBibl>
+			</div>
+		</back>
+	</text>
+</TEI>

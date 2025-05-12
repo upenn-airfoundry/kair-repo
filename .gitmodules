@@ -4,3 +4,6 @@
 [submodule "grobid"]
 	path = grobid
 	url = https://github.com/kermitt2/grobid.git
+[submodule "s2orc-doc2json"]
+	path = s2orc-doc2json
+	url = https://github.com/allenai/s2orc-doc2json.git
