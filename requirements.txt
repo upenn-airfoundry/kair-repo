@@ -20,3 +20,9 @@ lxml
 hurry.filesize
 langchain-ai
 zon
+arxiv
+datasketch
+pytest
+lxml
+hurry.filesize
+
