@@ -5,6 +5,7 @@
 ## Copyright (C) Zachary G. Ives, 2025
 ##################
 
+import json
 import argparse
 import os
 from datetime import datetime
@@ -14,6 +15,8 @@ from dotenv import load_dotenv, find_dotenv
 
 from crawl.crawler_queue import add_to_crawled
 from crawl.web_fetch import fetch_and_crawl_frontier, parse_documents_into_segments
+
+from entities.generate_people_info import process_authors, get_authors_from_db, get_scholar_profile, scrape_google_scholar_author, scraperapi_key, searchapi_for_author, searchapi_key
 
 from crawl.crawler_queue import add_local_downloads_to_crawl_queue
 from crawl.crawler_queue import add_urls_to_crawl_queue
@@ -86,6 +89,16 @@ def main():
         parse_documents_into_segments()
     elif args.command == "process":
         parse_files_and_index()
+    elif args.command == "people":
+        authors = get_authors_from_db(True)
+
+        # author_data = scrape_google_scholar_author(authors[0][1], scraperapi_key)
+        author_data = searchapi_for_author(authors[0][1], searchapi_key)
+
+        if author_data:
+            print(json.dumps(author_data, indent=2))
+        else:
+            print("Scraping failed.")
     elif args.command == "dblp":
         if not os.path.exists('dblp.jsonl'):
             print("DBLP file not found. Downloading and parsing...")

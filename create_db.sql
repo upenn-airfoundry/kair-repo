@@ -74,6 +74,18 @@ CREATE TYPE entity_types AS ENUM ('synopsis',
                                   'event',
                                   'result');
 
+ALTER TYPE entity_types
+    ADD VALUE 'homepage' AFTER 'result';
+ALTER TYPE entity_types
+    ADD VALUE 'reference' AFTER 'homepage';
+ALTER TYPE entity_types
+    ADD VALUE 'citation' AFTER 'reference';
+ALTER TYPE entity_types
+    ADD VALUE 'google_scholar_profile' AFTER 'citation';
+ALTER TYPE entity_types
+    ADD VALUE 'semscholar_profile' AFTER 'google_scholar_profile';
+
+
 -- Data is "chunked" into hierarchies of entities.
 -- An entity can be a synopsis, fact, new concept, claim, author, organization,
 -- tag, paper, section, paragraph, table, hypothesis, source, method, event,

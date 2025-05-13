@@ -173,6 +173,7 @@ def index_split_paragraphs(split_docs: list, path: str, url: str, the_date, meta
             graph_db.link_author_to_paper(author_id, paper_id)
             print(f"Added author: {name} (ID: {author_id})")
 
+        graph_db.delete_paragraphs(paper_id)
         # Index the paragraphs
         for doc in split_docs:
             content = doc.page_content
@@ -182,7 +183,5 @@ def index_split_paragraphs(split_docs: list, path: str, url: str, the_date, meta
         return paper_id
     except json.JSONDecodeError as e:
         print(f"Error decoding JSON: {e}")
-        print("Raw response text:")
-        print(response_text)
 
         return 0    

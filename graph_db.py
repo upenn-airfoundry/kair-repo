@@ -197,6 +197,46 @@ class GraphAccessor:
             self.conn.rollback()
             # throw the exception again
             raise e
+        
+        
+    def add_person(self, url: str, source_type: str, name: str, affiliation: str, author_json, disambiguator: Optional[str] = None) -> int:
+        """
+        Add an author with a name and an optional disambiguating identifier.
+        If the author already exists, return the existing entity ID.
+
+        Args:
+            name (str): The name of the author.
+            url (str): The URL of the author's profile, whether a homepage or a Google Scholar entry.
+            disambiguator (Optional[str]): An optional disambiguating identifier.
+
+        Returns:
+            int: The entity_id of the inserted or existing author.
+        """
+        # Concatenate the disambiguator to the name if provided
+        full_name = f"{name} #{disambiguator}" if disambiguator is not None else name
+
+        embed = self.generate_embedding(f"{name} at {affiliation}")
+        try:
+            with self.conn.cursor() as cur:
+                # Check if the author already exists
+                cur.execute(f"SELECT entity_id FROM {self.schema}.entities WHERE entity_type = 'author' AND entity_name = %s;", (full_name,))
+                author_id = cur.fetchone()
+
+                if author_id is not None:
+                    # Author already exists, return the existing entity ID
+                    return author_id[0]
+
+                # Insert the new author into the entities table
+                cur.execute(f"INSERT INTO {self.schema}.entities (entity_type, entity_name, entity_url, entity_json, entity_embed) VALUES (%s, %s, %s, %s, %s) RETURNING entity_id;", (source_type, full_name, url, author_json, embed ))
+                author_id = cur.fetchone()[0]
+
+            self.conn.commit()
+            return author_id
+
+        except Exception as e:
+            logging.error(f"Error adding author with disambiguator: {e}")
+            self.conn.rollback()
+            raise e
 
     def link_source_to_paper(self, source_id: int, paper_id: int):
         """Link a source ID to a paper ID."""

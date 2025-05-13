@@ -65,7 +65,7 @@ def summarize_web_page(content: str) -> str:
 
         prompt = ChatPromptTemplate.from_messages([
             ("system", "You are a helpful assistant that summarizes author biographical information from HTML content."),
-            ("user", "Summarize the author info from the following HTML:\n\n{html}"),
+            ("user", "Summarize the author info, exactly including name, position, and affiliation from the following HTML:\n\n{html}"),
         ])
 
         chain = prompt | llm | StrOutputParser()
