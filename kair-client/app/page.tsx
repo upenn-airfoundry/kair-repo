@@ -219,13 +219,13 @@ const Logo = ({ src, alt, href }: { src: string; alt: string; href: string }) =>
   return (
     <a href={href} className="text-gray-400 hover:text-gray-500">
       <span className="sr-only">{alt}</span>
-      <div className="relative w-28 h-10">
+      <div className="relative w-24 h-8 flex items-center">
         <Image
           src={src}
           alt={alt}
-          width={112}
-          height={40}
-          className="object-contain"
+          width={96}
+          height={32}
+          className="object-contain w-auto h-auto"
           priority
         />
       </div>
@@ -235,22 +235,25 @@ const Logo = ({ src, alt, href }: { src: string; alt: string; href: string }) =>
 
 const Footer = () => {
   return (
-    <footer className="bg-white border-t border-gray-100 relative z-20">
-      <div className="mx-auto max-w-7xl px-6 py-12 md:flex md:items-center md:justify-between lg:px-8">
-        <div className="flex justify-center space-x-8 md:order-2">
-          <Logo
-            src="/images/upenn-logo.png"
-            alt="University of Pennsylvania"
-            href="https://www.upenn.edu"
-          />
-          <Logo
-            src="/images/nsf-logo.png"
-            alt="National Science Foundation"
-            href="https://www.nsf.gov"
-          />
+    <footer className="relative z-20">
+      <div className="absolute inset-0 bg-white/40 backdrop-blur-[2px]" />
+      <div className="relative mx-auto max-w-7xl px-6 py-12 md:flex md:items-center md:justify-between lg:px-8">
+        <div className="flex justify-center items-center space-x-6 md:order-2 md:flex-1">
+          <div className="flex items-center space-x-6">
+            <Logo
+              src="/images/upenn-logo.png"
+              alt="University of Pennsylvania"
+              href="https://www.upenn.edu"
+            />
+            <Logo
+              src="/images/nsf-logo.png"
+              alt="National Science Foundation"
+              href="https://www.nsf.gov"
+            />
+          </div>
         </div>
-        <div className="mt-8 md:order-1 md:mt-0">
-          <div className="flex flex-col space-y-4">
+        <div className="mt-6 md:order-1 md:mt-0 md:flex-1">
+          <div className="flex flex-col space-y-3">
             {/* Research Links */}
             <div className="flex space-x-6">
               <a href="https://airfoundry.upenn.edu/research/" className="text-sm text-gray-500 hover:text-gray-900">
