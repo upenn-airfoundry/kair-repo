@@ -183,7 +183,7 @@ class GraphAccessor:
             self.conn.rollback()
             # throw the exception again
             raise e
-
+        
     def add_source(self, url: str) -> int:
         """Add a source by URL and return its source ID."""
         try:
@@ -198,6 +198,19 @@ class GraphAccessor:
             # throw the exception again
             raise e
         
+    def exists_person(self, name: str, disambiguator: str, source_type: str) -> bool:
+        """Check if a person exists in the database by name."""
+        full_name = f"{name} #{disambiguator}" if disambiguator is not None else name
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(f"SELECT entity_id FROM {self.schema}.entities WHERE entity_name = %s AND entity_type = %s;", (full_name,source_type,))
+                result = cur.fetchone()
+                return result is not None
+        except Exception as e:
+            logging.error(f"Error checking person existence: {e}")
+            self.conn.rollback()
+            return False
+
         
     def add_person(self, url: str, source_type: str, name: str, affiliation: str, author_json, disambiguator: Optional[str] = None) -> int:
         """

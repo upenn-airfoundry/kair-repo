@@ -140,6 +140,22 @@ A set of helper functions is provided in `graph_db.py` for reading / writing aut
 
 You can supply a list of pre-crawled files under `PDF_PATH/dataset_papers`, and they will be added to the crawled list by `crawler.py`.  If a `.pdf.json` file with Aryn parsed data exists in `PDF_PATH/chunked_files` this will be used in lieu of the LangChain splitter.
 
+## Submodules
+You may need to initialize the submodules (see `.gitmodules`) by running the following commands:
+```
+git submodule init
+git submodule update
+```
+
+### Parsing documents with `doc2json` & `grobid`
+We use [`grobid`](https://grobid.readthedocs.io/en/latest/) to parse papers while maintaining high resolution contextual information with AllenAI's [`doc2json`](https://github.com/allenai/s2orc-doc2json), which converts it to a JSON file for our indexer. 
+
+You can run the following command from root to try it out
+```bash
+python3 process_pdf.py -i <INPUT_PDF_PATH> -o <OUTPUT_PATH>
+```
+
+
 # Credits
 
 This project is funded by the National Science Foundation under DBI-2400135.

@@ -26,15 +26,13 @@ from search import search_over_criteria, search_multiple_criteria
 from search import generate_rag_answer
 
 import logging
-
-# Configure APScheduler
+ # Configure APScheduler
 class Config:
     SCHEDULER_API_ENABLED = True
 
-
 app = Flask("KAIR")
 app.config.from_object(Config)
-CORS(app, resources={r"/*": {"origins": ["http://localhost:5173"], \
+CORS(app, resources={r"/*": {"origins": ["http://localhost:5173", "http://localhost:3000"], \
     "methods": ["GET", "POST", "PUT", "DELETE"],
     "allow_headers": ["Content-Type", "Authorization"],
     "expose_headers": ["X-Custom-Header"],

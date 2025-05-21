@@ -93,6 +93,8 @@ def iterative_enrichment(graph_accessor: GraphAccessor, task: str = None):
     for criterion in criteria:
         # name: str, scope: str, prompt: str, description: str
         graph_accessor.add_task_to_queue(criterion['name'], criterion['scope'], criterion['prompt'], criterion['name'])
+        
+crawled = set()
 
 def search_entities(graph_accessor: GraphAccessor, task_name: str, task_prompt: str, task_scope: str, task_description: str, searchapi_key: str):
     """
@@ -110,6 +112,12 @@ def search_entities(graph_accessor: GraphAccessor, task_name: str, task_prompt: 
     if not task_name in search_strategies:
         print(f"Unsupported task name: {task_name}")
         return
+    global crawled
+    
+    if task_scope in crawled:
+        print(f"Already crawled for author: {task_scope}")
+        return
+    crawled.add(task_scope)
 
     author_name = task_scope
     print(f"Searching for Google Scholar profiles for author: {author_name}")
@@ -125,7 +133,7 @@ def search_entities(graph_accessor: GraphAccessor, task_name: str, task_prompt: 
         author_id = profile.get("author_id")
         name = profile.get("name")
 
-        if not author_id or not name:
+        if not author_id or not name or graph_accessor.exists_person(name, author_id, "google_scholar_profile"):
             print(f"Invalid profile data: {profile}")
             continue
 
