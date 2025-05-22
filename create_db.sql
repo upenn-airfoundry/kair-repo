@@ -1,7 +1,19 @@
+CREATE DATABASE kair;
 
-CREATE USER kair with password 'kair_pass';
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'kair') THEN
+        CREATE USER kair WITH PASSWORD 'kair_pass';
+    END IF;
+END$$;
 
-create role kair with login password 'kair_pass';
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'kair') THEN
+        CREATE ROLE kair WITH LOGIN PASSWORD 'kair_pass';
+    END IF;
+END$$;
+
 -- grant kair to kair;
 
 grant connect on database postgres to kair;

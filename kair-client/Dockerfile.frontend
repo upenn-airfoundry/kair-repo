@@ -1,25 +1,52 @@
-# Frontend Dockerfile
-FROM node:20-alpine AS deps
+# Frontend Dockerfile - Production Optimized
+FROM node:20-slim AS deps
 WORKDIR /app
 COPY package.json pnpm-lock.yaml* ./
-RUN npm install -g pnpm && pnpm install
+RUN npm install -g pnpm && \
+    pnpm config set store-dir /app/.pnpm-store && \
+    pnpm install --frozen-lockfile
 
-FROM node:20-alpine AS builder
+FROM node:20-slim AS builder
 WORKDIR /app
+RUN npm install -g pnpm && \
+    pnpm config set store-dir /app/.pnpm-store
+COPY --from=deps /app/.pnpm-store /app/.pnpm-store
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+ENV NEXT_TELEMETRY_DISABLED 1
 RUN pnpm build
 
-FROM node:20-alpine AS runner
+FROM node:20-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/public ./public
+ENV NEXT_TELEMETRY_DISABLED 1
+ENV PATH="/app/node_modules/.bin:$PATH"
+
+RUN npm install -g pnpm && \
+    pnpm config set store-dir /app/.pnpm-store
+
+# Copy only necessary files for production
+COPY --from=builder /app/.pnpm-store /app/.pnpm-store
 COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/pnpm-lock.yaml ./pnpm-lock.yaml
+COPY --from=builder /app/next.config.mjs ./next.config.mjs
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/node_modules ./node_modules
+
+# Add a non-root user for security
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 nextjs && \
+    chown -R nextjs:nodejs /app
+
+USER nextjs
+
 EXPOSE 3000
+ENV PORT 3000
+ENV HOSTNAME "0.0.0.0"
+
 CMD ["pnpm", "start"]
 
-# For local dev, use the builder stage:
+# For local development:
 # docker build --target builder -t kair-frontend-dev .
 # docker run -it --rm -p 3000:3000 kair-frontend-dev pnpm dev 

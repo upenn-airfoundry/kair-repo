@@ -24,11 +24,11 @@ _ = load_dotenv(find_dotenv())
 
 class GraphAccessor:
     def __init__(self):
-        self.conn = psycopg2.connect(dbname=os.getenv("DB_NAME"), \
-                            user=os.getenv("DB_USER"), \
-                            password=os.getenv("DB_PASSWORD"), \
-                            host=os.getenv("DB_HOST", "localhost"), \
-                            port=os.getenv("DB_PORT", "5432") \
+        self.conn = psycopg2.connect(dbname=os.getenv("POSTGRES_DB"), \
+                            user=os.getenv("POSTGRES_USER"), \
+                            password=os.getenv("POSTGRES_PASSWORD"), \
+                            host=os.getenv("POSTGRES_HOST", "localhost"), \
+                            port=os.getenv("POSTGRES_PORT", "5432") \
         )
         
     def exec_sql(self, sql: str, params: Tuple = ()) -> List[Tuple]:

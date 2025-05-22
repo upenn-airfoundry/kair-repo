@@ -162,3 +162,37 @@ This project is funded by the National Science Foundation under DBI-2400135.
 
 ![NSF logo](https://airfoundry.upenn.edu/wp-content/themes/penn-airfoundry/img/logo-NSF.png)
 
+# KAIR Project
+
+## Local Development (Docker Compose)
+
+1. Ensure you have Docker and Docker Compose installed.
+2. Build and start all services:
+   ```bash
+   docker-compose up --build
+   ```
+3. Access the frontend at [http://localhost:3000](http://localhost:3000)
+4. The backend API will be available at [http://localhost:5000](http://localhost:5000)
+5. The Postgres+TimescaleDB database runs on port 5432 (see `create_db.sql` for schema).
+
+## Cloud Deployment (GCP with Terraform)
+
+1. Install [Terraform](https://www.terraform.io/downloads.html) and authenticate with GCP (`gcloud auth application-default login`).
+2. Edit variables in `terraform/variables.tf` or provide them via CLI.
+3. Initialize and apply:
+   ```bash
+   cd terraform
+   terraform init
+   terraform plan
+   terraform apply
+   ```
+4. See `terraform/main.tf` for module structure. You will need to implement the modules for network, database, frontend, and backend.
+
+---
+
+The repo includes:
+- `Dockerfile.backend` for Flask backend
+- `kair-client/Dockerfile.frontend` for Next.js frontend
+- `docker-compose.yml` for local dev
+- `terraform/` for GCP infrastructure as code
+

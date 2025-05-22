@@ -1,0 +1,20 @@
+FROM timescale/timescaledb-ha:pg17
+
+# Install vectorscale extension
+USER root
+RUN apt-get update && apt-get install -y postgresql-14-vectorscale
+USER postgres
+
+# Copy initialization script
+COPY create_db.sql /docker-entrypoint-initdb.d/
+
+# Expose port
+EXPOSE 5432
+
+# Set environment variables
+ENV POSTGRES_USER=kair
+ENV POSTGRES_PASSWORD=kair_pass
+ENV POSTGRES_DB=postgres
+
+# Run the default entrypoint
+CMD ["postgres"] 

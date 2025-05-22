@@ -326,6 +326,16 @@ def process_next():
     logging.info("Polling for enrichment tasks...")
     process_next_task(graph_accessor)
 
+# Add a health check endpoint
+@app.route('/health', methods=['GET'])
+def health_check():
+    try:
+        # Try a simple DB query
+        graph_accessor.exec_sql('SELECT 1;')
+        return jsonify({"status": "ok", "db": "connected"}), 200
+    except Exception as e:
+        return jsonify({"status": "error", "db": "not connected", "error": str(e)}), 500
+
 if __name__ == '__main__':
     # Schedule the task processing function to run every minute
     scheduler.add_job(
@@ -335,4 +345,4 @@ if __name__ == '__main__':
         minutes=1
     )
     scheduler.start()
-    app.run(port=8081,debug=True) 
+    app.run(port=8080, debug=True) 
