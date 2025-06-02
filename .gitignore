@@ -73,6 +73,10 @@ local_settings.py
 db.sqlite3
 db.sqlite3-journal
 
+# NPM stuff
+package-lock.json
+pnpm-lock.yaml
+
 # Next stuff:
 *.next/
 

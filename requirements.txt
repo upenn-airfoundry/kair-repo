@@ -19,6 +19,7 @@ flask-cors
 bs4
 flask-apscheduler
 flask-socketio
+apscheduler
 arxiv
 datasketch
 pytest
