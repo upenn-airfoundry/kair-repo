@@ -1,0 +1,302 @@
+import os
+import sys
+
+# Add parent directory to Python path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+import tornado.ioloop
+import tornado.web
+import tornado.options
+import json
+from datetime import datetime
+from dotenv import load_dotenv, find_dotenv
+
+# Load environment variables from .env file
+_ = load_dotenv(find_dotenv())
+
+from graph_db import GraphAccessor
+from enrichment.iterative_enrichment import process_next_task, iterative_enrichment
+from entities.generate_doc_info import parse_files_and_index
+from enrichment.langchain_ops import AssessmentOps
+from crawl.web_fetch import fetch_and_crawl_frontier
+from search import search_over_criteria, search_multiple_criteria, generate_rag_answer
+
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+
+class BaseHandler(tornado.web.RequestHandler):
+    def set_default_headers(self):
+        self.set_header("Access-Control-Allow-Origin", "*")
+        self.set_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.set_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+    
+    def options(self, *args, **kwargs):
+        self.set_status(204)
+        self.finish()
+
+    def get_json(self):
+        try:
+            return json.loads(self.request.body)
+        except json.JSONDecodeError:
+            return None
+
+# Initialize the GraphAccessor
+graph_accessor = GraphAccessor()
+
+class HealthCheckHandler(BaseHandler):
+    def get(self):
+        self.write({"status": "healthy"})
+
+class FindRelatedEntitiesByTagHandler(BaseHandler):
+    def get(self):
+        tag_name = self.get_argument('tag_name', None)
+        query = self.get_argument('query', None)
+        k = int(self.get_argument('k', 10))
+
+        if not tag_name or not query:
+            self.set_status(400)
+            self.write({"error": "Both 'tag_name' and 'query' parameters are required"})
+            return
+
+        query_embedding = graph_accessor.generate_embedding(query)
+        results = graph_accessor.find_entities_by_tag_embedding(query_embedding, tag_name, k)
+        self.write({"results": results})
+
+class FindRelatedEntitiesHandler(BaseHandler):
+    def get(self):
+        query = self.get_argument('query', None)
+        k = int(self.get_argument('k', 10))
+        entity_type = self.get_argument('entity_type', None)
+        keywords = self.get_argument('keywords', None)
+        
+        if keywords:
+            keywords = keywords.split(',')
+            if keywords[0] == '':
+                keywords = None
+        
+        if not query:
+            self.set_status(400)
+            self.write({"error": "'query' parameter is required"})
+            return
+            
+        logging.debug("Find related entities: " + query)
+        results = graph_accessor.find_related_entities(query, k, entity_type, keywords)
+        self.write({"results": results})
+
+class AddToCrawlQueueHandler(BaseHandler):
+    def post(self):
+        data = self.get_json()
+        if not data or 'url' not in data:
+            self.set_status(400)
+            self.write({"error": "'url' parameter is required"})
+            return
+
+        url = data['url']
+        comment = data.get('comment')
+
+        # Check if the URL already exists in the crawl_queue table
+        exists = graph_accessor.exec_sql("SELECT 1 FROM crawl_queue WHERE url = %s;", (url,))
+        if len(exists) > 0:
+            self.write({"message": "URL already exists in the crawl queue"})
+            return
+
+        # Insert the URL into the crawl_queue table
+        graph_accessor.execute(
+            "INSERT INTO crawl_queue (create_time, url, comment) VALUES (%s, %s, %s);",
+            (datetime.now().date(), url, comment)
+        )
+        graph_accessor.commit()
+        self.write({"message": "URL added to crawl queue"})
+
+class CrawlFilesHandler(BaseHandler):
+    def post(self):
+        try:
+            fetch_and_crawl_frontier()
+            self.write({"message": "Crawling completed successfully"})
+        except Exception as e:
+            self.set_status(500)
+            self.write({"error": f"An error occurred during crawling: {e}"})
+
+class ParsePDFsAndIndexHandler(BaseHandler):
+    def post(self):
+        try:
+            parse_files_and_index(use_aryn=False)
+            self.write({"message": "PDF parsing and indexing completed successfully"})
+        except Exception as e:
+            self.set_status(500)
+            self.write({"error": f"An error occurred during parsing and indexing: {e}"})
+
+class UncrowledEntriesHandler(BaseHandler):
+    def get(self):
+        try:
+            query = """
+                SELECT cq.id, cq.create_time, cq.url, cq.comment
+                FROM crawl_queue cq
+                LEFT JOIN crawled c ON cq.id = c.id
+                WHERE c.id IS NULL;
+            """
+            uncrawled_entries = graph_accessor.exec_sql(query)
+            results = [
+                {"id": row[0], "create_time": row[1], "url": row[2], "comment": row[3]}
+                for row in uncrawled_entries
+            ]
+            self.write({"uncrawled_entries": results})
+        except Exception as e:
+            self.set_status(500)
+            self.write({"error": f"An error occurred while fetching uncrawled entries: {e}"})
+
+class GetAssessmentCriteriaHandler(BaseHandler):
+    def get(self):
+        try:
+            name = self.get_argument('name', None)
+            criteria = graph_accessor.get_assessment_criteria(name)
+            if criteria:
+                self.write({"criteria": criteria})
+            else:
+                if name:
+                    self.set_status(404)
+                    self.write({"error": "No criteria found for the given name"})
+                else:
+                    self.set_status(404)
+                    self.write({"error": "Please create some assessment criteria"})
+        except Exception as e:
+            self.set_status(500)
+            self.write({"error": f"An error occurred: {e}"})
+
+class AddAssessmentCriterionHandler(BaseHandler):
+    def post(self):
+        try:
+            data = self.get_json()
+            name = data.get('name')
+            scope = data.get('scope')
+            prompt = data.get('prompt')
+            promise = data.get('promise', 1.0)
+
+            if not name or not prompt or not scope:
+                self.set_status(400)
+                self.write({"error": "'name', 'scope', and 'prompt' fields are required"})
+                return
+            
+            logging.info("Adding assessment criterion with name: " + name)
+            logging.debug("Scope: " + scope)
+            logging.debug("Prompt: " + prompt)
+
+            criterion_id = graph_accessor.add_assessment_criterion(name, prompt, scope, promise)
+            iterative_enrichment(graph_accessor, name)
+
+            self.write({
+                "message": "New assessment criterion added successfully",
+                "criterion_id": criterion_id
+            })
+        except Exception as e:
+            self.set_status(500)
+            self.write({"error": f"An error occurred: {e}"})
+
+class AddEnrichmentHandler(BaseHandler):
+    def post(self):
+        try:
+            iterative_enrichment(graph_accessor)
+            self.write({"message": "All enrichment tasks queued"})
+        except Exception as e:
+            self.set_status(500)
+            self.write({"error": f"An error occurred: {e}"})
+
+class ExpandSearchHandler(BaseHandler):
+    def post(self):
+        try:
+            data = self.get_json()
+            user_prompt = data.get('prompt')
+            
+            if not user_prompt:
+                logging.error("'prompt' parameter is missing")
+                self.set_status(400)
+                self.write({"error": "'prompt' parameter is required"})
+                return
+
+            questions = search_over_criteria(user_prompt, graph_accessor.get_assessment_criteria())
+            logging.info('Expanded into subquestions: ' + questions)
+            
+            relevant_docs = search_multiple_criteria(questions)
+            main = graph_accessor.find_related_entity_ids_by_tag(user_prompt, "summary", 50)
+            
+            logging.debug("Relevant docs: " + str(relevant_docs))
+            logging.debug("Main papers: " + str(main))
+            
+            docs_in_order = []
+            count = 0
+            for doc in relevant_docs:
+                if doc in set(main):
+                    docs_in_order.append(doc)
+                    count += 1
+                    if count >= 10:
+                        break
+                
+            other_docs = 0    
+            while count < 10 and other_docs < len(main):
+                if main[other_docs] not in set(relevant_docs):
+                    docs_in_order.append(main[other_docs])
+                    count += 1
+                other_docs += 1
+            
+            print("Items matching criteria: " + str(docs_in_order))
+            
+            if len(docs_in_order):
+                paper_info = graph_accessor.get_entities_with_summaries(list(docs_in_order))
+                answer = generate_rag_answer(paper_info, user_prompt)
+                self.write({
+                    "data": {
+                        "message": answer + '\n\nWe additionally looked for assessment criteria: ' + questions
+                    }
+                })
+            else:
+                self.set_status(404)
+                self.write({"error": "No relevant papers found"})
+        except Exception as e:
+            logging.error(f"Error during expansion: {e}")
+            self.set_status(500)
+            self.write({"error": f"An error occurred: {e}"})
+
+class StartSchedulerHandler(BaseHandler):
+    def post(self):
+        try:
+            # TODO: Implement scheduler start logic
+            self.write({"message": "Scheduler started successfully"})
+        except Exception as e:
+            self.set_status(500)
+            self.write({"error": f"Failed to start scheduler: {e}"})
+
+class StopSchedulerHandler(BaseHandler):
+    def post(self):
+        try:
+            # TODO: Implement scheduler stop logic
+            self.write({"message": "Scheduler stopped successfully"})
+        except Exception as e:
+            self.set_status(500)
+            self.write({"error": f"Failed to stop scheduler: {e}"})
+
+def make_app():
+    return tornado.web.Application([
+        (r"/health", HealthCheckHandler),
+        (r"/find_related_entities_by_tag", FindRelatedEntitiesByTagHandler),
+        (r"/find_related_entities", FindRelatedEntitiesHandler),
+        (r"/add_to_crawl_queue", AddToCrawlQueueHandler),
+        (r"/crawl_files", CrawlFilesHandler),
+        (r"/parse_pdfs_and_index", ParsePDFsAndIndexHandler),
+        (r"/uncrawled_entries", UncrowledEntriesHandler),
+        (r"/get_assessment_criteria", GetAssessmentCriteriaHandler),
+        (r"/add_assessment_criterion", AddAssessmentCriterionHandler),
+        (r"/add_enrichment", AddEnrichmentHandler),
+        (r"/expand", ExpandSearchHandler),
+        (r"/start_scheduler", StartSchedulerHandler),
+        (r"/stop_scheduler", StopSchedulerHandler),
+    ])
+
+if __name__ == "__main__":
+    tornado.options.parse_command_line()
+    app = make_app()
+    port = int(os.getenv("PORT", 8081))
+    app.listen(port)
+    print(f"Server running on port {port}")
+    tornado.ioloop.IOLoop.current().start() 
