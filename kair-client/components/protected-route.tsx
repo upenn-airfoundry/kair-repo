@@ -9,7 +9,7 @@ interface ProtectedRouteProps {
 }
 
 export function ProtectedRoute({ children }: ProtectedRouteProps) {
-  const { isAuthenticated } = useAuth();
+  const { user } = useAuth();
   const router = useRouter();
   // Track if the check has been performed to avoid flicker/multiple redirects
   const [isChecking, setIsChecking] = React.useState(true);
@@ -17,7 +17,8 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
   useEffect(() => {
     // Only redirect if auth state is definitive (not initial render potentially)
     // and the user is not authenticated.
-    if (!isAuthenticated) {
+    if (!user) {
+        console.log("User not authenticated, redirecting to login");
         // Check ensures we don't redirect during initial check/context setup
         router.push('/login');
     } else {
@@ -26,10 +27,10 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
     }
     // Dependency array ensures this runs when isAuthenticated changes
     // We don't strictly need router in deps as it's stable from next/navigation
-  }, [isAuthenticated, router]); // Add router to dependency array
+  }, [user, router]); // Add router to dependency array
 
   // While checking, potentially show a loader or null
-  if (isChecking && !isAuthenticated) {
+  if (isChecking && !user) {
     // Improved check: If still checking and not authenticated, show nothing/loader
     // This prevents brief flashing of protected content before redirect
     return null; // Or return a loading spinner component

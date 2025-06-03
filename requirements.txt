@@ -25,4 +25,5 @@ datasketch
 pytest
 lxml
 hurry.filesize
+bcrypt
 

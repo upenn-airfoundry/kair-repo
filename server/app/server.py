@@ -1,5 +1,6 @@
 import os
 import sys
+import bcrypt
 
 # Add parent directory to Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -44,6 +45,78 @@ class BaseHandler(tornado.web.RequestHandler):
 
 # Initialize the GraphAccessor
 graph_accessor = GraphAccessor()
+
+class LoginHandler(BaseHandler):
+    def post(self):
+        try:
+            data = self.get_json()
+            email = data.get("email")
+            password = data.get("password")
+            if not email or not password:
+                self.set_status(400)
+                self.write({"error": "'email' and 'password' are required"})
+                return
+
+            # Fetch user from DB and check password
+            user = graph_accessor.exec_sql(
+                "SELECT name, organization, avatar, password_hash FROM users WHERE email = %s;", (email,)
+            )
+            if not user:
+                self.set_status(401)
+                self.write({"success": False, "message": "Invalid credentials"})
+                return
+
+            password_hash = user[0][3].encode("utf-8")
+            if bcrypt.checkpw(password.encode("utf-8"), password_hash):
+                self.write({
+                    "success": True, 
+                    "user": {
+                        "name": user[0][0],
+                        "organization": user[0][1],
+                        "avatar": user[0][2]
+                    },
+                    "message": "Login successful"})
+            else:
+                self.set_status(401)
+                self.write({"success": False, "message": "Invalid credentials"})
+        except Exception as e:
+            self.set_status(500)
+            self.write({"error": f"An error occurred: {e}"})
+
+class CreateAccountHandler(BaseHandler):
+    def post(self):
+        try:
+            data = self.get_json()
+            email = data.get("userId") or data.get("email")
+            avatar = data.get("avatarUrl", "")
+            organization = data.get("organization", "")
+            name = data.get("name", "")
+            password = data.get("password")
+            if not email or not password or not avatar or not organization or not name:
+                self.set_status(400)
+                self.write({"error": "'userId' (or 'email') and 'password' as well as 'avatar', 'name', and 'organization' are required"})
+                return
+
+            # Check if user already exists
+            existing = graph_accessor.exec_sql(
+                "SELECT 1 FROM users WHERE email = %s;", (email,)
+            )
+            if existing:
+                self.set_status(409)
+                self.write({"success": False, "message": "Account already exists"})
+                return
+
+            # Hash the password with bcrypt
+            password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+            graph_accessor.execute(
+                "INSERT INTO users (email, password_hash, name, organization, avatar) VALUES (%s, %s, %s, %s, %s);",
+                (email, password_hash, name, organization, avatar)
+            )
+            graph_accessor.commit()
+            self.write({"success": True, "message": "Account created"})
+        except Exception as e:
+            self.set_status(500)
+            self.write({"error": f"An error occurred: {e}"})
 
 class HealthCheckHandler(BaseHandler):
     def get(self):
@@ -291,12 +364,14 @@ def make_app():
         (r"/expand", ExpandSearchHandler),
         (r"/start_scheduler", StartSchedulerHandler),
         (r"/stop_scheduler", StopSchedulerHandler),
+        (r"/api/login", LoginHandler),
+        (r"/api/create", CreateAccountHandler),        
     ])
 
 if __name__ == "__main__":
     tornado.options.parse_command_line()
     app = make_app()
-    port = int(os.getenv("PORT", 8081))
+    port = int(os.getenv("BACKEND_PORT", 8081))
     app.listen(port)
     print(f"Server running on port {port}")
     tornado.ioloop.IOLoop.current().start() 

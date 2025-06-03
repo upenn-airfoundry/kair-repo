@@ -1,5 +1,6 @@
 "use client"
 
+import { useAuth } from "@/context/auth-context";
 import * as React from "react"
 import {
   IconMessage,
@@ -41,6 +42,7 @@ const data = {
     name: "kair-user",
     email: "kair-user@seas.upenn.edu",
     avatar: "/avatars/shadcn.jpg",
+    organization: "KAIR",
   },
   navMain: [
     {
@@ -164,6 +166,15 @@ const data = {
 }
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
+  const { user, logout } = useAuth();
+
+  if (user) {
+    data.user.email = user.email || data.user.email; // Use the user from context or fallback to default
+    data.user.name = user.name || data.user.name; // Use the user from context or fallback to default
+    data.user.avatar = user.avatar || data.user.avatar; // Use the user from context or fallback to default
+    data.user.organization = user.organization || "KAIR"; // Use the user from context or fallback to default
+}
+
   return (
     <Sidebar collapsible="offcanvas" {...props}>
       <SidebarHeader>

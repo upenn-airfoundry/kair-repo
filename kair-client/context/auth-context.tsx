@@ -3,49 +3,29 @@
 import React, { createContext, useState, useContext, ReactNode, useEffect } from "react";
 
 interface AuthContextType {
-  isAuthenticated: boolean;
-  login: () => void;
+  user: { name: string, email: string, avatar: string, organization: string } | null;
+  login: (user: { name: string, email: string, avatar: string, organization: string }) => void;
   logout: () => void;
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
+const AuthContext = createContext<AuthContextType>({
+  user: null,
+  login: () => {},
+  logout: () => {},
+});
 const AUTH_STORAGE_KEY = "kair-auth-status";
 
-export function AuthProvider({ children }: { children: ReactNode }) {
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
-    if (typeof window !== "undefined") {
-        const storedAuth = localStorage.getItem(AUTH_STORAGE_KEY);
-        return storedAuth === "true";
-    }
-    return false;
-  });
+export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
+  const [user, setUser] = useState<{ name: string, email: string, avatar: string, organization: string } | null>(null);
 
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      localStorage.setItem(AUTH_STORAGE_KEY, String(isAuthenticated));
-    }
-  }, [isAuthenticated]);
-
-  const login = () => {
-    setIsAuthenticated(true);
-  };
-
-  const logout = () => {
-    setIsAuthenticated(false);
-  };
+  const login = (user: { name: string, email: string, avatar: string, organization: string }) => setUser(user);
+  const logout = () => setUser(null);
 
   return (
-    <AuthContext.Provider value={{ isAuthenticated, login, logout }}>
+    <AuthContext.Provider value={{ user, login, logout }}>
       {children}
     </AuthContext.Provider>
   );
-}
+};
 
-export function useAuth() {
-  const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error("useAuth must be used within an AuthProvider");
-  }
-  return context;
-} 
+export const useAuth = () => useContext(AuthContext);

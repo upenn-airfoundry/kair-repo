@@ -14,7 +14,7 @@ uv pip install -r requirements.txt
 
 2. Create a `.env` file with necessary environment variables (copy from `sample.env` in the root directory):
 ```bash
-PORT=8081
+BACKEND_PORT=8081
 ```
 
 ## Running the Server

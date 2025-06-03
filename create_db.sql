@@ -259,6 +259,21 @@ CREATE INDEX figure_type_idx ON indexed_figures USING btree ("figure_type");
 CREATE INDEX figure_embed_idx ON indexed_figures
 USING diskann (figure_embed vector_cosine_ops);
 
+CREATE TABLE users (
+    user_id SERIAL PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS name TEXT;
+
+ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS organization TEXT;
+
+ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS avatar TEXT;
 
 ---------- Some useful views ----------------
 
@@ -307,3 +322,5 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA indexed_tables GRANT SELECT, INSERT, UPDATE, 
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO kair;
 
 grant select, insert, update, delete on all tables in schema indexed_tables to kair;
+
+GRANT USAGE ON SEQUENCE users_user_id_seq TO kair;
