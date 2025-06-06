@@ -3,6 +3,7 @@
 import ChatInput from '@/components/chat-input';
 import { AppSidebar } from '@/components/app-sidebar';
 import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar';
+import { ProtectedRoute } from "@/components/protected-route"
 import {
   Card,
   CardHeader,
@@ -27,6 +28,7 @@ export default function ChatPage() {
   };
 
   return (
+    <ProtectedRoute>
     <SidebarProvider
       style={
         {
@@ -42,7 +44,7 @@ export default function ChatPage() {
           <div className="@container/main flex flex-1 flex-col gap-2">
             <div className="flex-grow p-4 overflow-y-auto border-t space-y-4">
               {messages.length === 0 ? (
-                <p className="text-center text-muted-foreground">Chat messages with KAIR will appear here.</p>
+                <p className="text-center text-muted-foreground">Please enter your first question for KAIR.</p>
               ) : (
                 messages.map((message) => (
                   <div
@@ -69,5 +71,6 @@ export default function ChatPage() {
         </div>
       </SidebarInset>
     </SidebarProvider>
+    </ProtectedRoute>
   );
 }

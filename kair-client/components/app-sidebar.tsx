@@ -1,5 +1,7 @@
 "use client"
 
+import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import { useAuth } from "@/context/auth-context";
 import * as React from "react"
 import {
@@ -55,31 +57,31 @@ const data = {
       url: "/chat",
       icon: IconMessage,
     },
-    {
-      title: "Retriever",
-      url: "/retriever",
-      icon: IconListDetails,
-    },
-    {
-      title: "Crawler",
-      url: "/crawler",
-      icon: IconChartBar,
-    },
-    {
-      title: "Data",
-      url: "/data",
-      icon: IconDatabase,
-    },
+    // {
+    //   title: "Retriever",
+    //   url: "/retriever",
+    //   icon: IconListDetails,
+    // },
+    // {
+    //   title: "Crawler",
+    //   url: "/crawler",
+    //   icon: IconChartBar,
+    // },
+    // {
+    //   title: "Data",
+    //   url: "/data",
+    //   icon: IconDatabase,
+    // },
     {
       title: "Projects",
       url: "/projects",
       icon: IconAffiliate,
     },
-    {
-      title: "Team",
-      url: "/team",
-      icon: IconUsers,
-    },
+    // {
+    //   title: "Team",
+    //   url: "/team",
+    //   icon: IconUsers,
+    // },
   ],
   navClouds: [
     {
@@ -167,6 +169,8 @@ const data = {
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const { user, logout } = useAuth();
+  const [selectedTab, setSelectedTab] = useState<string>("/chat");
+  const pathname = usePathname();
 
   if (user) {
     data.user.email = user.email || data.user.email; // Use the user from context or fallback to default
@@ -174,6 +178,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     data.user.avatar = user.avatar || data.user.avatar; // Use the user from context or fallback to default
     data.user.organization = user.organization || "KAIR"; // Use the user from context or fallback to default
 }
+
+  // Handler to update selected tab
+  const handleTabSelect = (url: string) => {
+    setSelectedTab(url);
+  };
 
   return (
     <Sidebar collapsible="offcanvas" {...props}>
@@ -193,8 +202,15 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
-        <NavMain items={data.navMain} />
-        <NavSecondary items={data.navSecondary} className="mt-auto" />
+        <NavMain
+          items={data.navMain}
+          selectedTab={pathname}
+          onTabSelect={() => {}}
+        />
+        <NavSecondary
+          items={data.navSecondary}
+          className="mt-auto"
+        />
       </SidebarContent>
       <SidebarFooter>
         <NavUser user={data.user} />

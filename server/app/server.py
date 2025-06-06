@@ -366,6 +366,7 @@ def make_app():
         (r"/stop_scheduler", StopSchedulerHandler),
         (r"/api/login", LoginHandler),
         (r"/api/create", CreateAccountHandler),        
+        (r"/api/chat", ExpandSearchHandler),        
     ])
 
 if __name__ == "__main__":
