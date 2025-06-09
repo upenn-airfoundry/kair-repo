@@ -12,6 +12,8 @@ import json
 from datetime import datetime
 from dotenv import load_dotenv, find_dotenv
 
+from apscheduler.schedulers.tornado import TornadoScheduler
+
 # Load environment variables from .env file
 _ = load_dotenv(find_dotenv())
 
@@ -45,6 +47,11 @@ class BaseHandler(tornado.web.RequestHandler):
 
 # Initialize the GraphAccessor
 graph_accessor = GraphAccessor()
+
+# Initialize and start the TornadoScheduler
+scheduler = TornadoScheduler()
+scheduler.add_job(lambda: process_next_task(graph_accessor), 'interval', minutes=1)
+scheduler.start()
 
 class LoginHandler(BaseHandler):
     def post(self):
