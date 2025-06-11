@@ -18,6 +18,8 @@ from langchain_openai.embeddings import OpenAIEmbeddings
 import logging
 
 from dotenv import load_dotenv, find_dotenv
+import hashlib
+from datetime import datetime
 
 # Load environment variables from .env file
 _ = load_dotenv(find_dotenv())
@@ -70,8 +72,8 @@ class GraphAccessor:
             return False
         finally:
             self.conn.rollback()
-        
-    def add_paper(self, url: str, title: str, summary: str) -> int:
+            
+    def add_paper(self, url: str, title: str, summary: str, add_another: bool = False) -> int:
         """Store a paper by URL and return its paper ID."""
         try:
             with self.conn.cursor() as cur:
@@ -82,10 +84,16 @@ class GraphAccessor:
                 if paper_id is not None:
                     paper_id = paper_id[0]
                     
-                    cur.execute("SELECT tag_value FROM entity_tags WHERE entity_id = %s AND tag_name = %s;", (paper_id, "summary"))
+                    cur.execute("SELECT tag_value FROM entity_tags WHERE entity_id = %s AND tag_name = %s and entity_tag_instance = 1;", (paper_id, "summary"))
                     the_tag = cur.fetchone()
                     if the_tag is None:
                         cur.execute ("INSERT INTO entity_tags (entity_id, tag_name, tag_value, tag_embed) VALUES (%s, %s, %s, %s);", (paper_id, "summary", summary, self.generate_embedding(summary)))
+                    elif add_another:
+                        # If we are adding another paper with the same title, first we need the max tag instance
+                        cur.execute("SELECT MAX(entity_tag_instance) FROM entity_tags WHERE entity_id = %s AND tag_name = %s;", (paper_id, "summary"))
+                        existing_tag_instance = cur.fetchone()[0]
+                        new_tag_instance = existing_tag_instance + 1 if existing_tag_instance is not None else 1
+                        cur.execute("INSERT INTO entity_tags (entity_id, tag_name, tag_value, tag_embed, entity_tag_instance) VALUES (%s, %s, %s, %s, %s);", (paper_id, "summary", summary, self.generate_embedding(summary), new_tag_instance))
                 else:            
                     cur.execute("INSERT INTO entities (entity_url, entity_type, entity_name) VALUES (%s, %s, %s) RETURNING entity_id;", (url,'paper',title))
                     paper_id = cur.fetchone()[0]
@@ -129,7 +137,11 @@ class GraphAccessor:
             raise e
     
     def update_paper(self, paper_id: int, url: Optional[str] = None, crawl_time: Optional[str] = None):
-        """Update all fields of a paper given its ID."""
+        """
+        Update all fields of a paper given its ID.
+        
+        Unlike add_paper, we don't update any tags or embeddings associated with the paper.
+        """
         try:
             with self.conn.cursor() as cur:
                 if url is not None:
@@ -144,10 +156,10 @@ class GraphAccessor:
             raise e
 
     def fetch_paper_paragraphs(self, paper_id: int) -> List[str]:
-        """Fetch a paper's paragraphs by paper ID."""
+        """Fetch a paper's paragraphs by paper ID, in order."""
         try:
             with self.conn.cursor() as cur:
-                cur.execute("SELECT entity_detail FROM entities WHERE entity_type = 'paragraph' and entity_parent = %s;", (paper_id,))
+                cur.execute("SELECT entity_detail FROM entities WHERE entity_type = 'paragraph' and entity_parent = %s ORDER BY entity_id;", (paper_id,))
                 paragraphs = [row[0] for row in cur.fetchall()]
             return paragraphs
         except Exception as e:
@@ -224,28 +236,33 @@ class GraphAccessor:
             raise e
         return embedding, paragraph_id
     
-    def add_author(self, name: str, email: str, organization: str) -> int:
-        """Add an author by name and return their author ID."""
-        try:
-            with self.conn.cursor() as cur:
-                # Check if the author already exists
-                cur.execute("SELECT entity_id FROM entities WHERE entity_type = 'author' and entity_name = %s;", (name,))
-                author_id = cur.fetchone()
-                if author_id is None:
-                    # Add the author if they don't exist
-                    cur.execute("INSERT INTO entities (entity_type, entity_name) VALUES (%s, %s) RETURNING entity_id;", ('author', name,))
-                    author_id = cur.fetchone()[0]
-                if email is not None:
-                    cur.execute("UPDATE entities SET entity_contact = %s WHERE entity_id = %s;", (email, author_id))
-                if organization is not None:
-                    cur.execute("UPDATE entities SET entity_detail = %s WHERE entity_id = %s;", (organization, author_id))
-            self.conn.commit()
-        except Exception as e:
-            logging.error(f"Error adding author: {e}")
-            self.conn.rollback()
-            # throw the exception again
-            raise e
-        return author_id
+    # def add_author(self, name: str, email: str, organization: str) -> int:
+    #     """Add an author by name and return their author ID."""
+    #     try:
+    #         with self.conn.cursor() as cur:
+    #             # Check if the author already exists
+    #             cur.execute("SELECT entity_id FROM entities WHERE entity_type = 'author' and entity_name = %s;", (name,))
+    #             author_id = cur.fetchone()
+    #             if author_id is None:
+    #                 # Add the author if they don't exist
+    #                 cur.execute("INSERT INTO entities (entity_type, entity_name) VALUES (%s, %s) RETURNING entity_id;", ('author', name,))
+    #                 author_id = cur.fetchone()[0]
+    #             if email is not None:
+    #                 cur.execute("UPDATE entities SET entity_contact = %s WHERE entity_id = %s;", (email, author_id))
+    #             if organization is not None:
+    #                 cur.execute("UPDATE entities SET entity_detail = %s WHERE entity_id = %s;", (organization, author_id))
+    #         self.conn.commit()
+    #     except Exception as e:
+    #         logging.error(f"Error adding author: {e}")
+    #         self.conn.rollback()
+    #         # throw the exception again
+    #         raise e
+    #     return author_id
+    
+    def add_author_tag(self, paper_id: int, name: str, email: Optional[str] = None, organization: Optional[str] = None) -> int:
+        """Add an author tag to a paper."""
+        self.add_or_update_tag(paper_id, "author", name, add_another=True)
+        
 
     def update_paragraph(self, paragraph_id: int, content: Optional[str] = None, embedding: Optional[List[float]] = None):
         """Update all fields of a paragraph given its ID."""
@@ -262,43 +279,75 @@ class GraphAccessor:
             # throw the exception again
             raise e
             
-    def add_tag_to_paragraph(self, paragraph_id: int, tag: str, tag_value: str):
-        """Add a tag to a paragraph."""
-        try:
-            with self.conn.cursor() as cur:
-                # Check if the tag already exists
-                cur.execute("SELECT tag_value FROM paragraph_tags WHERE paragraph_id = %s AND tag_name = %s;", (paragraph_id, tag))
-                the_tag = cur.fetchone()
-                if the_tag is None:
-                    cur.execute("INSERT INTO paragraph_tags (paragraph_id, tag_name, tag_value) VALUES (%s, %s, %s);", (paragraph_id, tag, tag_value))
-                else:
-                    # Update the tag if it already exists
-                    cur.execute("UPDATE paragraph_tags SET tag_value = %s WHERE paragraph_id = %s AND tag_name = %s;", (tag_value, paragraph_id, tag))
-            self.conn.commit()
-        except Exception as e:
-            logging.error(f"Error adding tag to paragraph: {e}")
-            self.conn.rollback()
-            # throw the exception again
-            raise e
+    # def add_tag_to_paragraph(self, paragraph_id: int, tag: str, tag_value: str):
+    #     """Add a tag to a paragraph."""
+    #     try:
+    #         with self.conn.cursor() as cur:
+    #             # Check if the tag already exists
+    #             cur.execute("SELECT tag_value FROM paragraph_tags WHERE paragraph_id = %s AND tag_name = %s;", (paragraph_id, tag))
+    #             the_tag = cur.fetchone()
+    #             if the_tag is None:
+    #                 cur.execute("INSERT INTO paragraph_tags (paragraph_id, tag_name, tag_value) VALUES (%s, %s, %s);", (paragraph_id, tag, tag_value))
+    #             else:
+    #                 # Update the tag if it already exists
+    #                 cur.execute("UPDATE paragraph_tags SET tag_value = %s WHERE paragraph_id = %s AND tag_name = %s;", (tag_value, paragraph_id, tag))
+    #         self.conn.commit()
+    #     except Exception as e:
+    #         logging.error(f"Error adding tag to paragraph: {e}")
+    #         self.conn.rollback()
+    #         # throw the exception again
+    #         raise e
 
-    def add_tag_to_entity(self, paper_id: int, tag: str, tag_value: str):
-        """Add a tag to a paper."""
+    def add_or_update_tag(self, entity_id: int, tag_name: str, tag_value: str, add_another: bool = True, tag_embed: Optional[List[float]] = None):
+        """Add a tag to an entity.
+
+        Depending on whether add_another is true: if the tag already exists, it will either update the (first) tag value
+        or add another instance of the tag with the new value.
+        """
         try:
             with self.conn.cursor() as cur:
                 # Check if the tag already exists
-                cur.execute("SELECT tag_value FROM entity_tags WHERE entity_id = %s AND tag_name = %s;", (paper_id, tag))
+                new_tag_instance = 1
+                cur.execute("SELECT tag_value FROM entity_tags WHERE entity_id = %s AND tag_name = %s and entity_tag_instance = 1;", (entity_id, tag_name))
                 the_tag = cur.fetchone()
                 if the_tag is None:
-                    cur.execute("INSERT INTO entity_tags (entity_id, tag_name, tag_value) VALUES (%s, %s, %s);", (paper_id, tag, tag_value))
-                else:
+                    cur.execute("INSERT INTO entity_tags (entity_id, tag_name, tag_value, tag_embed) VALUES (%s, %s, %s, %s);", (entity_id, tag_name, tag_value, tag_embed))
+                elif not add_another:
                     # Update the tag if it already exists
-                    cur.execute("UPDATE entity_tags SET tag_value = %s WHERE entity_id = %s AND tag_name = %s;", (tag_value, paper_id, tag))
+                    cur.execute("UPDATE entity_tags SET tag_value = %s WHERE entity_id = %s AND tag_name = %s and entity_tag_instance = 1;", (tag_value, entity_id, tag_name))
+                else:
+                    # If we are adding another paper with the same title, first we need the max tag instance
+                    cur.execute("SELECT MAX(entity_tag_instance) FROM entity_tags WHERE entity_id = %s AND tag_name = %s;", (entity_id, tag_name))
+                    existing_tag_instance = cur.fetchone()[0]
+                    new_tag_instance = existing_tag_instance + 1 if existing_tag_instance is not None else 1
+                    cur.execute("INSERT INTO entity_tags (entity_id, tag_name, tag_value, tag_embed, entity_tag_instance) VALUES (%s, %s, %s, %s, %s);", (entity_id, "summary", tag_value, tag_embed, new_tag_instance))
             self.conn.commit()
+            return new_tag_instance
         except Exception as e:
-            logging.error(f"Error adding tag to entity: {e}")
+            logging.error(f"Error adding tag: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
+            
+
+    # def add_tag_to_entity(self, paper_id: int, tag: str, tag_value: str):
+    #     """Add a tag to a paper."""
+    #     try:
+    #         with self.conn.cursor() as cur:
+    #             # Check if the tag already exists
+    #             cur.execute("SELECT tag_value FROM entity_tags WHERE entity_id = %s AND tag_name = %s;", (paper_id, tag))
+    #             the_tag = cur.fetchone()
+    #             if the_tag is None:
+    #                 cur.execute("INSERT INTO entity_tags (entity_id, tag_name, tag_value) VALUES (%s, %s, %s);", (paper_id, tag, tag_value))
+    #             else:
+    #                 # Update the tag if it already exists
+    #                 cur.execute("UPDATE entity_tags SET tag_value = %s WHERE entity_id = %s AND tag_name = %s;", (tag_value, paper_id, tag))
+    #         self.conn.commit()
+    #     except Exception as e:
+    #         logging.error(f"Error adding tag to entity: {e}")
+    #         self.conn.rollback()
+    #         # throw the exception again
+    #         raise e
 
     def find_paragraphs_by_tag(self, tag: str) -> List[int]:
         """Find all paragraph matches to a tag."""
@@ -1023,3 +1072,87 @@ class GraphAccessor:
             self.conn.rollback()
             # throw the exception again
             raise e
+        
+    def cache_page(self, url: str, text: str):
+        """
+        Cache a page's contents in the crawl_cache table with a SHA-256 hash and timestamp.
+
+        Args:
+            url (str): The URL of the page.
+            text (str): The text contents of the page.
+        """
+        try:
+            text_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()
+            timestamp = datetime.utcnow()
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO crawl_cache (url, content, digest, created_at)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (url) DO UPDATE
+                    SET content = EXCLUDED.content,
+                        digest = EXCLUDED.digest,
+                        created_at = EXCLUDED.created_at;
+                    """,
+                    (url, text, text_hash, timestamp)
+                )
+            self.conn.commit()
+        except Exception as e:
+            logging.error(f"Error caching page: {e}")
+            self.conn.rollback()
+            raise e
+        
+    def is_page_in_cache(self, url: str, text: str) -> bool:
+        """
+        Check if the given URL and text content are already cached with the same hash.
+
+        Args:
+            url (str): The URL of the page.
+            text (str): The text contents of the page.
+
+        Returns:
+            bool: True if the cached content matches, False otherwise.
+        """
+        try:
+            text_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT 1 FROM crawl_cache WHERE digest = %s;",
+                    (text_hash,)
+                )
+                result = cur.fetchone()
+                if result:
+                    return True
+            return False
+        except Exception as e:
+            logging.error(f"Error checking page in cache: {e}")
+            self.conn.rollback()
+            return False
+        
+
+    def is_recently_cached(self, url: str) -> bool:
+        """
+        Check if the given URL is cached with a created_at timestamp within the last 1 hour.
+
+        Args:
+            url (str): The URL of the page.
+
+        Returns:
+            bool: True if the URL was cached within the last hour, False otherwise.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT 1 FROM crawl_cache
+                    WHERE url = %s AND created_at >= (NOW() AT TIME ZONE 'UTC') - INTERVAL '1 hour'
+                    LIMIT 1;
+                    """,
+                    (url,)
+                )
+                result = cur.fetchone()
+                return result is not None
+        except Exception as e:
+            logging.error(f"Error checking if URL is recently cached: {e}")
+            self.conn.rollback()
+            return False

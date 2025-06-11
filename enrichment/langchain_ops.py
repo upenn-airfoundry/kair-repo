@@ -103,7 +103,7 @@ def entity_annotator(entity_id: str, expression: AssessmentOps):
             raise ValueError("Invalid result")
         
         # Store the result in the database
-        expression.graph_accessor.add_tag_to_entity(entity_id, parsed_result)
+        expression.graph_accessor.add_or_update_tag(entity_id, parsed_result)
 
 
     

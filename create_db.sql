@@ -74,6 +74,7 @@ CREATE TYPE entity_types AS ENUM ('synopsis',
                                   'event',
                                   'result');
 
+ALTER TYPE entity_types ADD VALUE IF NOT EXISTS 'google_scholar_profile';
 -- Data is "chunked" into hierarchies of entities.
 -- An entity can be a synopsis, fact, new concept, claim, author, organization,
 -- tag, paper, section, paragraph, table, hypothesis, source, method, event,
@@ -116,7 +117,7 @@ USING diskann (entity_embed vector_cosine_ops);
 
 CREATE INDEX entity_keyword_idx ON entities USING GIN (to_tsvector('english', entity_detail));
 
--- Rename to assocation?
+-- Rename to association?
 CREATE TABLE entity_link(
     from_id INTEGER,
     to_id INTEGER,
@@ -140,6 +141,13 @@ CREATE TABLE entity_tags(
     PRIMARY KEY (entity_id, tag_name),
     FOREIGN KEY (entity_id) REFERENCES entities(entity_id) ON DELETE CASCADE
 );
+
+ALTER TABLE entity_tags
+    ADD COLUMN entity_tag_instance INTEGER DEFAULT 1;
+
+ALTER TABLE entity_tags
+    DROP CONSTRAINT entity_tags_pkey,
+    ADD PRIMARY KEY (entity_id, entity_tag_instance, tag_name);
 
 CREATE INDEX entity_tag_idx ON entity_tags(tag_name);
 CREATE INDEX entity_tag_val_idx ON entity_tags(tag_value);
@@ -266,6 +274,17 @@ CREATE TABLE users (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE crawl_cache (
+    cache_id SERIAL PRIMARY KEY,
+    url TEXT NOT NULL UNIQUE,
+    content TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    digest TEXT NOT NULL UNIQUE
+);
+
+ALTER TABLE crawl_cache
+    ADD COLUMN IF NOT EXISTS extracted_json JSON;
+
 ALTER TABLE users
     ADD COLUMN IF NOT EXISTS name TEXT;
 
@@ -324,3 +343,15 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE O
 grant select, insert, update, delete on all tables in schema indexed_tables to kair;
 
 GRANT USAGE ON SEQUENCE users_user_id_seq TO kair;
+
+GRANT USAGE ON SEQUENCE crawl_queue_id_seq TO kair;
+GRANT USAGE ON SEQUENCE strategies_strategy_id_seq TO kair;
+GRANT USAGE ON SEQUENCE entities_entity_id_seq TO kair;
+GRANT USAGE ON SEQUENCE assessment_criteria_criteria_id_seq TO kair;
+GRANT USAGE ON SEQUENCE association_criteria_association_criteria_id_seq TO kair;
+GRANT USAGE ON SEQUENCE task_queue_task_id_seq TO kair;
+GRANT USAGE ON SEQUENCE indexed_documents_document_id_seq TO kair;
+GRANT USAGE ON SEQUENCE indexed_tables_table_id_seq TO kair;
+GRANT USAGE ON SEQUENCE indexed_figures_figure_id_seq TO kair;
+GRANT USAGE ON SEQUENCE crawl_cache_cache_id_seq TO kair;
+GRANT USAGE ON SEQUENCE indexed_tables_table_id_seq TO kair;

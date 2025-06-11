@@ -19,6 +19,7 @@ _ = load_dotenv(find_dotenv())
 
 from graph_db import GraphAccessor
 from enrichment.iterative_enrichment import process_next_task, iterative_enrichment
+from enrichment.seed_lists import consult_person_seeds
 from entities.generate_doc_info import parse_files_and_index
 from enrichment.langchain_ops import AssessmentOps
 from crawl.web_fetch import fetch_and_crawl_frontier
@@ -50,6 +51,8 @@ graph_accessor = GraphAccessor()
 
 # Initialize and start the TornadoScheduler
 scheduler = TornadoScheduler()
+scheduler.configure(timezone="US/Eastern")
+scheduler.add_job(lambda: consult_person_seeds(graph_accessor))
 scheduler.add_job(lambda: process_next_task(graph_accessor), 'interval', minutes=1)
 scheduler.start()
 

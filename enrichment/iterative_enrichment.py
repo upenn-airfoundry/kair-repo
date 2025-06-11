@@ -53,11 +53,11 @@ def enrich_entities(graph_accessor: GraphAccessor, task: str, entity_set: List[i
 
                 if len(result) == 0:
                     print(f"Criterion {name} is empty for paper {paper['entity_id']}")
-                    graph_accessor.add_tag_to_entity(paper['entity_id'], name, None)
+                    graph_accessor.add_or_update_tag(paper['entity_id'], name, None)
                     continue
                 
                 ret += result[name]
-                graph_accessor.add_tag_to_entity(paper['entity_id'], name, result[name])
+                graph_accessor.add_or_update_tag(paper['entity_id'], name, result[name])
                 
     return ret                
 
