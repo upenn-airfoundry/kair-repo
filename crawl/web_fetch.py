@@ -8,17 +8,16 @@ import requests
 import pandas as pd
 import json
 import hashlib
-from urllib.parse import urlparse
+from urllib.parse import quote_plus, urlparse
 import time
 import os
 from graph_db import GraphAccessor
 
 import logging
 from datetime import datetime
-
-#from pennsieve import get_dataset_metadata
-
 from dotenv import load_dotenv, find_dotenv
+from grobid_client.grobid_client import GrobidClient # Note the module structure
+
 _ = load_dotenv(find_dotenv())
 
 from crawl.crawler_queue import add_to_crawled
@@ -28,6 +27,10 @@ graph_db = GraphAccessor()
 
 # Directory to save downloaded PDFs
 DOWNLOADS_DIR = os.getenv("PDF_PATH", os.path.expanduser("~/Downloads"))
+GROBID_SERVER = os.getenv("GROBID_SERVER", "http://localhost:8070")
+
+grobid_client = GrobidClient(grobid_server=GROBID_SERVER)
+
 
 # make a request and wait for it to redirect
 def get_redirected_url(doi_url):
@@ -239,6 +242,16 @@ def fetch_and_crawl_frontier(downloads_dir: str = DOWNLOADS_DIR):
                 with open(filename, "wb") as pdf_file:
                     pdf_file.write(response.content)
                     
+                grobid_client.process(
+                    service="processFulltextDocument",
+                    input_path=downloads_dir,
+                    output=downloads_dir + "/tei_xml",
+                    # n=10, # Optional: number of concurrent threads, default is usually number of CPU cores
+                    # force=True, # Optional: force reprocessing of existing files
+                    # tei_coordinates=True, # Optional: to include coordinates in the TEI XML
+                    # segment_sentences=True, # Optional: to segment sentences
+                )
+                    
                 if add_to_crawled(crawl_id, ext_file):  # Mark this PDF as crawled in the database
                     logging.info(f"Successfully crawled and saved: {url} to {ext_file}")
 
@@ -249,3 +262,56 @@ def fetch_and_crawl_frontier(downloads_dir: str = DOWNLOADS_DIR):
 
     graph_db.commit()
     
+def searchapi_for_authorid(author_id: str, searchapi_key: str) -> dict:
+    """
+    Search Google Scholar for author profiles using SearchAPI.
+
+    Args:
+        author_id (str): The name of the author to search for.
+        searchapi_key (str): The API key for SearchAPI.
+
+    Returns:
+        author profile info
+    """
+    url = "https://www.searchapi.io/api/v1/search"
+    params = {
+        "engine": "google_scholar_author",
+        "author_id": author_id,
+        "api_key": searchapi_key
+    }
+
+    try:
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        data = response.json()
+        return data
+    except Exception as e:
+        print(f"Error searching for author '{author_id}': {e}")
+        return []
+
+def searchapi_for_author(author_name: str, searchapi_key: str) -> List[dict]:
+    """
+    Search Google Scholar for author profiles using SearchAPI.
+
+    Args:
+        author_id (str): The name of the author to search for.
+        searchapi_key (str): The API key for SearchAPI.
+
+    Returns:
+        list: A list of author profile dictionaries, or an empty list if none found.
+    """
+    url = "https://www.searchapi.io/api/v1/search"
+    params = {
+        "engine": "google_scholar",
+        "q": f'author:{quote_plus(author_name)}',
+        "api_key": searchapi_key
+    }
+
+    try:
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        data = response.json()
+        return data.get("profiles", [])
+    except Exception as e:
+        print(f"Error searching for author '{author_name}': {e}")
+        return []

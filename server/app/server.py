@@ -280,7 +280,9 @@ class AddAssessmentCriterionHandler(BaseHandler):
 class AddEnrichmentHandler(BaseHandler):
     def post(self):
         try:
-            iterative_enrichment(graph_accessor)
+            data = self.get_json()
+            name = data.get('name')
+            iterative_enrichment(graph_accessor, name)
             self.write({"message": "All enrichment tasks queued"})
         except Exception as e:
             self.set_status(500)
