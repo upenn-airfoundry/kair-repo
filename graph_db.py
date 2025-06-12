@@ -6,6 +6,7 @@
 ## Copyright (C) Zachary G. Ives, 2025
 ##################
 
+import json
 import psycopg2
 from psycopg2.extras import execute_values
 import os
@@ -199,7 +200,37 @@ class GraphAccessor:
             self.conn.rollback()
             return False
 
-        
+
+    def add_person_info_page(self, url: str, name: str, category: str, text: str):
+        """
+        Adds a person's info page as an entity of type 'source' to the entities table.
+
+        Args:
+            url (str): The URL of the page.
+            name (str): The person's name.
+            category (str): The category (will be stored in entity_contact).
+            text (str): The text content (will be stored in entity_detail).
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO entities (entity_type, entity_name, entity_url, entity_detail, entity_contact)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (entity_type, entity_name, entity_url)
+                    DO UPDATE SET
+                        entity_detail = EXCLUDED.entity_detail,
+                        entity_contact = EXCLUDED.entity_contact
+                    RETURNING entity_id;
+                    """,
+                    ('source', name, url, text, category)
+                )
+            self.conn.commit()
+        except Exception as e:
+            logging.error(f"Error adding person info page: {e}")
+            self.conn.rollback()
+            raise e
+                
     def add_person(self, url: str, source_type: str, name: str, affiliation: str, author_json, disambiguator: Optional[str] = None) -> int:
         """
         Add an author with a name and an optional disambiguating identifier.
@@ -220,7 +251,7 @@ class GraphAccessor:
         try:
             with self.conn.cursor() as cur:
                 # Check if the author already exists
-                cur.execute(f"SELECT {self.schema}.entity_id FROM {self.schema}.entities WHERE entity_type = 'author' AND entity_name = %s;", (full_name,))
+                cur.execute(f"SELECT entity_id FROM {self.schema}.entities WHERE entity_type = 'author' AND entity_name = %s;", (full_name,))
                 author_id = cur.fetchone()
 
                 if author_id is not None:
@@ -1192,6 +1223,42 @@ class GraphAccessor:
             self.conn.rollback()
             raise e
         
+    def cache_page_and_results(self, url: str, text: str, results: str):
+        """
+        Cache a page's contents and results in the crawl_cache table with a SHA-256 hash, timestamp, and extracted_json.
+
+        Args:
+            url (str): The URL of the page.
+            text (str): The text contents of the page.
+            results (str): The results string to store in extracted_json (should be JSON-serializable).
+        """
+        try:
+            text_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()
+            timestamp = datetime.utcnow()
+            # Try to parse results as JSON, otherwise store as string
+            try:
+                extracted_json = json.loads(results)
+            except Exception:
+                extracted_json = results
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO crawl_cache (url, content, digest, created_at, extracted_json)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (url) DO UPDATE
+                    SET content = EXCLUDED.content,
+                        digest = EXCLUDED.digest,
+                        created_at = EXCLUDED.created_at,
+                        extracted_json = EXCLUDED.extracted_json;
+                    """,
+                    (url, text, text_hash, timestamp, json.dumps(extracted_json))
+                )
+            self.conn.commit()
+        except Exception as e:
+            logging.error(f"Error caching page and results: {e}")
+            self.conn.rollback()
+            raise e
+        
     def is_page_in_cache(self, url: str, text: str) -> bool:
         """
         Check if the given URL and text content are already cached with the same hash.
@@ -1246,3 +1313,37 @@ class GraphAccessor:
             logging.error(f"Error checking if URL is recently cached: {e}")
             self.conn.rollback()
             return False
+        
+    def get_cached_output(self, url: str, text: str) -> Optional[dict]:
+        """
+        Check if the given URL and text content are already cached with the same hash.
+        If so, return the extracted_json as a dictionary object.
+
+        Args:
+            url (str): The URL of the page.
+            text (str): The text contents of the page.
+
+        Returns:
+            Optional[dict]: The extracted_json field as a dictionary if present and matching, else None.
+        """
+        try:
+            text_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT extracted_json FROM crawl_cache WHERE url = %s AND digest = %s;",
+                    (url, text_hash)
+                )
+                result = cur.fetchone()
+                if result and result[0]:
+                    # If extracted_json is not None, parse and return as dict
+                    if isinstance(result[0], dict):
+                        return result[0]
+                    try:
+                        return json.loads(result[0])
+                    except Exception:
+                        return None
+            return None
+        except Exception as e:
+            logging.error(f"Error getting cached output: {e}")
+            self.conn.rollback()
+            return None

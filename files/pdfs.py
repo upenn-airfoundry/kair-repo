@@ -16,27 +16,27 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.schema import Document
 from langchain_community.document_loaders.blob_loaders import FileSystemBlobLoader
-from langchain_core.document_loaders import Blob
-from langchain_community.document_loaders.generic import GenericLoader
-from langchain_community.document_loaders.parsers import GrobidParser
+# from langchain_core.document_loaders import Blob
+# from langchain_community.document_loaders.generic import GenericLoader
+# from langchain_community.document_loaders.parsers import GrobidParser
 from langchain_core.documents import Document
-from grobid_client.grobid_client import GrobidClient # Note the module structure
+# from grobid_client.grobid_client import GrobidClient # Note the module structure
 
 
 from aryn_sdk.partition import partition_file
 
-from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate
+# from langchain_openai import ChatOpenAI
+# from langchain_core.prompts import ChatPromptTemplate
 
 from dotenv import load_dotenv, find_dotenv
 
 _ = load_dotenv(find_dotenv())
 
 DOWNLOAD_DIR = os.getenv("PDF_PATH", os.path.expanduser("~/Downloads"))
-GROBID_SERVER = os.getenv("GROBID_SERVER", "http://localhost:8070")
+# GROBID_SERVER = os.getenv("GROBID_SERVER", "http://localhost:8070")
 
-parser = GrobidParser(segment_sentences=False, grobid_server=GROBID_SERVER)
-grobid = GrobidClient(grobid_server=GROBID_SERVER)
+# parser = GrobidParser(segment_sentences=False, grobid_server=GROBID_SERVER)
+# grobid = GrobidClient(grobid_server=GROBID_SERVER)
 
 def get_pdf_splits(pdf_path: str, method: int, dir) -> list:
     """

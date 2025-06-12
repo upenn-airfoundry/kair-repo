@@ -108,6 +108,10 @@ ALTER TABLE entities
 ALTER TABLE entities
     ADD FOREIGN KEY (supporting_evidence) REFERENCES entities(entity_id) ON DELETE CASCADE;
 
+ALTER TABLE entities
+    DROP CONSTRAINT unique_entities;
+ALTER TABLE entities
+    ADD CONSTRAINT unique_entities UNIQUE(entity_type, entity_name, entity_url);
 
 CREATE INDEX entity_name_idx ON entities USING btree ("entity_name");
 CREATE INDEX entity_type_idx ON entities USING btree ("entity_type");

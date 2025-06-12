@@ -27,3 +27,4 @@ lxml
 hurry.filesize
 bcrypt
 grobid-client-python
+langchain-google-vertexai

@@ -1,109 +1,10 @@
 from graph_db import GraphAccessor
 import os
 import yaml
-import requests
 import json
-from enrichment.llms import analysis_llm
-from prompts.prompt_for_documents import extract_faculty_from_html
-from prompts.prompt_for_documents import get_page_info
 from prompts.prompt_for_documents import is_about
 
-def get_person_subpage_from_directory(graph_accessor: GraphAccessor, url: str, name: str, visited: set, force: bool = True):
-    """
-    Fetches a person's subpage from a directory and processes it.
-    
-    :param graph_accessor: An instance of GraphAccessor to interact with the graph database.
-    :param url: The URL of the person's subpage.
-    """
-    response = requests.get(url)
-    content = response.text
-
-    if force or not graph_accessor.is_page_in_cache(url, content):
-        graph_accessor.cache_page(url, content)
-        
-        visited.add(url)
-        
-        # parse with GPT, summarize
-        page_info = get_page_info(content, name)
-        
-        print(url + " - " + name)
-        print(json.dumps(page_info, indent=2, ensure_ascii=False))
-        
-        if page_info.get("category") == "other":
-            # If the page is categorized as 'other', we might want to skip it or handle it differently
-            print(f"Skipping {url} as it is categorized as 'other'.")
-            return
-
-def get_person_page_from_directory(graph_accessor: GraphAccessor, url: str, name: str, visited: set, force: bool = True, google_scholar: str = None):
-    """
-    Fetches a person's page from a directory and processes it.  Also looks for links to subpages.
-    
-    :param graph_accessor: An instance of GraphAccessor to interact with the graph database.
-    :param url: The URL of the person's page.
-    :param name: The name of the person.
-    :param
-        google_scholar: Optional; the Google Scholar profile URL of the person.
-    """
-    response = requests.get(url)
-    content = response.text
-
-    if force or not graph_accessor.is_page_in_cache(url, content):
-        graph_accessor.cache_page(url, content)
-        
-        visited.add(url)
-        page_info = get_page_info(content, name)
-        
-        print(url + " - " + name)
-        print(json.dumps(page_info, indent=2, ensure_ascii=False))
-        
-        # TODO: get entry on the author (by Google Scholar ID or canonical name)
-        # Summarize the current page
-        # If there is an existing summary,
-        # concatenate the existing entry with the new information on the page 
-        # summarize
-        # Then update the graph with the new information
-        
-        if page_info.get("category") == "other":
-            return []
-        
-        for subpage in page_info.get("outgoing_links", []):
-            if subpage['url'] in visited:
-                print(f"Already visited {subpage['url']}, skipping.")
-            elif subpage['category'] == 'organizational directory page for a person' or subpage['category'] == 'personal or professional homepage':
-                # Recursively call on pages that are categorized as:
-                # - "organizational directory page for a person",
-                # - "personal or professional homepage"
-                return get_person_page_from_directory(graph_accessor, subpage['url'], name, visited, force, google_scholar)
-            elif subpage['category'] != 'other':
-                get_person_subpage_from_directory(graph_accessor, subpage['url'], name, visited, force)
-        
-    # TODO: parse with GPT, see if it has links to outgoing pages for research sites, personal pages, Google Scholar, etc.
-    
-    # Identify projects
-    # Identify any links to projects
-    # Identify papers and any links to papers
-
-def consult_person_directory_page(graph_accessor: GraphAccessor, url: str, force: bool = True) -> list:
-    """
-    Gets a directory page from a department and finds the relevant people, which are then processed.
-
-    Args:
-        graph_accessor (GraphAccessor): Database accessor for graph operations.
-        url (str): URL of the directory page to consult.
-    """
-    response = requests.get(url)
-    content = response.text
-
-    if force or not graph_accessor.is_page_in_cache(url, content):
-        graph_accessor.cache_page(url, content)
-    
-        # parse with GPT, do structured output to the schema
-        faculty_list = extract_faculty_from_html(content)
-        
-        return faculty_list
-    else:
-        # If the page is already cached, return an empty list
-        return {'faculty': []}
+from crawl.web_fetch import get_person_page_from_directory, consult_person_directory_page
 
 def consult_person_seeds(graph_accessor: GraphAccessor, force: bool = True):
     """Go through the "seed lists" of people directories.
@@ -120,18 +21,24 @@ def consult_person_seeds(graph_accessor: GraphAccessor, force: bool = True):
         if not graph_accessor.is_page_in_cache("internal://starting_points/people.yaml", content):
             graph_accessor.cache_page("internal://starting_points/people.yaml", content)
         for url in seeds:
-            faculty_list = consult_person_directory_page(graph_accessor, url)
+            graph_accessor.add_task_to_queue(
+                "search:member_directory",
+                url,
+                "consult_person_directory",
+                json.dumps([url])
+            )
+            # faculty_list = consult_person_directory_page(graph_accessor, url)
             
-            # Get the subpages of each person, if they exist
-            for faculty in faculty_list['faculty']:
-                homepage = faculty.get("homepage")
-                name = faculty.get("name")
-                google_scholar = faculty.get("google_scholar")
-                if google_scholar and is_about(google_scholar, name):
-                    uuid = google_scholar.split('=')[-1]
-                else:
-                    # Get homepage tld from url:
-                    uuid = url.split('//')[-1].split('/')[0] + "/" + name.replace(" ", "_").lower()
-                visited = set()
-                if homepage:
-                    get_person_page_from_directory(graph_accessor, homepage, name, visited, force, uuid)
+            # # Get the subpages of each person, if they exist
+            # for faculty in faculty_list['faculty']:
+            #     homepage = faculty.get("homepage")
+            #     name = faculty.get("name")
+            #     google_scholar = faculty.get("google_scholar")
+            #     if google_scholar and is_about(google_scholar, name):
+            #         uuid = google_scholar.split('=')[-1]
+            #     else:
+            #         # Get homepage tld from url:
+            #         uuid = url.split('//')[-1].split('/')[0] + "/" + name.replace(" ", "_").lower()
+            #     visited = set()
+            #     if homepage:
+            #         get_person_page_from_directory(graph_accessor, homepage, name, visited, force, uuid)

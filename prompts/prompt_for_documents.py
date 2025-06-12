@@ -17,7 +17,7 @@ from langchain.chains import create_extraction_chain
 
 import pandas as pd
 
-from enrichment.llms import analysis_llm, better_llm
+from enrichment.llms import analysis_llm, better_llm, structured_analysis_llm
 from files.tables import sample_rows_to_string
 
 # Define the Pydantic Model
@@ -227,6 +227,8 @@ def extract_faculty_from_html(html_content: str) -> dict:
             Look for common class names like 'faculty-member', 'person-profile', 'directory-entry', or similar patterns.
             Within each person's section, you will find their name (often in a heading tag like `<h2>` or `<h3>`), 
             their title, contact information (email, phone), and links to their homepage, profile page, or publications.
+            Their name may have a hyperlink to their personal or lab homepage, and they may have a Google Scholar profile link,
+            which can be determined by looking at the URL.
             
             Extract a list of all faculty members you can find in the provided HTML.
             
@@ -244,11 +246,14 @@ def extract_faculty_from_html(html_content: str) -> dict:
     #     prompt=prompt_template
     # )
     # Use with_structured_output to create the structured LLM
-    structured_llm = analysis_llm.with_structured_output(FacultyList)
+    structured_llm = structured_analysis_llm.with_structured_output(FacultyList)
     extraction_chain = prompt_template | structured_llm
     # Run the extraction chain on the text content.
     extracted_data = extraction_chain.invoke({"html_content": html_content})
-    ret_data = extracted_data.model_dump()
+    if extracted_data is not None:
+        ret_data = extracted_data.model_dump()
+    else:
+        ret_data = {"faculty": []}
 
     return ret_data
 
@@ -316,7 +321,10 @@ def get_page_info(html_content: str, name: str) -> dict:
     extraction_chain = prompt_template | structured_llm
     # Run the extraction chain on the text content.
     extracted_data = extraction_chain.invoke({"html_content": html_content})
-    ret_data = extracted_data.model_dump()
+    if extracted_data is not None:
+        ret_data = extracted_data.model_dump()
+    else:
+        ret_data = {}
 
     return ret_data
 
