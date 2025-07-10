@@ -50,9 +50,34 @@ def load_arxiv_abstracts(jsonl_path="starting_points/arxiv-metadata-oai-snapshot
                     #last, first, _ = author
                     full_name = f"{first} {last}".strip()
                     accessor.add_author_tag(paper_id, full_name)
+                    
+                classify_arxiv_from_json(row)
             except Exception as e:
                 print(f"Error processing row: {e}")
-                
+    
+def classify_arxiv_from_json(row: dict) -> str | None:
+    """
+    Classifies a single arXiv paper JSON row and returns the classification.
+    """
+    url = "https://arxiv.org/pdf/" + row.get("id", "").strip()
+    paper_ids = GraphAccessor().get_entity_ids_by_url(url, type='paper')
+    
+    if not paper_ids:
+        return None  # No paper found for this URL
+    
+    the_class = classify_json(row) # type: ignore
+    
+    if the_class:
+        print(f"Classifying arXiv paper {row.get('title', '')} ({row.get('id', '')}) as {the_class}")
+        GraphAccessor().add_or_update_tag(
+            paper_ids[0], 
+            "field", 
+            the_class, 
+            add_another=False
+        )
+    
+    return the_class
+            
 def classify_arxiv_categories(jsonl_path="starting_points/arxiv-metadata-oai-snapshot.json"):
     """
     Loads arXiv abstracts from a JSONL file and inserts papers and tags into the database.

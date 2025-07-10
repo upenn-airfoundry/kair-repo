@@ -11,6 +11,7 @@ import hashlib
 from urllib.parse import parse_qs, quote_plus, urlparse
 import time
 import os
+from google.cloud import storage
 from graph_db import GraphAccessor
 
 import logging
@@ -715,3 +716,49 @@ def scholar_search_gscholar_by_id(graph_accessor: GraphAccessor, author_id: str,
     except Exception as e:
         print(f"Error adding author {name} (ID: {author_id}) to the database: {e}")
 
+def fetch_pdf_from_arxiv_repo(arxiv_path, local_download_path=DOWNLOADS_DIR):
+    """
+    Fetches an arXiv PDF from Google Cloud Storage bucket gs://arxiv-dataset/arxiv.
+    
+    Args:
+        arxiv_id (str): The arXiv paper ID (e.g., "0704.0001")
+        local_download_path (str, optional): Local path to save the PDF. If None, saves to current directory.
+    
+    Returns:
+        str: Path to the downloaded PDF file, or None if not found
+    """
+    client = storage.Client()
+    bucket = client.bucket("arxiv-dataset")
+    
+    # Try different possible paths for the PDF
+    possible_paths = [
+        f"arxiv/pdf/{arxiv_path}.pdf",
+        f"arxiv/{arxiv_path}.pdf",
+        f"pdf/{arxiv_path}.pdf"
+    ]
+    
+    # Also try with category subdirectories (common arXiv categories)
+    categories = ["hep-th", "hep-ph", "cond-mat", "astro-ph", "math", "cs", "physics", "quant-ph", "stat", "patt-sol", "gr-qc", "nucl-th", "hep-ex", "hep-lat"]
+    for category in categories:
+        possible_paths.extend([
+            f"arxiv/pdf/{category}/{arxiv_path}.pdf",
+            f"pdf/{category}/{arxiv_path}.pdf"
+        ])
+    
+    # Set default local path if not provided
+    if local_download_path is None:
+        local_download_path = f"{arxiv_path}.pdf"
+    
+    # Try each possible path
+    for path in possible_paths:
+        try:
+            blob = bucket.blob(path)
+            if blob.exists():
+                blob.download_to_filename(local_download_path)
+                print(f"Downloaded {arxiv_path} from {path}")
+                return local_download_path
+        except Exception as e:
+            continue  # Try next path
+    
+    print(f"PDF not found for arXiv ID: {arxiv_path}")
+    return None
