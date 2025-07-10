@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useAuth } from "@/context/auth-context"; // Import the useAuth hook
 import Link from "next/link";
+import Image from 'next/image'
 
 export function LoginForm({
   className,
@@ -46,7 +47,7 @@ export function LoginForm({
 
       if (response.ok && data.success) {
         login({ "name": data.user.name, "email": email, "organization": data.user.organization, "avatar": data.user.avatar }); // Call login function from context
-        router.push('/dashboard'); // Redirect to /dashboard
+        router.push('/chat'); // Redirect to /dashboard
       } else {
         setError(data.message || "Login failed. Please try again.");
       }
@@ -61,6 +62,14 @@ export function LoginForm({
   return (
     <div className={cn("flex flex-col gap-6", className)} {...props}>
       <Card>
+        <div className="flex justify-center items-center py-6 border-b">
+          <Image
+            src="/images/airfoundry-logo.png"
+            width="234"
+            height="65"
+            alt="Airfoundry Logo"
+          />
+        </div>
         <CardHeader>
           <CardTitle>Login to your account</CardTitle>
           <CardDescription>

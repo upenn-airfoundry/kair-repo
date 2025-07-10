@@ -35,12 +35,17 @@ grobid_client = None
 # Need a signature.
 #   graph_accessor, url, target, force, qualifier
 search_strategies = {
-    "search:google_scholar_author": lambda graph_accessor, author_name, provenance, force: scholar_search_gscholar_profiles(graph_accessor, author_name, provenance, force),
-    "search:google_scholar_authorid": lambda graph_accessor, author_id, provenance, force: scholar_search_gscholar_by_id(graph_accessor, author_id, provenance, force),    
-    "search:member_directory": lambda graph_accessor, url, provenance, force: consult_person_directory_page(graph_accessor, url, provenance, force),
-    "search:member_directorypage": lambda graph_accessor, url, provenance, force: get_person_page_from_directory(graph_accessor, url, provenance, force),
+    "search:google_scholar_author": 
+        lambda graph_accessor, author_name, provenance, force: scholar_search_gscholar_profiles(graph_accessor, author_name, provenance, force),
+    "search:google_scholar_authorid": 
+        lambda graph_accessor, author_id, provenance, force: scholar_search_gscholar_by_id(graph_accessor, author_id, provenance, force),    
+    "search:member_directory": 
+        lambda graph_accessor, url, provenance, force: consult_person_directory_page(graph_accessor, url, provenance, force),
+    "search:member_directorypage": 
+        lambda graph_accessor, url, provenance, force: get_person_page_from_directory(graph_accessor, url, provenance, force),
     
-    "search:member_subpage": lambda graph_accessor, url, name, provenance, force: get_person_subpage_from_directory(graph_accessor, url, name, provenance, force)
+    "search:member_subpage": 
+        lambda graph_accessor, url, provenance, force: get_person_subpage_from_directory(graph_accessor, url, provenance, force)
     
 }
 
@@ -162,7 +167,8 @@ def get_pdf_frontiersin(url, filename):
         'fnana': 'neuroanatomy',
         'fcell': 'cell-and-developmental-biology'
     }
-    url = 'https://www.frontiersin.org/journals/' + journal_abbr_map.get(journal_abbr, journal_abbr) + '/articles/' + article_id + '/pdf'
+    if journal_abbr:
+        url = 'https://www.frontiersin.org/journals/' + journal_abbr_map.get(journal_abbr, journal_abbr) + '/articles/' + article_id + '/pdf' # type: ignore
     response = requests.get(url)
     if response.status_code == 200:
         with open(filename, "wb") as file:
@@ -231,7 +237,7 @@ def fetch_and_crawl_frontier(downloads_dir: str = DOWNLOADS_DIR):
     rows = get_urls_to_crawl()
 
     for row in rows:
-        crawl_id = row['id']
+        crawl_id = int(row['id'])
         url = row['url']
         try:
             if url.startswith('file://'):
@@ -309,7 +315,7 @@ def searchapi_for_authorid(author_id: str, searchapi_key: str) -> dict:
         return data
     except Exception as e:
         print(f"Error searching for author '{author_id}': {e}")
-        return []
+        return {}
 
 def searchapi_for_author(author_name: str, searchapi_key: str) -> list[dict]:
     """
@@ -355,6 +361,7 @@ def consult_person_directory_page(graph_accessor: GraphAccessor, url: str, prove
     provenance.append(url)
 
     faculty_list = []
+    force = True
     if force or not graph_accessor.is_page_in_cache(url, content):
         faculty_list = extract_faculty_from_html(content)
         graph_accessor.cache_page_and_results(url, content, json.dumps(faculty_list, ensure_ascii=False))
@@ -365,7 +372,13 @@ def consult_person_directory_page(graph_accessor: GraphAccessor, url: str, prove
         
     if not faculty_list:
         print(f"No faculty information found on the page: {url}")
-        return {'faculty': []}
+        return [{'faculty': []}]
+    
+    # graph_accessor.add_person_info_page(
+    #     url,
+    #     name,
+    #     "organizational directory page for a person",
+    #     content)
         
     # Follow up by requesting searches of the linked personal pages
     for faculty in faculty_list.get('faculty', []):
@@ -380,10 +393,16 @@ def consult_person_directory_page(graph_accessor: GraphAccessor, url: str, prove
         provenance.append(name)
         # If the homepage is not provided, we can use the Google Scholar profile
         if not homepage and google_scholar:
-            homepage = google_scholar
+            parsed = urlparse(google_scholar)
+            query = parsed.query
+            qs = parse_qs(query)
+            scholar_id = qs.get('user', [None])[0]
+            if not scholar_id:
+                print(f"Could not extract Google Scholar ID from URL: {google_scholar}")
+                continue
             graph_accessor.add_task_to_queue(
                 'search:google_scholar_authorid',
-                homepage,
+                scholar_id,
                 f"Fetch the Google Scholar page for {name} from Google Scholar profile.",
                 json.dumps(provenance)
             )
@@ -396,9 +415,16 @@ def consult_person_directory_page(graph_accessor: GraphAccessor, url: str, prove
             )
             if google_scholar:
                 # If a Google Scholar profile is provided, queue it for processing
+                parsed = urlparse(google_scholar)
+                query = parsed.query
+                qs = parse_qs(query)
+                scholar_id = qs.get('user', [None])[0]
+                if not scholar_id:
+                    print(f"Could not extract Google Scholar ID from URL: {google_scholar}")
+                    continue
                 graph_accessor.add_task_to_queue(
                     'search:google_scholar_authorid',
-                    google_scholar,
+                    scholar_id,
                     f"Fetch the Google Scholar profile for {name}.",
                     json.dumps(provenance)
                 )
@@ -459,7 +485,7 @@ def get_person_page_from_directory(graph_accessor: GraphAccessor, url: str, prov
     # Then update the graph with the new information
 
     # Unclassified page type when we expected a homepage, skip out    
-    if page_info.get("category") == "other":
+    if page_info is None or page_info.get("category") == "other":
         return []
     
     # record the page in the graph database
@@ -483,20 +509,23 @@ def get_person_page_from_directory(graph_accessor: GraphAccessor, url: str, prov
             if not scholar_id:
                 print(f"Could not extract Google Scholar ID from URL: {subpage['url']}")
                 continue
+            provenance.append(name)
             graph_accessor.add_task_to_queue(
                 'search:google_scholar_authorid',
                 scholar_id,
                 f"Search for Google Scholar profile for author ID: {subpage['url']}",
                 json.dumps(provenance)
             )
+            provenance.pop()
         elif subpage['category'] == 'organizational directory page for a person':
-            provenance.append(name)
-            graph_accessor.add_task_to_queue(
-                'search:member_directorypage',
-                subpage['url'],
-                f"Fetch the subpage for {name} from directory page.",
-                json.dumps(provenance)
-            )
+        #     provenance.append(name)
+        #     graph_accessor.add_task_to_queue(
+        #         'search:member_directorypage',
+        #         subpage['url'],
+        #         f"Fetch the subpage for {name} from directory page.",
+        #         json.dumps(provenance)
+        #     )
+            print(f"Skipping organizational directory page for {name} as it is already processed: {subpage['url']}")
         elif subpage['category'] == subpage['category'] == 'personal or professional homepage':
             provenance.append(name)
             graph_accessor.add_task_to_queue(
@@ -505,14 +534,17 @@ def get_person_page_from_directory(graph_accessor: GraphAccessor, url: str, prov
                 f"Fetch the subpage for {name} from directory page.",
                 json.dumps(provenance)
             )
+            provenance.pop()
         elif subpage['category'] != 'other':
             # get_person_subpage_from_directory(graph_accessor, subpage['url'], name, [url], force)
+            provenance.append(name)
             graph_accessor.add_task_to_queue(
                 'search:member_subpage',
                 subpage['url'],
                 f"Fetch the subpage for {name} from directory page.",
                 json.dumps(provenance)
             )        
+            provenance.pop()
 
 
 def get_person_subpage_from_directory(graph_accessor: GraphAccessor, url: str, visited: list[str], force: bool = True):
@@ -522,25 +554,58 @@ def get_person_subpage_from_directory(graph_accessor: GraphAccessor, url: str, v
     :param graph_accessor: An instance of GraphAccessor to interact with the graph database.
     :param url: The URL of the person's subpage.
     """
-    response = requests.get(url)
-    content = response.text
+    try:
+        if not url.startswith('http'):
+            # Find the most recent URL in visited (from last to first)
+            base_url = None
+            for prev in reversed(visited):
+                if prev.startswith('http'):
+                    base_url = prev
+                    break
+            if base_url:
+                url = requests.compat.urljoin(base_url, url)
+            else:
+                print(f"Invalid URL: {url}. Skipping.")
+                return
+            
+        if len(graph_accessor.get_entity_ids_by_url(url)):
+            print(f"Already processed {url}, skipping.")
+            return
+            
+        response = requests.get(url)
+        content = response.text
 
-    name = visited[-1]
-    visited.add(url)
-    if force or not graph_accessor.is_page_in_cache(url, content):
-        page_info = graph_accessor.get_cached_output(url, content)
-    else:        
-        # parse with GPT, summarize
-        page_info = get_page_info(content, name)
-        graph_accessor.cache_page_and_results(url, content, json.dumps(page_info, ensure_ascii=False))
+        name = visited[-1]
+        visited.append(url)
+        if force or not graph_accessor.is_page_in_cache(url, content):
+            page_info = get_page_info(content, name)
+            graph_accessor.cache_page_and_results(url, content, json.dumps(page_info, ensure_ascii=False))
+        else:        
+            page_info = graph_accessor.get_cached_output(url, content)
+            # parse with GPT, summarize
+            
+        if page_info is None:
+            page_info = get_page_info(content, name)
+            graph_accessor.cache_page_and_results(url, content, json.dumps(page_info, ensure_ascii=False))
+            
+        print(url + " - " + name)
+        print(json.dumps(page_info, indent=2, ensure_ascii=False))
         
-    print(url + " - " + name)
-    print(json.dumps(page_info, indent=2, ensure_ascii=False))
+        if page_info.get("category") == "other":
+            # If the page is categorized as 'other', we might want to skip it or handle it differently
+            print(f"Skipping {url} as it is categorized as 'other'.")
+            return
+        
+        # record the page in the graph database
+        graph_accessor.add_person_info_page(
+            url,
+            name,
+            page_info.get("category", "other"),
+            content
+        )
+    except requests.RequestException as e:
+        print(f"Error fetching {url}: {e}")
     
-    if page_info.get("category") == "other":
-        # If the page is categorized as 'other', we might want to skip it or handle it differently
-        print(f"Skipping {url} as it is categorized as 'other'.")
-        return
 
 def scholar_search_gscholar_profiles(graph_accessor: GraphAccessor, author_name: str, provenance: list[str], force: bool = False) -> list:
     """
@@ -619,7 +684,7 @@ def scholar_search_gscholar_by_id(graph_accessor: GraphAccessor, author_id: str,
     if force or not graph_accessor.is_page_in_cache(url, text):
         # Call searchapi_for_authorid for each (author_id, name) pair
         author_data = searchapi_for_authorid(author_id, search_api_key)
-        graph_accessor.cache_page_and_results(url, text, author_data)
+        graph_accessor.cache_page_and_results(url, text, json.dumps(author_data))
     else:        
         author_data = graph_accessor.get_cached_output(url, text)
     
@@ -641,6 +706,11 @@ def scholar_search_gscholar_by_id(graph_accessor: GraphAccessor, author_id: str,
             json.dumps(author_data),
             author_id
         )
+        graph_accessor.add_person_info_page(
+            google_scholar_url,
+            name,
+            "scholar profile " + author_id,
+            json.dumps(author_data))
         print(f"Added author {name} (ID: {author_id}) to the database.")
     except Exception as e:
         print(f"Error adding author {name} (ID: {author_id}) to the database: {e}")

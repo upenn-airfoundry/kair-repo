@@ -14,7 +14,7 @@ aiplatform.init(project='air-foundry-seas-8645', location='us-east1')  # e.g., "
 
 #better_llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.1)
 
-structured_analysis_llm = ChatOpenAI(model="gpt-4.1-nano", temperature=0.1)
+structured_analysis_llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.1)
 
 analysis_llm = ChatVertexAI(
     model="gemini-2.0-flash-lite-001",

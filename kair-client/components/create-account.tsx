@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import Image from "next/image";
 
 export default function CreateAccount() {
   const [email, setEmail] = useState("");
@@ -57,6 +58,14 @@ export default function CreateAccount() {
     <div className="flex flex-col gap-6">
       <Card>
         <CardHeader>
+        <div className="flex justify-center items-center py-6 border-b">
+          <Image
+            src="/images/airfoundry-logo.png"
+            width="234"
+            height="65"
+            alt="Airfoundry Logo"
+          />
+        </div>
           <CardTitle>Create an account</CardTitle>
           <CardDescription>
             Enter your details to create a new account.

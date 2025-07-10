@@ -83,6 +83,7 @@ class GraphAccessor:
                 paper_id = cur.fetchone()
                 if paper_id is not None:
                     paper_id = paper_id[0]
+                    cur.execute(f"UPDATE {self.schema}.entities SET entity_url = %s, entity_name = %s WHERE entity_id = %s;", (url, title, paper_id))
                     cur.execute(f"SELECT tag_value FROM {self.schema}.entity_tags WHERE entity_id = %s AND tag_name = %s and entity_tag_instance = 1;", (paper_id, "summary"))
                     the_tag = cur.fetchone()
                     if the_tag is None:
@@ -229,7 +230,7 @@ class GraphAccessor:
         except Exception as e:
             logging.error(f"Error adding person info page: {e}")
             self.conn.rollback()
-            raise e
+            #raise e
                 
     def add_person(self, url: str, source_type: str, name: str, affiliation: str, author_json, disambiguator: Optional[str] = None) -> int:
         """
@@ -259,7 +260,15 @@ class GraphAccessor:
                     return author_id[0]
 
                 # Insert the new author into the entities table
-                cur.execute(f"INSERT INTO {self.schema}.entities (entity_type, entity_name, entity_url, entity_json, entity_embed) VALUES (%s, %s, %s, %s, %s) RETURNING entity_id;", (source_type, full_name, url, author_json, embed ))
+                cur.execute(f"INSERT INTO {self.schema}.entities (entity_type, entity_name, entity_url, entity_json, entity_embed) " +
+                            """
+                            VALUES (%s, %s, %s, %s, %s) 
+                            ON CONFLICT (entity_type, entity_name, entity_url)
+                            DO UPDATE SET
+                                entity_detail = EXCLUDED.entity_detail,
+                                entity_contact = EXCLUDED.entity_contact 
+                        RETURNING entity_id;
+                            """, (source_type, full_name, url, author_json, embed ))
                 author_id = cur.fetchone()[0]
 
             self.conn.commit()
@@ -409,7 +418,7 @@ class GraphAccessor:
                     cur.execute("SELECT MAX(entity_tag_instance) FROM entity_tags WHERE entity_id = %s AND tag_name = %s;", (entity_id, tag_name))
                     existing_tag_instance = cur.fetchone()[0]
                     new_tag_instance = existing_tag_instance + 1 if existing_tag_instance is not None else 1
-                    cur.execute("INSERT INTO entity_tags (entity_id, tag_name, tag_value, tag_embed, entity_tag_instance) VALUES (%s, %s, %s, %s, %s);", (entity_id, "summary", tag_value, tag_embed, new_tag_instance))
+                    cur.execute("INSERT INTO entity_tags (entity_id, tag_name, tag_value, tag_embed, entity_tag_instance) VALUES (%s, %s, %s, %s, %s);", (entity_id, tag_name, tag_value, tag_embed, new_tag_instance))
             self.conn.commit()
             return new_tag_instance
         except Exception as e:
@@ -847,7 +856,7 @@ class GraphAccessor:
             List[dict]: A list of dictionaries containing entity names and their summaries.
         """
         query = f"""
-            SELECT e.entity_name, t.tag_value AS summary
+            SELECT e.entity_name, e.entity_url, t.tag_value AS summary
             FROM {self.schema}.entities e
             LEFT JOIN {self.schema}.entity_tags t ON e.entity_id = t.entity_id AND t.tag_name = 'summary'
             WHERE e.entity_name IS NOT NULL
@@ -867,7 +876,8 @@ class GraphAccessor:
 
         try:
             results = self.exec_sql(query, ())#params)
-            results = [{"name": row[0], "summary": row[1]} for row in results]
+            import urllib.parse
+            results = [{"name": row[0], "url": (row[1] if ('http:' in row[1] or 'https:' in row[1] or 'file:' in row[1]) else 'file://' + urllib.parse.quote(row[1])), "summary": row[2]} for row in results]
         except Exception as e:
             logging.error(f"Error getting entities with summaries: {e}")
             self.conn.rollback()
@@ -1141,8 +1151,9 @@ class GraphAccessor:
         except Exception as e:
             logging.error(f"Error adding task to queue: {e}")
             self.conn.rollback()
+            return 0
             # throw the exception again
-            raise e
+            # raise e
         return task_id
 
     def fetch_next_task(self) -> Optional[dict]:
@@ -1274,7 +1285,7 @@ class GraphAccessor:
             text_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()
             with self.conn.cursor() as cur:
                 cur.execute(
-                    "SELECT 1 FROM crawl_cache WHERE digest = %s;",
+                    "SELECT 1 FROM crawl_cache WHERE digest = %s and extracted_json is not null;",
                     (text_hash,)
                 )
                 result = cur.fetchone()
@@ -1347,3 +1358,40 @@ class GraphAccessor:
             logging.error(f"Error getting cached output: {e}")
             self.conn.rollback()
             return None
+        
+    def get_entity_ids_by_url(self, url: str, type: str = None) -> List[int]: # type: ignore
+        """
+        Return a list of entity IDs for which the entity_url matches the given URL.
+
+        Args:
+            url (str): The URL to search for.
+            type (Optional[str]): The type of entity to filter by (e.g., 'paper', 'author'). Defaults to None.
+
+        Returns:
+            List[int]: A list of matching entity IDs.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                if type:
+                    cur.execute(f"SELECT entity_id FROM {self.schema}.entities WHERE entity_url = %s AND entity_type = %s;", (url, type))
+                else:
+                    cur.execute(f"SELECT entity_id FROM {self.schema}.entities WHERE entity_url = %s;", (url,))
+                entity_ids = [row[0] for row in cur.fetchall()]
+            return entity_ids
+        except Exception as e:
+            logging.error(f"Error fetching entity IDs by URL: {e}")
+            self.conn.rollback()
+            return []
+        
+    def is_paper_in_db(self, url: str) -> bool:
+        """
+        Check if the given URL exists in the database.
+
+        Args:
+            url (str): The URL to check.
+
+        Returns:
+            bool: True if the URL exists, False otherwise.
+        """
+        entity_ids = self.get_entity_ids_by_url(url, 'paper')
+        return len(entity_ids) > 0

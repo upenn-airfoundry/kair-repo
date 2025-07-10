@@ -130,6 +130,9 @@ def process_next_task(graph_accessor: GraphAccessor):
 
             # If it's a pre-programmed strategy, use it
             if task_name in search_strategies:
+                # Delete the task after processing
+                graph_accessor.delete_task(next_task["task_id"])
+                
                 print(f"Using search strategy for {task_name}")
                 scope = next_task['scope']
                 provenance = next_task['description']
@@ -138,13 +141,11 @@ def process_next_task(graph_accessor: GraphAccessor):
                 else:
                     provenance = []
                 
-                search_strategies[task_name](graph_accessor, scope, provenance, False)
+                search_strategies[task_name](graph_accessor, scope, provenance, force=False)
 
             # Call enrichment_task with the task name
             enrich_entities(graph_accessor, task_name)
 
-            # Delete the task after processing
-            graph_accessor.delete_task(next_task["task_id"])
             print(f"Task {task_name} completed and removed from the queue.")
         else:
             print("No tasks in the queue.")

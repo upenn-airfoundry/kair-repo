@@ -24,6 +24,7 @@ from entities.generate_doc_info import parse_files_and_index
 from enrichment.langchain_ops import AssessmentOps
 from crawl.web_fetch import fetch_and_crawl_frontier
 from search import search_over_criteria, search_multiple_criteria, generate_rag_answer
+from search import is_search_over_papers, search_basic, is_relevant_answer_with_data
 
 import logging
 
@@ -53,7 +54,7 @@ graph_accessor = GraphAccessor()
 scheduler = TornadoScheduler()
 scheduler.configure(timezone="US/Eastern")
 scheduler.add_job(lambda: consult_person_seeds(graph_accessor))
-scheduler.add_job(lambda: process_next_task(graph_accessor), 'interval', minutes=1)
+scheduler.add_job(lambda: process_next_task(graph_accessor), 'interval', seconds=5, max_instances=1)
 scheduler.start()
 
 class LoginHandler(BaseHandler):
@@ -300,6 +301,13 @@ class ExpandSearchHandler(BaseHandler):
                 self.write({"error": "'prompt' parameter is required"})
                 return
 
+            if not is_search_over_papers(user_prompt):
+                answer = search_basic(user_prompt)
+                self.write({
+                    "data": {
+                        "message": answer
+                    }})
+            
             questions = search_over_criteria(user_prompt, graph_accessor.get_assessment_criteria())
             logging.info('Expanded into subquestions: ' + questions)
             
@@ -330,11 +338,28 @@ class ExpandSearchHandler(BaseHandler):
             if len(docs_in_order):
                 paper_info = graph_accessor.get_entities_with_summaries(list(docs_in_order))
                 answer = generate_rag_answer(paper_info, user_prompt)
-                self.write({
-                    "data": {
-                        "message": answer + '\n\nWe additionally looked for assessment criteria: ' + questions
-                    }
-                })
+                
+                if answer is None or len(answer) == 0 or "i am sorry" in answer.lower() or not is_relevant_answer_with_data(user_prompt, answer):
+                    questions = None
+                    answer = search_basic(user_prompt)
+                
+                if questions:
+                    question_str = ''
+                    question_map = json.loads(questions)
+                    for q in question_map.keys():
+                        question_str += f' * {q}: {question_map[q]}\n'
+                        
+                    self.write({
+                        "data": {
+                            "message": answer + '\n\nWe additionally looked for assessment criteria: \n\n' + question_str
+                        }
+                    })
+                else:
+                    self.write({
+                        "data": {
+                            "message": answer
+                        }
+                    })
             else:
                 self.set_status(404)
                 self.write({"error": "No relevant papers found"})

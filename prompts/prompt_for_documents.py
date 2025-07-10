@@ -118,7 +118,7 @@ def answer_from_summary(json_fragment, question):
         # Invoke the chain
         response = structured_chain.invoke({"title": json_fragment['title'], "question": question, "json_fragment": json_fragment})
 
-        return response.answer
+        return response.answer # type: ignore
 
     except Exception as e:
         return f"An error occurred: {e}"
@@ -251,7 +251,7 @@ def extract_faculty_from_html(html_content: str) -> dict:
     # Run the extraction chain on the text content.
     extracted_data = extraction_chain.invoke({"html_content": html_content})
     if extracted_data is not None:
-        ret_data = extracted_data.model_dump()
+        ret_data = extracted_data.model_dump() # type: ignore
     else:
         ret_data = {"faculty": []}
 
@@ -272,7 +272,7 @@ def get_page_info(html_content: str, name: str) -> dict:
             ("system", "You are an expert at extracting information from HTML documents and structuring it in JSON."),
             ("human", 
             """
-            Please categorize from the following HTML content. 
+            Please categorize from the following HTML content. If the page is related to or for a person, it must mention their name, which is """ + name + """.
             
             **Input Description:**
             The provided text is the raw HTML content of a web page representing info about a researcher named """ +
@@ -282,16 +282,16 @@ def get_page_info(html_content: str, name: str) -> dict:
             The page is likely to also link to other related pages, of one of these types.
             
             Categorize the page as one of the following:
-            - organizational directory page for """ + name +"""
-            - personal or professional homepage for """ + name +"""
-            - research lab page for  for """ + name + """'s lab
-            - a directory of additional lab members, students, postdocs, or visitors for """ + name + """'s lab
-            - CV or resume
-            - teaching page
-            - projects page
-            - publications page
-            - software page
-            - talks and keynotes page
+            - organizational directory page for """ + name +""", which must mention """ + name + """
+            - personal or professional homepage for """ + name +""", which must mention """ + name + """
+            - research lab page for  for """ + name + """'s lab, which must mention """ + name + """
+            - a directory of additional lab members, students, postdocs, or visitors for """ + name + """'s lab, which must mention """ + name + """
+            - CV or resume, which must mention """ + name + """
+            - teaching page, which must mention """ + name + """ and not just be an organizational teaching page
+            - projects page, which must mention """ + name + """ and not just be an organizational research page
+            - publications page, which must mention """ + name + """ and not just be an organizational publications page
+            - software page, which must mention """ + name + """ and not just be an organizational publications page
+            - talks and keynotes page, which must mention """ + name + """ and not just be an organizational publications page
             - other
             
             If the page has outgoing links, extract each link and categorize it as one of the following:
@@ -321,8 +321,19 @@ def get_page_info(html_content: str, name: str) -> dict:
     extraction_chain = prompt_template | structured_llm
     # Run the extraction chain on the text content.
     extracted_data = extraction_chain.invoke({"html_content": html_content})
+    
+    # Use LLM to verify the HTML content is about the person named "name"
+    verification_prompt = ChatPromptTemplate.from_messages([
+        ("system", "You are an expert at verifying if a web page is about a specific person."),
+        ("user", "Does the following HTML content clearly relate to the person named '{name}'? Respond strictly with 'Yes' or 'No'.\n\nHTML Content:\n{html_content}")
+    ])
+    verification_chain = verification_prompt | analysis_llm | StrOutputParser()
+    verification_result = verification_chain.invoke({"html_content": html_content, "name": name}).strip().lower()
+    if verification_result != "yes":
+        return {}
+    
     if extracted_data is not None:
-        ret_data = extracted_data.model_dump()
+        ret_data = extracted_data.model_dump() # type: ignore
     else:
         ret_data = {}
 
@@ -352,3 +363,27 @@ def is_about(url: str, name: str) -> bool:
     except Exception as e:
         page_content = ""
         return False
+
+def classify_json(paper_json: dict) -> str:
+    """
+    Classifies a paper's description (arxiv format) into a short category descriptor using an LLM.
+
+    Args:
+        paper_json (dict): Dictionary containing arxiv paper fields (id, journal-ref, authors, abstract, etc.)
+
+    Returns:
+        str: A short category descriptor for the paper.
+    """
+    class PaperCategory(BaseModel):
+        """A short category descriptor for the paper."""
+        category: str = Field(..., description="A concise, few-word category for the paper (e.g., 'machine learning', 'quantum physics', 'algebraic geometry').")
+
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", "You are an expert at classifying academic papers. Given a paper's metadata and abstract, generate a concise, few-word category descriptor for the paper. Respond only with the category string."),
+        ("user", "Paper metadata:\n\n{paper_json}\n\nCategory:")
+    ])
+
+    structured_llm = analysis_llm.with_structured_output(PaperCategory)
+    chain = prompt | structured_llm
+    result = chain.invoke({"paper_json": paper_json})
+    return result.category # type: ignore

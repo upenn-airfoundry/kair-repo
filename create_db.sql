@@ -192,11 +192,6 @@ CREATE TABLE association_criteria (
     FOREIGN KEY (entity2_id) REFERENCES entities(entity_id) ON DELETE CASCADE
 );
 
-ALTER TABLE association_criteria
-    drop column if exists entity1_id,
-    drop column if exists entity2_id,
-    drop column if exists association_strength;
-
 alter table association_criteria
     add column association_promise float;
 
@@ -220,6 +215,9 @@ CREATE TABLE task_queue(
     task_json JSON,
     task_embed vector(1536)
 );
+
+ALTER TABLE task_queue
+    ADD CONSTRAINT unique_task_name_scope UNIQUE(task_name, task_prompt, task_scope);
 
 CREATE INDEX task_name_idx ON task_queue USING btree ("task_name");
 CREATE INDEX task_embed_idx ON task_queue
@@ -335,17 +333,16 @@ CREATE VIEW paragraphs_view AS
     FROM entities
     WHERE entity_type = 'paragraph';
 
+DROP VIEW IF EXISTS paragraphs_papers_authors_view;
 CREATE VIEW paragraphs_papers_authors_view AS
-    SELECT para.entity_detail, paper.entity_url, author.entity_name, author.entity_contact
+    SELECT para.entity_detail, paper.entity_url, author.tag_value as author
     FROM entities para JOIN entities paper ON para.entity_parent = paper.entity_id
-    JOIN entities author ON paper.entity_parent = author.entity_id
-    WHERE para.entity_type = 'paragraph' and paper.entity_type = 'paper' and author.entity_type = 'author';
+    JOIN entity_tags author ON paper.entity_id = author.entity_id
+    WHERE para.entity_type = 'paragraph' and paper.entity_type = 'paper' and author.tag_name = 'author';
 
 grant select, insert, update, delete on all tables in schema public to kair;
 
 create schema indexed_tables;
-
-grant select, insert, update, delete on all tables in schema public to kair;
 
 grant create on schema indexed_tables to kair;
 

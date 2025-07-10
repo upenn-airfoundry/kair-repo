@@ -39,7 +39,7 @@ export default function ChatPage() {
     >
       <AppSidebar variant="inset" />
       <SidebarInset>
-        <ChatHeader title="Chat" description="Chat with KAIR"/>
+        <ChatHeader title="Search and Discuss" description=""/>
         <div className="flex flex-1 flex-col">
           <div className="@container/main flex flex-1 flex-col gap-2">
             <div className="flex-grow p-4 overflow-y-auto border-t space-y-4">

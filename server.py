@@ -23,7 +23,7 @@ _ = load_dotenv(find_dotenv())
 from crawl.web_fetch import fetch_and_crawl_frontier
 
 from search import search_over_criteria, search_multiple_criteria
-from search import generate_rag_answer
+from search import generate_rag_answer, is_search_over_papers, search_basic
 
 import logging
  # Configure APScheduler
@@ -253,8 +253,11 @@ def expand_search():
         23. What are the main implications for future research?
         """
 
-        questions = search_over_criteria(user_prompt, graph_accessor.get_assessment_criteria());
-        
+        if not is_search_over_papers(user_prompt):
+            return search_basic(user_prompt)
+            
+        questions = search_over_criteria(user_prompt, graph_accessor.get_assessment_criteria())
+
         logging.info('Expanded into subquestions: ' + questions)
         
         relevant_docs = search_multiple_criteria(questions)
