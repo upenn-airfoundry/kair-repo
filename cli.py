@@ -70,6 +70,10 @@ def main():
     if args.command == "add_crawl_list":
         add_urls_to_frontier_from_file()
         fetch_and_crawl_frontier()
+    elif args.command == "re_embed":
+        print("Re-embedding all documents...")
+        graph_db.re_embed_all_documents()
+        graph_db.re_embed_all_tags()
     elif args.command == "arxiv":
         load_arxiv_abstracts()
     elif args.command == "arxiv_categories":

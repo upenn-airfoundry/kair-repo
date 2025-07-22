@@ -28,3 +28,5 @@ hurry.filesize
 bcrypt
 grobid-client-python
 langchain-google-vertexai
+google-generativeai
+langchain-google-genai

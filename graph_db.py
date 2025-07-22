@@ -21,6 +21,8 @@ import logging
 from dotenv import load_dotenv, find_dotenv
 import hashlib
 from datetime import datetime
+from enrichment.llms import gemini_doc_embedding
+import time
 
 # Load environment variables from .env file
 _ = load_dotenv(find_dotenv())
@@ -91,12 +93,12 @@ class GraphAccessor:
                     elif add_another:
                         # If we are adding another paper with the same title, first we need the max tag instance
                         cur.execute("SELECT MAX(entity_tag_instance) FROM entity_tags WHERE entity_id = %s AND tag_name = %s;", (paper_id, "summary"))
-                        existing_tag_instance = cur.fetchone()[0]
+                        existing_tag_instance = cur.fetchone()[0] # type: ignore
                         new_tag_instance = existing_tag_instance + 1 if existing_tag_instance is not None else 1
                         cur.execute("INSERT INTO entity_tags (entity_id, tag_name, tag_value, tag_embed, entity_tag_instance) VALUES (%s, %s, %s, %s, %s);", (paper_id, "summary", summary, self.generate_embedding(summary), new_tag_instance))
                 else:
                     cur.execute(f"INSERT INTO {self.schema}.entities (entity_url, entity_type, entity_name) VALUES (%s, %s, %s) RETURNING entity_id;", (url, 'paper', title))
-                    paper_id = cur.fetchone()[0]
+                    paper_id = cur.fetchone()[0] # type: ignore
                     cur.execute(f"INSERT INTO {self.schema}.entity_tags (entity_id, tag_name, tag_value, tag_embed) VALUES (%s, %s, %s, %s);", (paper_id, "summary", summary, self.generate_embedding(summary)))
             self.conn.commit()
         except Exception as e:
@@ -105,6 +107,28 @@ class GraphAccessor:
             # throw the exception again
             raise e
         return paper_id
+    
+    def update_paper_description(self, paper_id: int):
+        """Update the description of a paper, given both the summary and author info."""
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(f"""
+                    update entities
+                    where entity_id = %s and entity_type = 'paper'
+                    set entity_detail = (
+                        select concat('Title: ', entities.entity_name, '\nSummary: ', et2.tag_value, '\nAuthors: ', string_agg(et.tag_value, ', ' order by et.entity_tag_instance))
+                        from entity_tags et, entity_tags et2
+                        where entities.entity_id = et.entity_id and entities.entity_id = et2.entity_id and entities.entity_type = 'paper' 
+                        and et2.tag_name = 'summary' and et.tag_name = 'author'
+                        group by entities.entity_id, entities.entity_name, et2.tag_value
+                )
+            """, (paper_id,))
+            self.conn.commit()
+        except Exception as e:
+            logging.error(f"Error updating paper description: {e}")
+            self.conn.rollback()
+            # throw the exception again
+            raise e
 
     def add_table(self, url: str, path: str, summary: str) -> int:
         """Store a table by URL and return its entity ID."""
@@ -115,12 +139,12 @@ class GraphAccessor:
                 if table_id is not None:
                     table_id = table_id[0]
                     cur.execute(f"SELECT tag_value FROM {self.schema}.entity_tags WHERE entity_id = %s AND tag_name = %s;", (table_id, "summary"))
-                    the_tag = cur.fetchone()
+                    the_tag = cur.fetchone() # type: ignore
                     if the_tag is None:
                         cur.execute(f"INSERT INTO {self.schema}.entity_tags (entity_id, tag_name, tag_value, tag_embed) VALUES (%s, %s, %s, %s);", (table_id, "summary", summary, self.generate_embedding(summary)))
                 else:
                     cur.execute(f"INSERT INTO {self.schema}.entities (entity_url, entity_type, entity_name) VALUES (%s, %s, %s) RETURNING entity_id;", (url, 'table', path))
-                    table_id = cur.fetchone()[0]
+                    table_id = cur.fetchone()[0] # type: ignore
                     cur.execute(f"INSERT INTO {self.schema}.entity_tags (entity_id, tag_name, tag_value, tag_embed) VALUES (%s, %s, %s, %s);", (table_id, "summary", summary, self.generate_embedding(summary)))
                 self.conn.commit()
                 return table_id
@@ -179,7 +203,7 @@ class GraphAccessor:
         try:
             with self.conn.cursor() as cur:
                 cur.execute(f"INSERT INTO {self.schema}.entities (entity_type, entity_url) VALUES (%s,%s) RETURNING entity_id;", ('source', url,))
-                source_id = cur.fetchone()[0]
+                source_id = cur.fetchone()[0] # type: ignore
             self.conn.commit()
             return source_id
         except Exception as e:
@@ -248,7 +272,10 @@ class GraphAccessor:
         # Concatenate the disambiguator to the name if provided
         full_name = f"{name} #{disambiguator}" if disambiguator is not None else name
 
-        embed = self.generate_embedding(f"{name} at {affiliation}")
+        # if affiliation:
+        #     embed = self.generate_embedding(f"{name} at {affiliation}")
+        # else:
+        embed = self.generate_embedding(name)
         try:
             with self.conn.cursor() as cur:
                 # Check if the author already exists
@@ -267,9 +294,11 @@ class GraphAccessor:
                             DO UPDATE SET
                                 entity_detail = EXCLUDED.entity_detail,
                                 entity_contact = EXCLUDED.entity_contact 
+                                entity_json = EXCLUDED.entity_json,
+                                entity_embed = EXCLUDED.entity_embed
                         RETURNING entity_id;
                             """, (source_type, full_name, url, author_json, embed ))
-                author_id = cur.fetchone()[0]
+                author_id = cur.fetchone()[0] # type: ignore
 
             self.conn.commit()
             return author_id
@@ -315,24 +344,25 @@ class GraphAccessor:
         """Add a paragraph, returning an embedding and paragraph ID."""
         try:
             embedding = self.generate_embedding(content)
+            paragraph_id = 0
             with self.conn.cursor() as cur:
                 # Check if the paragraph already exists
                 content = content.replace("\x00", "\uFFFD")
                 cur.execute(f"SELECT entity_id FROM {self.schema}.entities WHERE entity_parent = %s AND entity_type = 'paragraph' AND entity_detail = %s;", (paper_id, content,))
-                paragraph_id = cur.fetchone()
+                paragraph_id = cur.fetchone() # type: ignore
                 if paragraph_id is None:
                     cur.execute(
                         f"INSERT INTO {self.schema}.entities (entity_parent, entity_type, entity_detail, entity_embed) VALUES (%s, 'paragraph', %s, %s) RETURNING entity_id;",
                         (paper_id, content, embedding)
                     )
-                    paragraph_id = cur.fetchone()[0]
+                    paragraph_id = cur.fetchone()[0] # type: ignore
             self.conn.commit()
+            return (embedding, paragraph_id) # type: ignore
         except Exception as e:
             logging.error(f"Error adding paragraph: {e}")
             self.conn.rollback()
             # throw the exception again
             raise e
-        return embedding, paragraph_id
     
     # def add_author(self, name: str, email: str, organization: str) -> int:
     #     """Add an author by name and return their author ID."""
@@ -359,7 +389,7 @@ class GraphAccessor:
     
     def add_author_tag(self, paper_id: int, name: str, email: Optional[str] = None, organization: Optional[str] = None) -> int:
         """Add an author tag to a paper."""
-        self.add_or_update_tag(paper_id, "author", name, add_another=True)
+        return self.add_or_update_tag(paper_id, "author", name, add_another=True)
         
 
     def update_paragraph(self, paragraph_id: int, content: Optional[str] = None, embedding: Optional[List[float]] = None):
@@ -416,7 +446,7 @@ class GraphAccessor:
                 else:
                     # If we are adding another paper with the same title, first we need the max tag instance
                     cur.execute("SELECT MAX(entity_tag_instance) FROM entity_tags WHERE entity_id = %s AND tag_name = %s;", (entity_id, tag_name))
-                    existing_tag_instance = cur.fetchone()[0]
+                    existing_tag_instance = cur.fetchone()[0] # type: ignore
                     new_tag_instance = existing_tag_instance + 1 if existing_tag_instance is not None else 1
                     cur.execute("INSERT INTO entity_tags (entity_id, tag_name, tag_value, tag_embed, entity_tag_instance) VALUES (%s, %s, %s, %s, %s);", (entity_id, tag_name, tag_value, tag_embed, new_tag_instance))
             self.conn.commit()
@@ -476,7 +506,7 @@ class GraphAccessor:
         try:
             with self.conn.cursor() as cur:
                 cur.execute("SELECT entity_embed FROM entities WHERE entity_id = %s;", (entity_id,))
-                embedding = cur.fetchone()[0]
+                embedding = cur.fetchone()[0] # type: ignore
                 cur.execute(
                     f"""
                     SELECT id FROM {self.schema}.entities
@@ -498,6 +528,7 @@ class GraphAccessor:
         try:
             # Initialize OpenAI embeddings
             embeddings = OpenAIEmbeddings()
+            #embeddings = get_embedding()
             # Generate the embedding for the content
             embedding = embeddings.embed_query(content)
             return embedding
@@ -533,14 +564,14 @@ class GraphAccessor:
             self.conn.rollback()
             return None
 
-    def find_related_entities(self, question: str, k: int = 10, entity_type: Optional[str] = None, keywords: Optional[List[str]] = None) -> List[str]:
+    def find_related_entities(self, question: str, k: int = 10, entity_type: Optional[str] = None, keywords: Optional[List[str]] = None) -> List[int]:
         """
         Find entities related to a particular task by matching against the entity_embed field using vector distance.
         Optionally filter by entity type and keywords.
 
         Args:
             question (str): The question or task to match against.
-            k (int): The number of closest matches to return.
+            k : The number of closest matches to return.
             entity_type (Optional[str]): The type of entities to filter by (e.g., 'paper', 'author').
             keywords (Optional[List[str]]): A list of keywords to match using tsvector.
 
@@ -557,7 +588,7 @@ class GraphAccessor:
 
         Args:
             question (str): The question or task to match against.
-            k (int): The number of closest matches to return.
+            k : The number of closest matches to return.
             entity_type (Optional[str]): The type of entities to filter by (e.g., 'paper', 'author').
             keywords (Optional[List[str]]): A list of keywords to match using tsvector.
 
@@ -567,40 +598,46 @@ class GraphAccessor:
         concept_embedding = self.generate_embedding(question)
         return self.find_related_entity_ids_by_embedding(concept_embedding, k, entity_type, keywords)
 
-    def find_related_entity_ids_by_tag(self, tag_value: str, tag_name: str = None, k: int = 10) -> List[int]:
+    def find_related_entity_ids_by_tag(self, tag_value: str, tag_name: Optional[str], k: int = 10) -> List[int]:
         """
         Find entities whose tag (with a specified tag_name) has a tag_value whose embedding approximately matches
         the query embedding using vector distance.
         Args:
             tag_name (str): The name of the tag to filter by.
-            k (int): The number of closest matches to return.
+            k : The number of closest matches to return.
         Returns:
             List[int]: A list of entity IDs that match the criteria.
         """
         query_embedding = self.generate_embedding(tag_value)
-        return self.find_entity_ids_by_tag_embedding(query_embedding, tag_name, k)
+        if tag_name is None:
+            return self.find_related_entities_by_embedding(query_embedding, k)
+        else:
+            return self.find_entity_ids_by_tag_embedding(query_embedding, tag_name, k)
 
-    def find_related_entities_by_tag(self, tag_value: str, tag_name: str = None, k: int = 10) -> List[str]:
+    def find_related_entities_by_tag(self, tag_value: str, tag_name: Optional[str], k: int = 10) -> List[int]:
         """
         Find entities whose tag (with a specified tag_name) has a tag_value whose embedding approximately matches
         the query embedding using vector distance.
         Args:
             tag_name (str): The name of the tag to filter by.
-            k (int): The number of closest matches to return.
+            k : The number of closest matches to return.
         Returns:
             List[int]: A list of entity IDs that match the criteria.
         """
         query_embedding = self.generate_embedding(tag_value)
-        return self.find_entities_by_tag_embedding(query_embedding, tag_name, k)
+        if tag_name is None:
+            return self.find_related_entities_by_embedding(query_embedding, k)
+        else:
+            return self.find_entities_by_tag_embedding(query_embedding, tag_name, k)
 
-    def find_related_entities_by_embedding(self, concept_embedding: List[float], k: int = 10, entity_type: Optional[str] = None, keywords: Optional[List[str]] = None) -> List[str]:
+    def find_related_entities_by_embedding(self, concept_embedding: List[float], k: int = 10, entity_type: Optional[str] = None, keywords: Optional[List[int]] = None) -> List[int]:
         """
         Find entities related to a particular concept by matching against the entity_embed field using vector distance.
         Optionally filter by entity type and keywords.
 
         Args:
             concept_embedding (List[float]): The embedding of the concept to match against.
-            k (int): The number of closest matches to return.
+            k : The number of closest matches to return.
             entity_type (Optional[str]): The type of entities to filter by (e.g., 'paper', 'author').
             keywords (Optional[List[str]]): A list of keywords to match using tsvector.
 
@@ -620,7 +657,7 @@ class GraphAccessor:
 
         if keywords:
             query += " AND to_tsvector('english', entity_detail) @@ to_tsquery(%s)"
-            ts_query = ' & '.join(keywords)
+            ts_query = ' & '.join(keywords) # type: ignore
             params.append(ts_query)
 
         query += " ORDER BY (entity_embed <-> %s::vector) ASC LIMIT %s;"
@@ -639,14 +676,14 @@ class GraphAccessor:
             self.conn.rollback()
             return []
         
-    def find_related_entity_ids_by_embedding(self, concept_embedding: List[float], k: int = 10, entity_type: Optional[str] = None, keywords: Optional[List[str]] = None) -> List[str]:
+    def find_related_entity_ids_by_embedding(self, concept_embedding: List[float], k: int = 10, entity_type: Optional[str] = None, keywords: Optional[List[int]] = None) -> List[int]:
         """
         Find entities related to a particular concept by matching against the entity_embed field using vector distance.
         Optionally filter by entity type and keywords.
 
         Args:
             concept_embedding (List[float]): The embedding of the concept to match against.
-            k (int): The number of closest matches to return.
+            k : The number of closest matches to return.
             entity_type (Optional[str]): The type of entities to filter by (e.g., 'paper', 'author').
             keywords (Optional[List[str]]): A list of keywords to match using tsvector.
 
@@ -666,7 +703,7 @@ class GraphAccessor:
 
         if keywords:
             query += " AND to_tsvector('english', entity_detail) @@ to_tsquery(%s)"
-            ts_query = ' & '.join(keywords)
+            ts_query = ' & '.join(keywords) # type: ignore
             params.append(ts_query)
 
         query += " ORDER BY (entity_embed <-> %s::vector) ASC LIMIT %s;"
@@ -685,7 +722,7 @@ class GraphAccessor:
 
         return related_entity_ids
 
-    def find_entities_by_tag_embedding(self, query_embedding: List[float], tag_name: str, k: int = 10) -> List[str]:
+    def find_entities_by_tag_embedding(self, query_embedding: List[float], tag_name: str, k: int = 10) -> List[int]:
         """
         Find entities whose tag (with a specified tag_name) has a tag_value whose embedding approximately matches
         the query embedding using vector distance.
@@ -693,7 +730,7 @@ class GraphAccessor:
         Args:
             query_embedding (List[float]): The embedding of the query to match against.
             tag_name (str): The name of the tag to filter by.
-            k (int): The number of closest matches to return.
+            k : The number of closest matches to return.
 
         Returns:
             List[int]: A list of entity IDs that match the criteria.
@@ -735,7 +772,7 @@ class GraphAccessor:
         Args:
             query_embedding (List[float]): The embedding of the query to match against.
             tag_name (str): The name of the tag to filter by.
-            k (int): The number of closest matches to return.
+            k : The number of closest matches to return.
 
         Returns:
             List[int]: A list of entity IDs that match the criteria.
@@ -769,7 +806,7 @@ class GraphAccessor:
 
         return matching_entity_ids
     
-    def get_assessment_criteria(self, name:str = None) -> List:
+    def get_assessment_criteria(self, name:Optional[str]) -> List:
         """
         Fetch all assessment criteria, or criteria with a particular name.
         """
@@ -804,7 +841,7 @@ class GraphAccessor:
                             (criteria_name, criteria_prompt, criteria_scope, criteria_promise, criteria_embed) 
                             VALUES (%s, %s, %s, %s, %s) 
                             RETURNING criteria_id;""", (name, prompt, scope, promise, embed))
-                criterion_id = cur.fetchone()[0]
+                criterion_id = cur.fetchone()[0] # type: ignore
             self.conn.commit()
         except Exception as e:
             logging.error(f"Error adding assessment criterion: {e}")
@@ -837,7 +874,7 @@ class GraphAccessor:
                     VALUES (%s, %s, %s, %s, %s, %s) 
                     RETURNING association_criteria_id;
                 """, (name, entity1_scope, entity2_scope, prompt, promise, embed))
-                criterion_id = cur.fetchone()[0]
+                criterion_id = cur.fetchone()[0] # type: ignore
             self.conn.commit()
         except Exception as e:
             logging.error(f"Error adding association criterion: {e}")
@@ -924,7 +961,7 @@ class GraphAccessor:
         Args:
             field (str): The field to search for.
             tag (str): The tag to exclude from the search.
-            k (int): The number of results to return.
+            k : The number of results to return.
         Returns:
             List[dict]: A list of dictionaries containing entity IDs, names, and tag values.
         """
@@ -1027,7 +1064,7 @@ class GraphAccessor:
         Link an entity to a document in the database.
 
         Args:
-            entity_id (int): The ID of the entity to link.
+            entity_id : The ID of the entity to link.
             indexed_url (str): The URL of the document.
             indexed_path (str): The path of the document.
         """
@@ -1058,7 +1095,7 @@ class GraphAccessor:
 
         Args:
             df (pd.DataFrame): The Pandas DataFrame to index.
-            entity_id (int): The entity ID to associate with the table.
+            entity_id : The entity ID to associate with the table.
 
         Returns:
             str: The name of the created table (unique ID).
@@ -1192,7 +1229,7 @@ class GraphAccessor:
         Delete a task from the task_queue by task_id.
 
         Args:
-            task_id (int): The ID of the task to delete.
+            task_id : The ID of the task to delete.
         """
         query = f"DELETE FROM {self.schema}.task_queue WHERE task_id = %s;"
         try:
@@ -1395,3 +1432,111 @@ class GraphAccessor:
         """
         entity_ids = self.get_entity_ids_by_url(url, 'paper')
         return len(entity_ids) > 0
+    
+    def re_embed_all_documents(self):
+        """
+        Recompute Gemini embeddings for all papers in the entities table.
+        This updates the gem_embed field based on the entity_detail using gemini_doc_embedding from llms.py.
+        Processes papers in batches of 250 for efficiency.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(f"SELECT entity_id, entity_detail FROM {self.schema}.entities WHERE entity_type = 'paper' AND gem_embed IS NULL;")
+                papers = cur.fetchall()
+                batch_size = 250
+                total = len(papers)
+                for batch_start in range(0, total, batch_size):
+                    batch = papers[batch_start:batch_start + batch_size]
+                    entity_ids = [entity_id for entity_id, entity_detail in batch if entity_detail]
+                    details = [entity_detail for entity_id, entity_detail in batch if entity_detail]
+                    if details:
+                        embeddings = gemini_doc_embedding(details)
+                        for idx, entity_id in enumerate(entity_ids):
+                            embedding = embeddings[idx]
+                            cur.execute(
+                                f"UPDATE {self.schema}.entities SET gem_embed = %s WHERE entity_id = %s;",
+                                (embedding, entity_id)
+                            )
+                    self.conn.commit()
+                    logging.info(f"Re-embedded {min(batch_start + batch_size, total)} of {total} papers with Gemini embeddings.")
+                    time.sleep(2)
+            logging.info(f"Re-embedded a total of {total} papers with Gemini embeddings.")
+        except Exception as e:
+            logging.error(f"Error re-embedding papers with Gemini: {e}")
+            self.conn.rollback()
+            raise e
+        
+    def re_embed_all_tags(self):
+        """
+        Recompute Gemini embeddings for all tags in the entity_tags table.
+        This updates the gem_embed field based on the tag_value using gemini_doc_embedding from llms.py.
+        Processes tags in batches of 250 for efficiency.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(f"SELECT entity_id, tag_name, tag_value FROM {self.schema}.entity_tags WHERE gem_embed IS NULL;")
+                tags = cur.fetchall()
+                batch_size = 250
+                total = len(tags)
+                for batch_start in range(0, total, batch_size):
+                    batch = tags[batch_start:batch_start + batch_size]
+                    tag_values = [tag_value for _, _, tag_value in batch if tag_value]
+                    embeddings = gemini_doc_embedding(tag_values) if tag_values else []
+                    embed_idx = 0
+                    for entity_id, tag_name, tag_value in batch:
+                        if tag_value:
+                            embedding = embeddings[embed_idx]
+                            embed_idx += 1
+                            cur.execute(
+                                f"UPDATE {self.schema}.entity_tags SET gem_embed = %s WHERE entity_id = %s AND tag_name = %s;",
+                                (embedding, entity_id, tag_name)
+                            )
+                    self.conn.commit()
+                    logging.info(f"Re-embedded {min(batch_start + batch_size, total)} of {total} tags with Gemini embeddings.")
+                    time.sleep(2)
+        except Exception as e:
+            logging.error(f"Error re-embedding tags with Gemini: {e}")
+            self.conn.rollback()
+            raise e
+    
+    def recompute_all_entity_embeddings(self):
+        """
+        Recompute embeddings for all entities in the database and update the entity_embed field.
+        """
+        try:
+            # Tags
+            with self.conn.cursor() as cur:
+                cur.execute(f"SELECT entity_id, tag_name, tag_value FROM {self.schema}.entity_tags;")
+                tags = cur.fetchall()
+                for entity_id, tag_name, tag_value in tags:
+                    if tag_value:
+                        tag_embedding = self.generate_embedding(tag_value)
+                        cur.execute(f"UPDATE {self.schema}.entity_tags SET tag_embed = %s WHERE entity_id = %s AND tag_name = %s;", (tag_embedding, entity_id, tag_name))
+                        
+            # For a paper, recompute the entity_embed by finding the linked entity_tag and copying its summary. If one doesn't exist, take the filename at the end of the URL
+            with self.conn.cursor() as cur:
+                cur.execute(f"SELECT entity_id, entity_url FROM {self.schema}.entities WHERE entity_type = 'paper';")
+                papers = cur.fetchall()
+                for entity_id, entity_url in papers:
+                    # Try to get the summary tag
+                    cur.execute(f"SELECT tag_value FROM {self.schema}.entity_tags WHERE entity_id = %s AND tag_name = 'summary' ORDER BY entity_tag_instance ASC LIMIT 1;", (entity_id,))
+                    summary_row = cur.fetchone()
+                    if summary_row and summary_row[0]:
+                        embedding = self.generate_embedding(summary_row[0])
+                    else:
+                        # Fallback: use filename at end of URL
+                        filename = entity_url.split('/')[-1] if entity_url else ''
+                        embedding = self.generate_embedding(filename)
+                    cur.execute(f"UPDATE {self.schema}.entities SET entity_embed = %s WHERE entity_id = %s;", (embedding, entity_id))
+            with self.conn.cursor() as cur:
+                cur.execute(f"SELECT entity_id, COALESCE(entity_name, entity_detail) FROM {self.schema}.entities;")
+                entities = cur.fetchall()
+                for entity_id, content in entities:
+                    if content:
+                        embedding = self.generate_embedding(content)
+                        cur.execute(f"UPDATE {self.schema}.entities SET entity_embed = %s WHERE entity_id = %s;", (embedding, entity_id))
+            self.conn.commit()
+        except Exception as e:
+            logging.error(f"Error recomputing entity embeddings: {e}")
+            self.conn.rollback()
+            raise e
