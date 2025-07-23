@@ -20,6 +20,10 @@ def load_arxiv_abstracts(jsonl_path="starting_points/arxiv-metadata-oai-snapshot
                 doi = "https://doi.org/" + doi
                 url = "https://arxiv.org/pdf/" + row.get("id", "").strip()
                 
+                topic = row.get("categories", "").strip()
+                if 'q-bio' not in topic:
+                    continue
+                
                 title = row.get("title", "").strip()
                 abstract = row.get("abstract", "").strip()
                 authors_parsed = row.get("authors_parsed", [])
@@ -51,6 +55,7 @@ def load_arxiv_abstracts(jsonl_path="starting_points/arxiv-metadata-oai-snapshot
                     full_name = f"{first} {last}".strip()
                     accessor.add_author_tag(paper_id, full_name)
                     
+                accessor.update_paper_description(paper_id)
                 classify_arxiv_from_json(row)
             except Exception as e:
                 print(f"Error processing row: {e}")

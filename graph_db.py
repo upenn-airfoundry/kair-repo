@@ -114,7 +114,6 @@ class GraphAccessor:
             with self.conn.cursor() as cur:
                 cur.execute(f"""
                     update entities
-                    where entity_id = %s and entity_type = 'paper'
                     set entity_detail = (
                         select concat('Title: ', entities.entity_name, '\nSummary: ', et2.tag_value, '\nAuthors: ', string_agg(et.tag_value, ', ' order by et.entity_tag_instance))
                         from entity_tags et, entity_tags et2
@@ -122,6 +121,7 @@ class GraphAccessor:
                         and et2.tag_name = 'summary' and et.tag_name = 'author'
                         group by entities.entity_id, entities.entity_name, et2.tag_value
                 )
+                where entity_id = %s and entity_type = 'paper'
             """, (paper_id,))
             self.conn.commit()
         except Exception as e:
