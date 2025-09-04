@@ -20,6 +20,9 @@ from crawl.crawler_queue import add_urls_to_crawl_queue
 
 from entities.generate_doc_info import parse_files_and_index
 
+from files.arxiv import load_arxiv_abstracts, classify_arxiv_categories
+import yaml
+
 graph_db = GraphAccessor()
 
 find_dotenv()
@@ -28,33 +31,22 @@ _ = load_dotenv()
 PDFS_DIR = os.getenv("PDF_PATH", os.path.expanduser("~/Downloads") + '/pdfs')
 DATA_DIR = os.getenv("DATA_PATH", os.path.expanduser("~/Downloads") + '/data')
 
-def add_urls_to_frontier():
+def add_urls_to_frontier(url_list: list[str]):
     """Main function to add URLs to the crawl queue."""
-    count = add_urls_to_crawl_queue([
-        "https://onlinelibrary.wiley.com/doi/pdf/10.1111/pbi.13913",
-        "https://onlinelibrary.wiley.com/doi/pdfdirect/10.1111/pbi.12657",
-        "https://onlinelibrary.wiley.com/doi/epdf/10.1111/pbi.14591",
-        "https://arxiv.org/pdf/2503.11248",
-        "https://arxiv.org/pdf/2503.14929",
-        "https://arxiv.org/pdf/2503.06902",
-        "https://arxiv.org/pdf/2503.01642",
-        "https://arxiv.org/pdf/2407.11418",
-        "https://arxiv.org/pdf/2405.14696",
-        "https://arxiv.org/pdf/2502.03368",
-        "https://arxiv.org/pdf/2410.12189",
-        "https://arxiv.org/pdf/2501.05006",
-        "https://vldb.org/cidrdb/papers/2025/p32-wang.pdf",
-        "https://arxiv.org/pdf/2311.09818",
-        "https://arxiv.org/pdf/2410.01837",
-        "https://arxiv.org/pdf/2412.18022",
-        "https://arxiv.org/pdf/2407.09522",
-        "https://arxiv.org/pdf/2409.00847",
-        "https://dl.acm.org/doi/pdf/10.14778/2732951.2732962",
-        "https://arxiv.org/pdf/2502.07132",
-        "https://dl.acm.org/doi/pdf/10.1145/2882903.2915212"
-    ])
+    count = add_urls_to_crawl_queue(url_list) # type: ignore
     
     print(f"Added {count} URLs to the crawl queue.")
+    
+def add_urls_to_frontier_from_file(file_path: str = "starting_points/papers.yaml"):
+    """Add URLs from a specified file to the crawl queue."""
+    with open(file_path, "r") as f:
+        urls = yaml.safe_load(f)
+
+    if not isinstance(urls, list):
+        raise ValueError("File must contain a list of URLs.")
+
+    count = add_urls_to_crawl_queue(urls) # type: ignore
+    print(f"Added {count} URLs from {file_path} to the crawl queue.")
     
 def crawl_local_files(directory: str = PDFS_DIR):
     count = add_local_downloads_to_crawl_queue(directory)
@@ -76,8 +68,16 @@ def main():
     args = parser.parse_args()
 
     if args.command == "add_crawl_list":
-        add_urls_to_frontier()
+        add_urls_to_frontier_from_file()
         fetch_and_crawl_frontier()
+    elif args.command == "re_embed":
+        print("Re-embedding all documents...")
+        graph_db.re_embed_all_documents()
+        graph_db.re_embed_all_tags()
+    elif args.command == "arxiv":
+        load_arxiv_abstracts()
+    elif args.command == "arxiv_categories":
+        classify_arxiv_categories()
     elif args.command == "add_local_files":
         crawl_local_files(PDFS_DIR)
         crawl_local_files(DATA_DIR)

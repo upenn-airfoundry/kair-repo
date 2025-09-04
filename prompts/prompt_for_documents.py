@@ -3,13 +3,21 @@ from urllib.parse import unquote
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 from langchain.schema.output_parser import StrOutputParser
+from langchain.chains.openai_functions import create_structured_output_runnable
+import requests
 
 from pydantic import BaseModel, Field
 from typing import Union, Literal
 
+import os
+from typing import List, Optional
+
+from langchain.chains import create_extraction_chain
+
+
 import pandas as pd
 
-from enrichment.llms import analysis_llm
+from enrichment.llms import analysis_llm, better_llm, structured_analysis_llm
 from files.tables import sample_rows_to_string
 
 # Define the Pydantic Model
@@ -18,6 +26,67 @@ class ConditionalAnswer(BaseModel):
     answer: Union[str, Literal['none']] = Field(
         description="The answer to the question based on the context, or the exact string 'none' if the information is not found."
     )
+
+# This Pydantic model defines the structure of content from a web page
+class OutgoingLink(BaseModel):
+    """An outgoing link from the web page."""
+    url: str = Field(..., description="The URL of the outgoing link.")
+    category: Optional[Literal[
+        "organizational directory page for a person",
+        "personal or professional homepage",
+        "research lab page",
+        "lab member directory",
+        "CV or resume",
+        "teaching page",
+        "projects page",
+        "publications page",
+        "software page",
+        "talks and keynotes page",
+        "google scholar profile",
+        "other"
+    ]] = Field(
+        None,
+        description="The category of the outgoing link, if it can be determined. Must be one of the allowed web page categories."
+    )
+
+class WebPage(BaseModel):
+    """Structured information about a web page."""
+    category: Literal[
+        "organizational directory page for a person",
+        "personal or professional homepage",
+        "research lab page",
+        "lab members, students, postdocs, and visitors directory",
+        "CV or resume",
+        "teaching page",
+        "projects page",
+        "publications page",
+        "software page",
+        "talks and keynotes page",
+        "other"
+    ] = Field(..., description="The category of the web page.")
+    outgoing_links: List[OutgoingLink] = Field(
+        default_factory=list,
+        description="A list of outgoing links from the web page, each with its URL and category."
+    )
+
+# This Pydantic model defines the structure of each faculty member's data.
+# The docstrings and descriptions guide the language model in its extraction task.
+
+class FacultyMember(BaseModel):
+    """Information about a single faculty member."""
+    name: str = Field(..., description="The full name of the faculty member.")
+    titles_or_positions: Optional[List[str]] = Field(None, description="A list of the faculty member's titles or positions.")
+    homepage: Optional[str] = Field(None, description="The URL of the faculty member's personal or lab homepage.")
+    email: Optional[str] = Field(None, description="The email address of the faculty member.")
+    phone: Optional[str] = Field(None, description="The phone number of the faculty member.")
+    address: Optional[str] = Field(None, description="The physical office or mailing address of the faculty member.")
+    affiliations: Optional[List[str]] = Field(None, description="A list of departments or centers the faculty member is affiliated with.")
+    research_interests: Optional[List[str]] = Field(None, description="A list of the faculty member's research interests.")
+    google_scholar: Optional[str] = Field(None, description="The URL of the faculty member's Google Scholar profile.")
+
+class FacultyList(BaseModel):
+    """A list of faculty members."""
+    faculty: List[FacultyMember]
     
 def answer_from_summary(json_fragment, question):
     """
@@ -49,7 +118,7 @@ def answer_from_summary(json_fragment, question):
         # Invoke the chain
         response = structured_chain.invoke({"title": json_fragment['title'], "question": question, "json_fragment": json_fragment})
 
-        return response.answer
+        return response.answer # type: ignore
 
     except Exception as e:
         return f"An error occurred: {e}"
@@ -134,3 +203,187 @@ def summarize_table(df: pd.DataFrame) -> str:
     response = chain.invoke({"context": context})
 
     return response
+
+def extract_faculty_from_html(html_content: str) -> dict:
+    """
+    Parses HTML content to extract a list of faculty members.
+
+    Args:
+        html_content: The HTML of the faculty directory page as a string.
+
+    Returns:
+        A dictionary containing the extracted list of faculty members.
+    """
+    prompt_template = ChatPromptTemplate.from_messages(
+        [
+            ("system", "You are an expert at extracting information from HTML documents and structuring it in JSON."),
+            ("human", 
+            """
+            Please extract all faculty members from the following HTML content. 
+            
+            **Input Description:**
+            The provided text is the raw HTML content of a university faculty directory page.
+            Each faculty member's information is usually contained within a parent `<div>` element or a `<tr>` row element.
+            Look for common class names like 'faculty-member', 'person-profile', 'directory-entry', or similar patterns.
+            Within each person's section, you will find their name (often in a heading tag like `<h2>` or `<h3>`), 
+            their title, contact information (email, phone), and links to their homepage, profile page, or publications.
+            Their name may have a hyperlink to their personal or lab homepage, and they may have a Google Scholar profile link,
+            which can be determined by looking at the URL.
+            
+            Extract a list of all faculty members you can find in the provided HTML.
+            
+            **HTML Content:**
+            ```html
+            {html_content}
+            ```
+            """
+            ),
+        ]
+    )
+    # extraction_chain = create_structured_output_runnable(
+    #     output_schema=FacultyList, 
+    #     llm=analysis_llm, 
+    #     prompt=prompt_template
+    # )
+    # Use with_structured_output to create the structured LLM
+    structured_llm = structured_analysis_llm.with_structured_output(FacultyList)
+    extraction_chain = prompt_template | structured_llm
+    # Run the extraction chain on the text content.
+    extracted_data = extraction_chain.invoke({"html_content": html_content})
+    if extracted_data is not None:
+        ret_data = extracted_data.model_dump() # type: ignore
+    else:
+        ret_data = {"faculty": []}
+
+    return ret_data
+
+def get_page_info(html_content: str, name: str) -> dict:
+    """
+    Parses HTML content that is some kind of researcher, lab, project, or team page.
+
+    Args:
+        html_content: The HTML of the faculty directory page as a string.
+
+    Returns:
+        A dictionary containing the extracted content.
+    """
+    prompt_template = ChatPromptTemplate.from_messages(
+        [
+            ("system", "You are an expert at extracting information from HTML documents and structuring it in JSON."),
+            ("human", 
+            """
+            Please categorize from the following HTML content. If the page is related to or for a person, it must mention their name, which is """ + name + """.
+            
+            **Input Description:**
+            The provided text is the raw HTML content of a web page representing info about a researcher named """ +
+            name +
+            """, or their lab, or their research projects, 
+            or their research team; or a list of publications, courses, or software.
+            The page is likely to also link to other related pages, of one of these types.
+            
+            Categorize the page as one of the following:
+            - organizational directory page for """ + name +""", which must mention """ + name + """
+            - personal or professional homepage for """ + name +""", which must mention """ + name + """
+            - research lab page for  for """ + name + """'s lab, which must mention """ + name + """
+            - a directory of additional lab members, students, postdocs, or visitors for """ + name + """'s lab, which must mention """ + name + """
+            - CV or resume, which must mention """ + name + """
+            - teaching page, which must mention """ + name + """ and not just be an organizational teaching page
+            - projects page, which must mention """ + name + """ and not just be an organizational research page
+            - publications page, which must mention """ + name + """ and not just be an organizational publications page
+            - software page, which must mention """ + name + """ and not just be an organizational publications page
+            - talks and keynotes page, which must mention """ + name + """ and not just be an organizational publications page
+            - other
+            
+            If the page has outgoing links, extract each link and categorize it as one of the following:
+            - organizational directory page for a person
+            - personal or professional homepage
+            - research lab page
+            - lab member directory
+            - CV or resume
+            - teaching page
+            - projects page
+            - publications page
+            - software page
+            - talks and keynotes page
+            - google scholar profile
+            - other
+            
+            **HTML Content:**
+            ```html
+            {html_content}
+            ```
+            """
+            ),
+        ]
+    )
+
+    structured_llm = better_llm.with_structured_output(WebPage)
+    extraction_chain = prompt_template | structured_llm
+    # Run the extraction chain on the text content.
+    extracted_data = extraction_chain.invoke({"html_content": html_content})
+    
+    # Use LLM to verify the HTML content is about the person named "name"
+    verification_prompt = ChatPromptTemplate.from_messages([
+        ("system", "You are an expert at verifying if a web page is about a specific person."),
+        ("user", "Does the following HTML content clearly relate to the person named '{name}'? Respond strictly with 'Yes' or 'No'.\n\nHTML Content:\n{html_content}")
+    ])
+    verification_chain = verification_prompt | analysis_llm | StrOutputParser()
+    verification_result = verification_chain.invoke({"html_content": html_content, "name": name}).strip().lower()
+    if verification_result != "yes":
+        return {}
+    
+    if extracted_data is not None:
+        ret_data = extracted_data.model_dump() # type: ignore
+    else:
+        ret_data = {}
+
+    return ret_data
+
+def is_about(url: str, name: str) -> bool:
+    """
+    Checks if the URL is about the person with the given name.  Currently uses substring as opposed to LLM.
+
+    Args:
+        url (str): The URL to check.
+        name (str): The name of the person.
+
+    Returns:
+        bool: True if the URL is about the person, False otherwise.
+    """
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        page_content = response.text
+        count = 0
+        for subname in name.split(' '):
+            if subname.lower() in page_content.lower():
+                count += 1
+                
+        return count >= len(name.split(' ')) / 2 and count > 1  # At least half of the name parts should be present in the content
+    except Exception as e:
+        page_content = ""
+        return False
+
+def classify_json(paper_json: dict) -> str:
+    """
+    Classifies a paper's description (arxiv format) into a short category descriptor using an LLM.
+
+    Args:
+        paper_json (dict): Dictionary containing arxiv paper fields (id, journal-ref, authors, abstract, etc.)
+
+    Returns:
+        str: A short category descriptor for the paper.
+    """
+    class PaperCategory(BaseModel):
+        """A short category descriptor for the paper."""
+        category: str = Field(..., description="A concise, few-word category for the paper (e.g., 'machine learning', 'quantum physics', 'algebraic geometry').")
+
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", "You are an expert at classifying academic papers. Given a paper's metadata and abstract, generate a concise, few-word category descriptor for the paper. Respond only with the category string."),
+        ("user", "Paper metadata:\n\n{paper_json}\n\nCategory:")
+    ])
+
+    structured_llm = analysis_llm.with_structured_output(PaperCategory)
+    chain = prompt | structured_llm
+    result = chain.invoke({"paper_json": paper_json})
+    return result.category # type: ignore

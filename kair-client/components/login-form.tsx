@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from 'next/navigation'; // Import useRouter
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { config } from "@/config";
 import {
   Card,
   CardContent,
@@ -14,6 +15,8 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useAuth } from "@/context/auth-context"; // Import the useAuth hook
+import Link from "next/link";
+import Image from 'next/image'
 
 export function LoginForm({
   className,
@@ -32,7 +35,7 @@ export function LoginForm({
     setError(null);
 
     try {
-      const response = await fetch('/api/login', {
+        const response = await fetch(`${config.apiBaseUrl}/api/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -43,8 +46,8 @@ export function LoginForm({
       const data = await response.json();
 
       if (response.ok && data.success) {
-        login();
-        router.push('/dashboard'); // Redirect to /dashboard
+        login({ "name": data.user.name, "email": email, "organization": data.user.organization, "avatar": data.user.avatar }); // Call login function from context
+        router.push('/chat'); // Redirect to /dashboard
       } else {
         setError(data.message || "Login failed. Please try again.");
       }
@@ -59,6 +62,14 @@ export function LoginForm({
   return (
     <div className={cn("flex flex-col gap-6", className)} {...props}>
       <Card>
+        <div className="flex justify-center items-center py-6 border-b">
+          <Image
+            src="/images/airfoundry-logo.png"
+            width="234"
+            height="65"
+            alt="Airfoundry Logo"
+          />
+        </div>
         <CardHeader>
           <CardTitle>Login to your account</CardTitle>
           <CardDescription>
@@ -109,6 +120,12 @@ export function LoginForm({
                 {/* <Button variant="outline" className="w-full" disabled={isLoading}>
                   Login with Google
                 </Button> */}
+                {/* Create Account Button */}
+                <Link href="/create-account" passHref>
+                  <Button variant="outline" className="w-full" type="button">
+                    Create an account
+                  </Button>
+                </Link>
               </div>
             </div>
             {/* <div className="mt-4 text-center text-sm">

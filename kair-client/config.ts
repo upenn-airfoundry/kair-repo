@@ -1,3 +1,3 @@
 export const config = {
-  apiBaseUrl: 'http://localhost:8080', // Flask server URL
-}; 
+  apiBaseUrl: process.env.NEXT_PUBLIC_BACKEND, // Access the prefixed variable
+};

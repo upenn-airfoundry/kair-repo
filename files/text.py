@@ -103,7 +103,7 @@ def index_split_paragraphs(split_docs: list, path: str, url: str, the_date) -> i
         
         print ("Added paper " + str(paper_id) + " with title " + title)
         
-        graph_db.add_tag_to_entity(paper_id, "field", field)
+        graph_db.add_or_update_tag(paper_id, "field", field)
         
         print ("Added summary " + summary)
 
@@ -113,9 +113,9 @@ def index_split_paragraphs(split_docs: list, path: str, url: str, the_date) -> i
             name = author.get("name", "Unknown Author")
             email = author.get("email", None)
             affiliation = author.get("affiliation", None)
-            author_id = graph_db.add_author(name=name, email=email, organization=affiliation)
-            graph_db.link_author_to_paper(author_id, paper_id)
-            print(f"Added author: {name} (ID: {author_id})")
+            author_id = graph_db.add_author_tag(paper_id, name, email, affiliation)
+            #graph_db.link_author_to_paper(author_id, paper_id)
+            print(f"Added author: {name} ({author_id})")
 
         # Index the paragraphs
         for doc in split_docs:

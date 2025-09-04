@@ -11,8 +11,15 @@ import json
 from typing import List
 
 from graph_db import GraphAccessor
+import requests
 
 DEFAULT_BATCH = 10
+
+crawled = set()
+
+from crawl.web_fetch import searchapi_for_author, searchapi_for_authorid
+
+from crawl.web_fetch import search_strategies
 
 def add_strategy(graph_accessor, strategy):
     return
@@ -21,6 +28,16 @@ def get_current_best_strategy(graph_accessor, task_description):
     return
 
 def enrich_entities(graph_accessor: GraphAccessor, task: str, entity_set: List[int] = None) -> List[str]:
+    """Enrich the database, either by adding external entities or by annotating existing entities with assessment criteria.
+
+    Args:
+        graph_accessor (GraphAccessor): GraphAccessor to use for database operations.
+        task (str): The name of the task to perform, which corresponds to an assessment criterion.
+        entity_set (List[int], optional): A list of entity IDs to scope the enrichment to. If None, all entities in the relevant scope will be considered.
+
+    Returns:
+        List[str]: A list of enriched entities or results from the enrichment process.
+    """
     criteria = graph_accessor.get_assessment_criteria(task)
     
     ret = []
@@ -33,8 +50,21 @@ def enrich_entities(graph_accessor: GraphAccessor, task: str, entity_set: List[i
         name = criterion['name']
         scope = criterion['scope']
         prompt = criterion['prompt']
+        # provenance = criterion['description']
+        # if provenance:
+        #     provenance = json.loads(provenance)
+        # else:
+        #     provenance = []
         # promise = criterion['promise']
         
+        # If it's a pre-programmed strategy, use it
+        # if name in search_strategies:
+        #     print(f"Using search strategy for {name}")
+            
+        #     search_strategies[name](graph_accessor, scope, provenance, False)
+        #     continue
+
+        # If it's a pre-programmed enrichment task, use it        
         scoped_entities = entity_set;
         if not scoped_entities:
             # Get the relevant scope
@@ -53,11 +83,11 @@ def enrich_entities(graph_accessor: GraphAccessor, task: str, entity_set: List[i
 
                 if len(result) == 0:
                     print(f"Criterion {name} is empty for paper {paper['entity_id']}")
-                    graph_accessor.add_tag_to_entity(paper['entity_id'], name, None)
+                    graph_accessor.add_or_update_tag(paper['entity_id'], name, None)
                     continue
                 
                 ret += result[name]
-                graph_accessor.add_tag_to_entity(paper['entity_id'], name, result[name])
+                graph_accessor.add_or_update_tag(paper['entity_id'], name, result[name])
                 
     return ret                
 
@@ -84,6 +114,7 @@ def iterative_enrichment(graph_accessor: GraphAccessor, task: str = None):
     for criterion in criteria:
         # name: str, scope: str, prompt: str, description: str
         graph_accessor.add_task_to_queue(criterion['name'], criterion['scope'], criterion['prompt'], criterion['name'])
+        
 
 def process_next_task(graph_accessor: GraphAccessor):
     """
@@ -97,11 +128,24 @@ def process_next_task(graph_accessor: GraphAccessor):
 
             print(f"Processing task: {task_name} (Scope: {task_scope})")
 
+            # If it's a pre-programmed strategy, use it
+            if task_name in search_strategies:
+                # Delete the task after processing
+                graph_accessor.delete_task(next_task["task_id"])
+                
+                print(f"Using search strategy for {task_name}")
+                scope = next_task['scope']
+                provenance = next_task['description']
+                if provenance:
+                    provenance = json.loads(provenance)
+                else:
+                    provenance = []
+                
+                search_strategies[task_name](graph_accessor, scope, provenance, force=False)
+
             # Call enrichment_task with the task name
             enrich_entities(graph_accessor, task_name)
 
-            # Delete the task after processing
-            graph_accessor.delete_task(next_task["task_id"])
             print(f"Task {task_name} completed and removed from the queue.")
         else:
             print("No tasks in the queue.")

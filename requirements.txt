@@ -1,6 +1,6 @@
 tornado
 python-dotenv
-psycopg2
+psycopg2-binary
 numpy
 pandas
 langchain
@@ -19,9 +19,14 @@ flask-cors
 bs4
 flask-apscheduler
 flask-socketio
+apscheduler
 arxiv
 datasketch
 pytest
 lxml
 hurry.filesize
-
+bcrypt
+grobid-client-python
+langchain-google-vertexai
+google-generativeai
+langchain-google-genai

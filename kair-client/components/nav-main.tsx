@@ -3,6 +3,9 @@
 import * as React from "react"
 import { IconCirclePlusFilled, IconMail, type Icon } from "@tabler/icons-react"
 
+import Link from "next/link"
+import { usePathname } from "next/navigation"
+
 import { Button } from "@/components/ui/button"
 import {
   Drawer,
@@ -30,16 +33,24 @@ import {
   TabsTrigger,
 } from "@/components/ui/tabs"
 
+
+
 export function NavMain({
   items,
+  selectedTab,
+  onTabSelect,
 }: {
   items: {
     title: string
     url: string
     icon?: Icon
-  }[]
+  }[],
+  selectedTab: string,
+  onTabSelect: (url: string) => void,
 }) {
-  const [selectedTab, setSelectedTab] = React.useState("pdfs")
+// Inside NavMain component
+  const [importTab, setImportTab] = React.useState("pdfs");
+  // const [selectedTab, setSelectedTab] = React.useState("pdfs")
   // State for PDF/Parquet
   const [pdfFiles, setPdfFiles] = React.useState<FileList | null>(null)
   const [parquetFiles, setParquetFiles] = React.useState<FileList | null>(null)
@@ -59,15 +70,15 @@ export function NavMain({
   function handleImport(e: React.FormEvent) {
     e.preventDefault()
     setError("")
-    if (selectedTab === "pdfs" && !isPdfValid) {
+    if (importTab === "pdfs" && !isPdfValid) {
       setError("Please select at least one PDF file.")
       return
     }
-    if (selectedTab === "database" && !isDbValid) {
+    if (importTab === "database" && !isDbValid) {
       setError("Please fill in all database fields.")
       return
     }
-    if (selectedTab === "parquet" && !isParquetValid) {
+    if (importTab === "parquet" && !isParquetValid) {
       setError("Please select at least one Parquet file.")
       return
     }
@@ -89,7 +100,7 @@ export function NavMain({
               <DrawerTrigger asChild>
                 <SidebarMenuButton
                   tooltip="Import"
-                  className="bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground active:bg-primary/90 active:text-primary-foreground min-w-8 duration-200 ease-linear"
+                  className="min-w-8 duration-200 ease-linear"
                 >
                   <IconCirclePlusFilled />
                   <span>Import</span>
@@ -103,7 +114,7 @@ export function NavMain({
                   </DrawerDescription>
                 </DrawerHeader>
                 <div className="p-4">
-                  <Tabs value={selectedTab} onValueChange={v => { setSelectedTab(v); setError("") }} className="w-full">
+                  <Tabs value={importTab} onValueChange={v => { setImportTab(v); setError("") }} className="w-full">
                     <TabsList className="grid w-full grid-cols-3">
                       <TabsTrigger value="pdfs">PDFs</TabsTrigger>
                       <TabsTrigger value="database">Database</TabsTrigger>
@@ -171,11 +182,20 @@ export function NavMain({
         <SidebarMenu>
           {items.map((item) => (
             <SidebarMenuItem key={item.title}>
-              <SidebarMenuButton asChild tooltip={item.title}>
-                <a href={item.url}>
+              <SidebarMenuButton
+                asChild
+                tooltip={item.title}
+                className={
+                  selectedTab === item.url
+                    ? "bg-primary text-primary-foreground font-bold"
+                    : ""
+                }
+                onClick={() => onTabSelect(item.url)}
+              >
+                <Link href={item.url}>
                   {item.icon && <item.icon />}
                   <span>{item.title}</span>
-                </a>
+                </Link>
               </SidebarMenuButton>
             </SidebarMenuItem>
           ))}

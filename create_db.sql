@@ -74,6 +74,7 @@ CREATE TYPE entity_types AS ENUM ('synopsis',
                                   'event',
                                   'result');
 
+ALTER TYPE entity_types ADD VALUE IF NOT EXISTS 'google_scholar_profile';
 -- Data is "chunked" into hierarchies of entities.
 -- An entity can be a synopsis, fact, new concept, claim, author, organization,
 -- tag, paper, section, paragraph, table, hypothesis, source, method, event,
@@ -107,6 +108,10 @@ ALTER TABLE entities
 ALTER TABLE entities
     ADD FOREIGN KEY (supporting_evidence) REFERENCES entities(entity_id) ON DELETE CASCADE;
 
+ALTER TABLE entities
+    DROP CONSTRAINT unique_entities;
+ALTER TABLE entities
+    ADD CONSTRAINT unique_entities UNIQUE(entity_type, entity_name, entity_url);
 
 CREATE INDEX entity_name_idx ON entities USING btree ("entity_name");
 CREATE INDEX entity_type_idx ON entities USING btree ("entity_type");
@@ -116,7 +121,7 @@ USING diskann (entity_embed vector_cosine_ops);
 
 CREATE INDEX entity_keyword_idx ON entities USING GIN (to_tsvector('english', entity_detail));
 
--- Rename to assocation?
+-- Rename to association?
 CREATE TABLE entity_link(
     from_id INTEGER,
     to_id INTEGER,
@@ -140,6 +145,13 @@ CREATE TABLE entity_tags(
     PRIMARY KEY (entity_id, tag_name),
     FOREIGN KEY (entity_id) REFERENCES entities(entity_id) ON DELETE CASCADE
 );
+
+ALTER TABLE entity_tags
+    ADD COLUMN entity_tag_instance INTEGER DEFAULT 1;
+
+ALTER TABLE entity_tags
+    DROP CONSTRAINT entity_tags_pkey,
+    ADD PRIMARY KEY (entity_id, entity_tag_instance, tag_name);
 
 CREATE INDEX entity_tag_idx ON entity_tags(tag_name);
 CREATE INDEX entity_tag_val_idx ON entity_tags(tag_value);
@@ -180,6 +192,9 @@ CREATE TABLE association_criteria (
     FOREIGN KEY (entity2_id) REFERENCES entities(entity_id) ON DELETE CASCADE
 );
 
+alter table association_criteria
+    add column association_promise float;
+
 ALTER TABLE association_criteria
     ADD COLUMN IF NOT EXISTS is_aggregate BOOLEAN default false;
 
@@ -201,6 +216,9 @@ CREATE TABLE task_queue(
     task_embed vector(1536)
 );
 
+ALTER TABLE task_queue
+    ADD CONSTRAINT unique_task_name_scope UNIQUE(task_name, task_prompt, task_scope);
+
 CREATE INDEX task_name_idx ON task_queue USING btree ("task_name");
 CREATE INDEX task_embed_idx ON task_queue
 USING diskann (task_embed vector_cosine_ops);
@@ -218,6 +236,9 @@ CREATE TABLE indexed_documents(
 ALTER TABLE indexed_documents
     ADD COLUMN entity_id INTEGER REFERENCES entities(entity_id) ON DELETE CASCADE,
     ADD CONSTRAINT unique_documents UNIQUE(document_name, document_url, document_type);
+
+ALTER TABLE indexed_documents
+    ADD COLUMN IF NOT EXISTS document_content TEXT;
 
 CREATE INDEX document_name_idx ON indexed_documents USING btree ("document_name");
 CREATE INDEX document_url_idx ON indexed_documents USING btree ("document_url");
@@ -259,6 +280,32 @@ CREATE INDEX figure_type_idx ON indexed_figures USING btree ("figure_type");
 CREATE INDEX figure_embed_idx ON indexed_figures
 USING diskann (figure_embed vector_cosine_ops);
 
+CREATE TABLE users (
+    user_id SERIAL PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE crawl_cache (
+    cache_id SERIAL PRIMARY KEY,
+    url TEXT NOT NULL UNIQUE,
+    content TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    digest TEXT NOT NULL UNIQUE
+);
+
+ALTER TABLE crawl_cache
+    ADD COLUMN IF NOT EXISTS extracted_json JSON;
+
+ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS name TEXT;
+
+ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS organization TEXT;
+
+ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS avatar TEXT;
 
 ---------- Some useful views ----------------
 
@@ -286,17 +333,16 @@ CREATE VIEW paragraphs_view AS
     FROM entities
     WHERE entity_type = 'paragraph';
 
+DROP VIEW IF EXISTS paragraphs_papers_authors_view;
 CREATE VIEW paragraphs_papers_authors_view AS
-    SELECT para.entity_detail, paper.entity_url, author.entity_name, author.entity_contact
+    SELECT para.entity_detail, paper.entity_url, author.tag_value as author
     FROM entities para JOIN entities paper ON para.entity_parent = paper.entity_id
-    JOIN entities author ON paper.entity_parent = author.entity_id
-    WHERE para.entity_type = 'paragraph' and paper.entity_type = 'paper' and author.entity_type = 'author';
+    JOIN entity_tags author ON paper.entity_id = author.entity_id
+    WHERE para.entity_type = 'paragraph' and paper.entity_type = 'paper' and author.tag_name = 'author';
 
 grant select, insert, update, delete on all tables in schema public to kair;
 
 create schema indexed_tables;
-
-grant select, insert, update, delete on all tables in schema public to kair;
 
 grant create on schema indexed_tables to kair;
 
@@ -307,3 +353,23 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA indexed_tables GRANT SELECT, INSERT, UPDATE, 
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO kair;
 
 grant select, insert, update, delete on all tables in schema indexed_tables to kair;
+
+GRANT USAGE ON SEQUENCE users_user_id_seq TO kair;
+
+GRANT USAGE ON SEQUENCE crawl_queue_id_seq TO kair;
+GRANT USAGE ON SEQUENCE strategies_strategy_id_seq TO kair;
+GRANT USAGE ON SEQUENCE entities_entity_id_seq TO kair;
+GRANT USAGE ON SEQUENCE assessment_criteria_criteria_id_seq TO kair;
+GRANT USAGE ON SEQUENCE association_criteria_association_criteria_id_seq TO kair;
+GRANT USAGE ON SEQUENCE task_queue_task_id_seq TO kair;
+GRANT USAGE ON SEQUENCE indexed_documents_document_id_seq TO kair;
+GRANT USAGE ON SEQUENCE indexed_tables_table_id_seq TO kair;
+GRANT USAGE ON SEQUENCE indexed_figures_figure_id_seq TO kair;
+GRANT USAGE ON SEQUENCE crawl_cache_cache_id_seq TO kair;
+GRANT USAGE ON SEQUENCE indexed_tables_table_id_seq TO kair;
+
+
+create view papers_summaries_fields_authors_view AS
+  SELECT e.entity_id, e.entity_name, e.entity_detail, f.tag_value as "field", s.tag_value as summary, a.tag_value as author
+  FROM entities e join entity_tags a on e.entity_id = a.entity_id JOIN entity_tags s on e.entity_id = s.entity_id JOIN entity_tags f on e.entity_id = f.entity_id
+  WHERE a.tag_name = 'author' and s.tag_name = 'summary' and f.tag_name = 'field' and e.entity_type = 'paper';

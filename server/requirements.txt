@@ -1,6 +1,6 @@
 tornado
 python-dotenv
-psycopg2
+psycopg2-binary
 numpy
 pandas
 langchain
@@ -24,3 +24,8 @@ datasketch
 pytest
 lxml
 hurry.filesize 
+bcrypt
+grobid-client-python
+langchain-google-vertexai
+langchain-core
+langsmith

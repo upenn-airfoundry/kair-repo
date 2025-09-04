@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { SidebarTrigger } from "@/components/ui/sidebar"
+import Image from "next/image"
 
 export function SiteHeader() {
   return (
@@ -11,7 +12,15 @@ export function SiteHeader() {
           orientation="vertical"
           className="mx-2 data-[orientation=vertical]:h-4"
         />
-        <h1 className="text-base font-medium">Dashboard</h1>
+        <div className="flex justify-center items-center py-6 border-b">
+          <Image
+            src="/images/airfoundry-logo.png"
+            width="187"
+            height="52"
+            alt="Airfoundry Logo"
+          />
+        </div>
+        <h1 className="text-base font-medium">&nbsp; Dashboard</h1>
         <div className="ml-auto flex items-center gap-2">
           <Button variant="ghost" asChild size="sm" className="hidden sm:flex">
             <a

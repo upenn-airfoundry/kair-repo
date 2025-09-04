@@ -1,5 +1,6 @@
 import os
 import sys
+import bcrypt
 
 # Add parent directory to Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -11,15 +12,19 @@ import json
 from datetime import datetime
 from dotenv import load_dotenv, find_dotenv
 
+from apscheduler.schedulers.tornado import TornadoScheduler
+
 # Load environment variables from .env file
 _ = load_dotenv(find_dotenv())
 
 from graph_db import GraphAccessor
 from enrichment.iterative_enrichment import process_next_task, iterative_enrichment
+from enrichment.seed_lists import consult_person_seeds
 from entities.generate_doc_info import parse_files_and_index
 from enrichment.langchain_ops import AssessmentOps
 from crawl.web_fetch import fetch_and_crawl_frontier
 from search import search_over_criteria, search_multiple_criteria, generate_rag_answer
+from search import is_search_over_papers, search_basic, is_relevant_answer_with_data
 
 import logging
 
@@ -44,6 +49,85 @@ class BaseHandler(tornado.web.RequestHandler):
 
 # Initialize the GraphAccessor
 graph_accessor = GraphAccessor()
+
+# Initialize and start the TornadoScheduler
+scheduler = TornadoScheduler()
+scheduler.configure(timezone="US/Eastern")
+scheduler.add_job(lambda: consult_person_seeds(graph_accessor))
+scheduler.add_job(lambda: process_next_task(graph_accessor), 'interval', seconds=5, max_instances=1)
+scheduler.start()
+
+class LoginHandler(BaseHandler):
+    def post(self):
+        try:
+            data = self.get_json()
+            email = data.get("email")
+            password = data.get("password")
+            if not email or not password:
+                self.set_status(400)
+                self.write({"error": "'email' and 'password' are required"})
+                return
+
+            # Fetch user from DB and check password
+            user = graph_accessor.exec_sql(
+                "SELECT name, organization, avatar, password_hash FROM users WHERE email = %s;", (email,)
+            )
+            if not user:
+                self.set_status(401)
+                self.write({"success": False, "message": "Invalid credentials"})
+                return
+
+            password_hash = user[0][3].encode("utf-8")
+            if bcrypt.checkpw(password.encode("utf-8"), password_hash):
+                self.write({
+                    "success": True, 
+                    "user": {
+                        "name": user[0][0],
+                        "organization": user[0][1],
+                        "avatar": user[0][2]
+                    },
+                    "message": "Login successful"})
+            else:
+                self.set_status(401)
+                self.write({"success": False, "message": "Invalid credentials"})
+        except Exception as e:
+            self.set_status(500)
+            self.write({"error": f"An error occurred: {e}"})
+
+class CreateAccountHandler(BaseHandler):
+    def post(self):
+        try:
+            data = self.get_json()
+            email = data.get("userId") or data.get("email")
+            avatar = data.get("avatarUrl", "")
+            organization = data.get("organization", "")
+            name = data.get("name", "")
+            password = data.get("password")
+            if not email or not password or not avatar or not organization or not name:
+                self.set_status(400)
+                self.write({"error": "'userId' (or 'email') and 'password' as well as 'avatar', 'name', and 'organization' are required"})
+                return
+
+            # Check if user already exists
+            existing = graph_accessor.exec_sql(
+                "SELECT 1 FROM users WHERE email = %s;", (email,)
+            )
+            if existing:
+                self.set_status(409)
+                self.write({"success": False, "message": "Account already exists"})
+                return
+
+            # Hash the password with bcrypt
+            password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+            graph_accessor.execute(
+                "INSERT INTO users (email, password_hash, name, organization, avatar) VALUES (%s, %s, %s, %s, %s);",
+                (email, password_hash, name, organization, avatar)
+            )
+            graph_accessor.commit()
+            self.write({"success": True, "message": "Account created"})
+        except Exception as e:
+            self.set_status(500)
+            self.write({"error": f"An error occurred: {e}"})
 
 class HealthCheckHandler(BaseHandler):
     def get(self):
@@ -197,7 +281,9 @@ class AddAssessmentCriterionHandler(BaseHandler):
 class AddEnrichmentHandler(BaseHandler):
     def post(self):
         try:
-            iterative_enrichment(graph_accessor)
+            data = self.get_json()
+            name = data.get('name')
+            iterative_enrichment(graph_accessor, name)
             self.write({"message": "All enrichment tasks queued"})
         except Exception as e:
             self.set_status(500)
@@ -215,6 +301,13 @@ class ExpandSearchHandler(BaseHandler):
                 self.write({"error": "'prompt' parameter is required"})
                 return
 
+            if not is_search_over_papers(user_prompt):
+                answer = search_basic(user_prompt)
+                self.write({
+                    "data": {
+                        "message": answer
+                    }})
+            
             questions = search_over_criteria(user_prompt, graph_accessor.get_assessment_criteria())
             logging.info('Expanded into subquestions: ' + questions)
             
@@ -245,11 +338,28 @@ class ExpandSearchHandler(BaseHandler):
             if len(docs_in_order):
                 paper_info = graph_accessor.get_entities_with_summaries(list(docs_in_order))
                 answer = generate_rag_answer(paper_info, user_prompt)
-                self.write({
-                    "data": {
-                        "message": answer + '\n\nWe additionally looked for assessment criteria: ' + questions
-                    }
-                })
+                
+                if answer is None or len(answer) == 0 or "i am sorry" in answer.lower() or not is_relevant_answer_with_data(user_prompt, answer):
+                    questions = None
+                    answer = search_basic(user_prompt)
+                
+                if questions:
+                    question_str = ''
+                    question_map = json.loads(questions)
+                    for q in question_map.keys():
+                        question_str += f' * {q}: {question_map[q]}\n'
+                        
+                    self.write({
+                        "data": {
+                            "message": answer + '\n\nWe additionally looked for assessment criteria: \n\n' + question_str
+                        }
+                    })
+                else:
+                    self.write({
+                        "data": {
+                            "message": answer
+                        }
+                    })
             else:
                 self.set_status(404)
                 self.write({"error": "No relevant papers found"})
@@ -291,12 +401,15 @@ def make_app():
         (r"/expand", ExpandSearchHandler),
         (r"/start_scheduler", StartSchedulerHandler),
         (r"/stop_scheduler", StopSchedulerHandler),
+        (r"/api/login", LoginHandler),
+        (r"/api/create", CreateAccountHandler),        
+        (r"/api/chat", ExpandSearchHandler),        
     ])
 
 if __name__ == "__main__":
     tornado.options.parse_command_line()
     app = make_app()
-    port = int(os.getenv("PORT", 8081))
+    port = int(os.getenv("BACKEND_PORT", 8081))
     app.listen(port)
     print(f"Server running on port {port}")
     tornado.ioloop.IOLoop.current().start() 
