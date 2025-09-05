@@ -13,8 +13,12 @@ interface Message {
   content: string;
 }
 
-// No longer need addMessage prop, manage messages locally
-export default function ChatInput() {
+
+interface ChatInputProps {
+  addMessage: (message: Message) => void;
+}
+
+export default function ChatInput({ addMessage }: ChatInputProps) {
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -28,6 +32,7 @@ export default function ChatInput() {
     const userMessageId = Date.now().toString();
     const userMsg: Message = { id: userMessageId, sender: 'user', content: trimmedMessage };
     setMessages((prev) => [...prev, userMsg]);
+    addMessage(userMsg); // Call the prop function to add message to parent
     setMessage('');
     setIsLoading(true);
 
@@ -43,19 +48,17 @@ export default function ChatInput() {
 
       // Add bot response
       const botMessageId = Date.now().toString() + '-bot';
-      setMessages((prev) => [
-        ...prev,
-        { id: botMessageId, sender: 'bot', content: botResponse.data.message }
-      ]);
+      const botMsg: Message = { id: botMessageId, sender: 'bot', content: botResponse.data.message };
+      setMessages((prev) => [...prev, botMsg]);
+      addMessage(botMsg); // Call the prop function to add message to parent
     } catch (error) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: Date.now().toString() + '-error',
-          sender: 'bot',
-          content: 'Sorry, something went wrong. Please try again. ' + error,
-        }
-      ]);
+       const errorMsg: Message = {
+        id: Date.now().toString() + '-error',
+        sender: 'bot',
+        content: 'Sorry, something went wrong. Please try again. ' + error,
+      };
+      setMessages((prev) => [...prev, errorMsg]);
+      addMessage(errorMsg); // Call the prop
     } finally {
       setIsLoading(false);
     }
