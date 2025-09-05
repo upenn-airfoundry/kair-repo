@@ -498,8 +498,9 @@ export default function Home() {
                     title: "Contextual Learning",
                     description: "Our platform learns from your research patterns to provide personalized, relevant insights."
                   }
-                ].map((feature, _) => {
+                ].map((feature, index) => {
                   const Icon = feature.icon;
+                  console.log(index);
                   return (
                     <motion.div 
                       key={feature.title}
