@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { ArrowRight, Search, Brain, Zap, Dna, TestTube2, Lightbulb } from 'lucide-react';
+import { ArrowRight, Dna, TestTube2, Lightbulb } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useEffect, useState } from 'react';
 import Image from 'next/image';
@@ -500,6 +500,7 @@ export default function Home() {
                   }
                 ].map((feature, index) => {
                   const Icon = feature.icon;
+                  index++;
                   return (
                     <motion.div 
                       key={feature.title}

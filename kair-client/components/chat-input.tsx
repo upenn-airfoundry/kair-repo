@@ -53,7 +53,7 @@ export default function ChatInput() {
         {
           id: Date.now().toString() + '-error',
           sender: 'bot',
-          content: 'Sorry, something went wrong. Please try again.',
+          content: 'Sorry, something went wrong. Please try again. ' + error,
         }
       ]);
     } finally {

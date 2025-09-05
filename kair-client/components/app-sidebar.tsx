@@ -1,31 +1,25 @@
 "use client"
 
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useAuth } from "@/context/auth-context";
 import * as React from "react"
 import {
   IconMessage,
   IconCamera,
-  IconChartBar,
   IconDashboard,
   IconDatabase,
   IconFileAi,
   IconFileDescription,
   IconFileWord,
-  IconFolder,
   IconHelp,
-  IconInnerShadowTop,
-  IconListDetails,
   IconReport,
   IconSearch,
   IconSettings,
-  IconUsers,
   IconBrain,
   IconAffiliate
 } from "@tabler/icons-react"
 
-import { NavDocuments } from "@/components/nav-documents"
 import { NavMain } from "@/components/nav-main"
 import { NavSecondary } from "@/components/nav-secondary"
 import { NavUser } from "@/components/nav-user"
@@ -168,8 +162,7 @@ const data = {
 }
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
-  const { user, logout } = useAuth();
-  const [selectedTab, setSelectedTab] = useState<string>("/chat");
+  const { user } = useAuth();
   const pathname = usePathname();
 
   if (user) {
@@ -178,11 +171,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     data.user.avatar = user.avatar || data.user.avatar; // Use the user from context or fallback to default
     data.user.organization = user.organization || "KAIR"; // Use the user from context or fallback to default
 }
-
-  // Handler to update selected tab
-  const handleTabSelect = (url: string) => {
-    setSelectedTab(url);
-  };
 
   return (
     <Sidebar collapsible="offcanvas" {...props}>

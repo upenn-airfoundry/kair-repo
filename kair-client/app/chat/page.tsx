@@ -4,13 +4,6 @@ import ChatInput from '@/components/chat-input';
 import { AppSidebar } from '@/components/app-sidebar';
 import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar';
 import { ProtectedRoute } from "@/components/protected-route"
-import {
-  Card,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-  CardFooter,
-} from '@/components/ui/card';
 import { ChatHeader } from '@/components/chat-header';
 import { useState } from 'react';
 
