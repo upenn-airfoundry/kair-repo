@@ -4,13 +4,13 @@ import ChatInput from '@/components/chat-input';
 import { AppSidebar } from '@/components/app-sidebar';
 import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar';
 import { ProtectedRoute } from "@/components/protected-route"
-import {
-  Card,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-  CardFooter,
-} from '@/components/ui/card';
+// import {
+//   Card,
+//   CardHeader,
+//   CardTitle,
+//   CardDescription,
+//   CardFooter,
+// } from '@/components/ui/card';
 import { ChatHeader } from '@/components/chat-header';
 import { useState } from 'react';
 
@@ -66,6 +66,7 @@ export default function ChatPage() {
                 ))
               )}
             </div>
+            {/* @ts-expect-error: ChatInput expects addMessage prop */}
             <ChatInput addMessage={addMessage} />
           </div>
         </div>

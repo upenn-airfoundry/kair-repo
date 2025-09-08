@@ -1,10 +1,10 @@
 "use client"
 
 import * as React from "react"
-import { IconCirclePlusFilled, IconMail, type Icon } from "@tabler/icons-react"
+import { IconCirclePlusFilled, type Icon } from "@tabler/icons-react"
 
 import Link from "next/link"
-import { usePathname } from "next/navigation"
+// import { usePathname } from "next/navigation"
 
 import { Button } from "@/components/ui/button"
 import {

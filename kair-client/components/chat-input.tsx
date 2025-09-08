@@ -48,6 +48,7 @@ export default function ChatInput() {
         { id: botMessageId, sender: 'bot', content: botResponse.data.message }
       ]);
     } catch (error) {
+      console.error("Error in handleSubmit:", error);
       setMessages((prev) => [
         ...prev,
         {

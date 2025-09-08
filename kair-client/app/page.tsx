@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { ArrowRight, Search, Brain, Zap, Dna, TestTube2, Lightbulb } from 'lucide-react';
+import { ArrowRight, Dna, TestTube2, Lightbulb } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useEffect, useState } from 'react';
 import Image from 'next/image';
@@ -498,7 +498,8 @@ export default function Home() {
                     title: "Contextual Learning",
                     description: "Our platform learns from your research patterns to provide personalized, relevant insights."
                   }
-                ].map((feature, index) => {
+                // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                ].map((feature, _ ) => {
                   const Icon = feature.icon;
                   return (
                     <motion.div 
