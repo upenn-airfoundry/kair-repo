@@ -29,3 +29,8 @@ grobid-client-python
 langchain-google-vertexai
 langchain-core
 langsmith
+google-generativeai
+APScheduler
+langchain-google-genai
+cloud-sql-python-connector
+pg8000

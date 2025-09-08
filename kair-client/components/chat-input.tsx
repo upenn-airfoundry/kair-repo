@@ -86,6 +86,14 @@ export default function ChatInput() {
             </div>
           </div>
         ))}
+        {isLoading && (
+          <div className="text-left">
+            <div className="inline-flex items-center gap-2 bg-gray-100 dark:bg-gray-800 rounded px-3 py-2">
+              <span className="inline-block h-3 w-3 rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground animate-spin" />
+              <span className="text-sm text-muted-foreground">KAIR is thinking...</span>
+            </div>
+          </div>
+        )}
       </div>
       {/* Input form */}
       <form

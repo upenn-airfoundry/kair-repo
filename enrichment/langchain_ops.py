@@ -1,4 +1,4 @@
-from enrichment.llms import analysis_llm
+from enrichment.llms import get_analysis_llm
 from graph_db import GraphAccessor
 
 from langchain.prompts import ChatPromptTemplate
@@ -29,7 +29,7 @@ class AssessmentOps(EnrichmentCoreOps):
     
     def __init__(self, prompt: str, tag: str, budget: int = 1000, source_retriever: Fun[str,str] = None):
         super().__init__(budget, [], [source_retriever])
-        self.llm = analysis_llm
+        self.llm = get_analysis_llm()
         self.tag = tag
         self.prompt = prompt
         self.graph_accessor = GraphAccessor()

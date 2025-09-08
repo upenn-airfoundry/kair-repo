@@ -8,7 +8,12 @@ T = TypeVar('T')
 U = TypeVar('U')
 V = TypeVar('V')
 
-graph_db = GraphAccessor()
+# Lazily initialize DB to avoid failing import when DB is unavailable
+graph_db = None
+try:
+    graph_db = GraphAccessor()
+except Exception:
+    graph_db = None
 
 class EnrichmentCoreOps(Generic[T,U,V]):
     """

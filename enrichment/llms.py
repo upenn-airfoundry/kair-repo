@@ -1,66 +1,81 @@
-from langchain_openai import ChatOpenAI
-from langchain_google_vertexai import ChatVertexAI
-from google.cloud import aiplatform
-import google.generativeai as genai
-
-#from langchain_google_vertexai import GoogleGenerativeAIEmbeddings
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
-
 from dotenv import load_dotenv, find_dotenv
 import os
 
 _ = load_dotenv(find_dotenv())
 
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = os.path.expanduser("~/.config/gcloud/air-foundry-seas-8645-7ff9e2da3f97.json")#application_default_credentials.json")
+# Lazy imports to avoid crashing at import time if credentials are missing
+def _import_openai_llm():
+    from langchain_openai import ChatOpenAI
+    return ChatOpenAI
 
-# Initialize the a specific Embeddings Model version
-doc_embeddings = GoogleGenerativeAIEmbeddings(
-    model="models/gemini-embedding-001",
-    task_type="RETRIEVAL_DOCUMENT")
+def _import_vertex_llm():
+    from langchain_google_vertexai import ChatVertexAI
+    return ChatVertexAI
 
-# Initialize the a specific Embeddings Model version
-query_embeddings = GoogleGenerativeAIEmbeddings(
-    model="models/gemini-embedding-001",
-    task_type="RETRIEVAL_QUERY")
+def _import_genai_embeddings():
+    from langchain_google_genai import GoogleGenerativeAIEmbeddings
+    return GoogleGenerativeAIEmbeddings
 
-# Initialize Vertex AI
-aiplatform.init(project='air-foundry-seas-8645', location='us-east1')  # e.g., "us-central1"
+_vertex_initialized = False
 
-#better_llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.1)
+def _ensure_vertex_initialized():
+    global _vertex_initialized
+    if not _vertex_initialized:
+        try:
+            from google.cloud import aiplatform
+            project = os.getenv('GOOGLE_CLOUD_PROJECT') or os.getenv('GCP_PROJECT')
+            location = os.getenv('GOOGLE_CLOUD_REGION') or os.getenv('GCP_REGION') or 'us-central1'
+            aiplatform.init(project=project, location=location)
+        except Exception:
+            pass
+        _vertex_initialized = True
 
-structured_analysis_llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0.1)
+def _build_doc_embeddings():
+    _ensure_vertex_initialized()
+    return _import_genai_embeddings()(model="models/gemini-embedding-001", task_type="RETRIEVAL_DOCUMENT")
 
-analysis_llm = ChatVertexAI(
-    model="gemini-2.0-flash-lite-001",
-    temperature=0,
-    max_tokens=None,
-    max_retries=6,
-    stop=None,
-    # other params...
-)
+def _build_query_embeddings():
+    _ensure_vertex_initialized()
+    return _import_genai_embeddings()(model="models/gemini-embedding-001", task_type="RETRIEVAL_QUERY")
 
-better_llm = ChatVertexAI(
-    model="gemini-2.0-flash-001",
-    temperature=0,
-    max_tokens=None,
-    max_retries=6,
-    stop=None,
-    # other params...
-)
 
-# Use Gemini embeddings
 def gemini_doc_embedding(text):
-    # result = genai.embed_content(
-    #     model="models/embedding-001",
-    #     content=text,
-    #     task_type="retrieval_document"
-    # )
-    # return result['embedding']
-    if isinstance(text, list):
-        return doc_embeddings.embed_documents(text)
-    else:
-        return doc_embeddings.embed_documents([text])[0]
+    try:
+        embeddings = _build_doc_embeddings()
+        if isinstance(text, list):
+            return embeddings.embed_documents(text)
+        else:
+            return embeddings.embed_documents([text])[0]
+    except Exception:
+        # Fallback to a zero vector length 1536
+        return [[0.0] * 1536 for _ in text] if isinstance(text, list) else [0.0] * 1536
 
-# Use Gemini embeddings
+
 def gemini_query_embedding(query):
-    return query_embeddings.embed_query(query)
+    try:
+        embeddings = _build_query_embeddings()
+        return embeddings.embed_query(query)
+    except Exception:
+        return [0.0] * 1536
+
+
+def get_structured_analysis_llm():
+    try:
+        ChatOpenAI = _import_openai_llm()
+        return ChatOpenAI(model="gpt-4.1-mini", temperature=0.1)
+    except Exception:
+        return None
+
+def get_analysis_llm():
+    try:
+        ChatVertexAI = _import_vertex_llm()
+        return ChatVertexAI(model="gemini-2.0-flash-lite-001", temperature=0, max_tokens=None, max_retries=6, stop=None)
+    except Exception:
+        return None
+
+def get_better_llm():
+    try:
+        ChatVertexAI = _import_vertex_llm()
+        return ChatVertexAI(model="gemini-2.0-flash-001", temperature=0, max_tokens=None, max_retries=6, stop=None)
+    except Exception:
+        return None

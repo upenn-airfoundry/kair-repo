@@ -1,6 +1,10 @@
 import os
 import sys
 import bcrypt
+import logging
+
+# Feature flags
+SKIP_ENRICHMENT = os.getenv("SKIP_ENRICHMENT", "").lower() in ("1", "true", "yes")
 
 # Add parent directory to Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -18,15 +22,31 @@ from apscheduler.schedulers.tornado import TornadoScheduler
 _ = load_dotenv(find_dotenv())
 
 from graph_db import GraphAccessor
-from enrichment.iterative_enrichment import process_next_task, iterative_enrichment
-from enrichment.seed_lists import consult_person_seeds
-from entities.generate_doc_info import parse_files_and_index
-from enrichment.langchain_ops import AssessmentOps
-from crawl.web_fetch import fetch_and_crawl_frontier
-from search import search_over_criteria, search_multiple_criteria, generate_rag_answer
-from search import is_search_over_papers, search_basic, is_relevant_answer_with_data
-
-import logging
+if not SKIP_ENRICHMENT:
+    try:
+        from enrichment.iterative_enrichment import process_next_task, iterative_enrichment
+    except Exception as e:
+        process_next_task = None
+        iterative_enrichment = None
+        logging.error(f"Iterative enrichment disabled at startup: {e}")
+    try:
+        from enrichment.seed_lists import consult_person_seeds
+    except Exception as e:
+        consult_person_seeds = None
+        logging.error(f"Seed lists import failed: {e}")
+    try:
+        from entities.generate_doc_info import parse_files_and_index
+    except Exception:
+        parse_files_and_index = None
+    try:
+        from enrichment.langchain_ops import AssessmentOps
+    except Exception:
+        AssessmentOps = None
+else:
+    consult_person_seeds = None
+    parse_files_and_index = None
+    AssessmentOps = None
+# Defer importing search until runtime to avoid DB init at import time
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -41,21 +61,36 @@ class BaseHandler(tornado.web.RequestHandler):
         self.set_status(204)
         self.finish()
 
+    def prepare(self):
+        # If DB isn't available, only allow health endpoint
+        global graph_accessor
+        if os.getenv("SKIP_ENRICHMENT", "").lower() in ("1", "true", "yes"):
+            return
+        if graph_accessor is None and self.request.uri != "/health":
+            self.set_status(503)
+            self.finish({"error": "Service temporarily unavailable: database is not configured"})
+            return
+
     def get_json(self):
         try:
             return json.loads(self.request.body)
         except json.JSONDecodeError:
             return None
 
-# Initialize the GraphAccessor
-graph_accessor = GraphAccessor()
+# Initialize the GraphAccessor, but don't crash if DB is unavailable (or skip)
+graph_accessor = None
+try:
+    graph_accessor = GraphAccessor()
+except Exception as e:
+    logging.error(f"Failed to initialize database connection: {e}")
 
-# Initialize and start the TornadoScheduler
-scheduler = TornadoScheduler()
-scheduler.configure(timezone="US/Eastern")
-scheduler.add_job(lambda: consult_person_seeds(graph_accessor))
-scheduler.add_job(lambda: process_next_task(graph_accessor), 'interval', seconds=5, max_instances=1)
-scheduler.start()
+# Initialize and start the TornadoScheduler only if DB is available
+if not SKIP_ENRICHMENT and graph_accessor is not None and 'process_next_task' in globals() and process_next_task is not None and 'consult_person_seeds' in globals() and consult_person_seeds is not None:
+    scheduler = TornadoScheduler()
+    scheduler.configure(timezone="US/Eastern")
+    scheduler.add_job(lambda: consult_person_seeds(graph_accessor))
+    scheduler.add_job(lambda: process_next_task(graph_accessor), 'interval', seconds=30, max_instances=1)
+    scheduler.start()
 
 class LoginHandler(BaseHandler):
     def post(self):
@@ -66,6 +101,16 @@ class LoginHandler(BaseHandler):
             if not email or not password:
                 self.set_status(400)
                 self.write({"error": "'email' and 'password' are required"})
+                return
+
+            # Ensure database is available
+            if graph_accessor is None:
+                logging.error("Login attempted but database is not configured (graph_accessor is None)")
+                self.set_status(503)
+                self.write({
+                    "success": False,
+                    "message": "Service temporarily unavailable: database is not configured"
+                })
                 return
 
             # Fetch user from DB and check password
@@ -108,6 +153,16 @@ class CreateAccountHandler(BaseHandler):
                 self.write({"error": "'userId' (or 'email') and 'password' as well as 'avatar', 'name', and 'organization' are required"})
                 return
 
+            # Ensure database is available
+            if graph_accessor is None:
+                logging.error("Create account attempted but database is not configured (graph_accessor is None)")
+                self.set_status(503)
+                self.write({
+                    "success": False,
+                    "message": "Service temporarily unavailable: database is not configured"
+                })
+                return
+
             # Check if user already exists
             existing = graph_accessor.exec_sql(
                 "SELECT 1 FROM users WHERE email = %s;", (email,)
@@ -132,6 +187,19 @@ class CreateAccountHandler(BaseHandler):
 class HealthCheckHandler(BaseHandler):
     def get(self):
         self.write({"status": "healthy"})
+
+class DbPingHandler(BaseHandler):
+    def get(self):
+        try:
+            if graph_accessor is None:
+                self.set_status(503)
+                self.write({"ok": False, "error": "database is not configured"})
+                return
+            result = graph_accessor.exec_sql("SELECT 1;")
+            self.write({"ok": True, "result": result[0][0] if result else None})
+        except Exception as e:
+            self.set_status(500)
+            self.write({"ok": False, "error": f"{e}"})
 
 class FindRelatedEntitiesByTagHandler(BaseHandler):
     def get(self):
@@ -197,6 +265,8 @@ class AddToCrawlQueueHandler(BaseHandler):
 class CrawlFilesHandler(BaseHandler):
     def post(self):
         try:
+            # Lazy import to avoid prompts dependency at startup
+            from crawl.web_fetch import fetch_and_crawl_frontier
             fetch_and_crawl_frontier()
             self.write({"message": "Crawling completed successfully"})
         except Exception as e:
@@ -206,6 +276,10 @@ class CrawlFilesHandler(BaseHandler):
 class ParsePDFsAndIndexHandler(BaseHandler):
     def post(self):
         try:
+            if parse_files_and_index is None or SKIP_ENRICHMENT:
+                self.set_status(503)
+                self.write({"error": "Parsing not available at startup"})
+                return
             parse_files_and_index(use_aryn=False)
             self.write({"message": "PDF parsing and indexing completed successfully"})
         except Exception as e:
@@ -292,6 +366,21 @@ class AddEnrichmentHandler(BaseHandler):
 class ExpandSearchHandler(BaseHandler):
     def post(self):
         try:
+            # Lazy import to avoid startup failures if LLM/DB not ready
+            from search import (
+                search_over_criteria,
+                search_multiple_criteria,
+                generate_rag_answer,
+                is_search_over_papers,
+                search_basic,
+                is_relevant_answer_with_data,
+            )
+            # Ensure search module can access the same graph accessor
+            try:
+                import search as search_module
+                search_module.graph_accessor = graph_accessor
+            except Exception:
+                pass
             data = self.get_json()
             user_prompt = data.get('prompt')
             
@@ -307,8 +396,18 @@ class ExpandSearchHandler(BaseHandler):
                     "data": {
                         "message": answer
                     }})
+                return
             
-            questions = search_over_criteria(user_prompt, graph_accessor.get_assessment_criteria())
+            if graph_accessor is None:
+                # Fall back to basic LLM answer when DB isn't available
+                answer = search_basic(user_prompt)
+                self.write({
+                    "data": {
+                        "message": answer
+                    }
+                })
+                return
+            questions = search_over_criteria(user_prompt, graph_accessor.get_assessment_criteria(None))
             logging.info('Expanded into subquestions: ' + questions)
             
             relevant_docs = search_multiple_criteria(questions)
@@ -389,6 +488,7 @@ class StopSchedulerHandler(BaseHandler):
 def make_app():
     return tornado.web.Application([
         (r"/health", HealthCheckHandler),
+        (r"/db_ping", DbPingHandler),
         (r"/find_related_entities_by_tag", FindRelatedEntitiesByTagHandler),
         (r"/find_related_entities", FindRelatedEntitiesHandler),
         (r"/add_to_crawl_queue", AddToCrawlQueueHandler),
@@ -407,9 +507,15 @@ def make_app():
     ])
 
 if __name__ == "__main__":
-    tornado.options.parse_command_line()
-    app = make_app()
-    port = int(os.getenv("BACKEND_PORT", 8081))
-    app.listen(port)
-    print(f"Server running on port {port}")
-    tornado.ioloop.IOLoop.current().start() 
+    try:
+        tornado.options.parse_command_line()
+        print("Initializing Tornado app...")
+        app = make_app()
+        port = int(os.getenv("PORT", os.getenv("BACKEND_PORT", 8080)))
+        print(f"About to listen on 0.0.0.0:{port}")
+        app.listen(port, address="0.0.0.0")
+        print(f"Server running on 0.0.0.0:{port}")
+        tornado.ioloop.IOLoop.current().start()
+    except Exception as e:
+        print(f"Fatal server startup error: {e}")
+        raise
