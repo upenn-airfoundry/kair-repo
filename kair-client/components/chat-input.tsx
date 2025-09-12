@@ -52,13 +52,15 @@ export default function ChatInput({ addMessage }: ChatInputProps) {
       setMessages((prev) => [...prev, botMsg]);
       addMessage(botMsg); // Call the prop function to add message to parent
     } catch (error) {
-       const errorMsg: Message = {
-        id: Date.now().toString() + '-error',
-        sender: 'bot',
-        content: 'Sorry, something went wrong. Please try again. ' + error,
-      };
-      setMessages((prev) => [...prev, errorMsg]);
-      addMessage(errorMsg); // Call the prop
+      console.error("Error in chat input submission:", error);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: Date.now().toString() + '-error',
+          sender: 'bot',
+          content: 'Sorry, something went wrong. Please try again.',
+        }
+      ]);
     } finally {
       setIsLoading(false);
     }
@@ -88,6 +90,14 @@ export default function ChatInput({ addMessage }: ChatInputProps) {
             </div>
           </div>
         ))}
+        {isLoading && (
+          <div className="text-left">
+            <div className="inline-flex items-center gap-2 bg-gray-100 dark:bg-gray-800 rounded px-3 py-2">
+              <span className="inline-block h-3 w-3 rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground animate-spin" />
+              <span className="text-sm text-muted-foreground">KAIR is thinking...</span>
+            </div>
+          </div>
+        )}
       </div>
       {/* Input form */}
       <form

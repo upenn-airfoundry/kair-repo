@@ -14,7 +14,10 @@ from typing import List, Tuple, Optional, Any
 import pandas as pd
 import uuid
 
-from langchain_openai.embeddings import OpenAIEmbeddings
+try:
+    from langchain_openai.embeddings import OpenAIEmbeddings
+except ImportError:
+    OpenAIEmbeddings = None
 
 import logging
 
@@ -29,34 +32,71 @@ _ = load_dotenv(find_dotenv())
 
 class GraphAccessor:
     def __init__(self):
-        self.conn = psycopg2.connect(dbname=os.getenv("DB_NAME"), \
-                            user=os.getenv("DB_USER"), \
-                            password=os.getenv("DB_PASSWORD"), \
-                            host=os.getenv("DB_HOST", "localhost"), \
-                            port=os.getenv("DB_PORT", "5432") \
-        )
         self.schema = os.getenv("DB_SCHEMA", "public")
+        cloud_sql_conn_name = os.getenv("CLOUD_SQL_CONNECTION_NAME")
+        if cloud_sql_conn_name:
+            try:
+                from google.cloud.sql.connector import Connector
+                connector = Connector()
+                self._connector = connector
+                self.conn = connector.connect(
+                    cloud_sql_conn_name,
+                    "pg8000",
+                    user=os.getenv("DB_USER"),
+                    password=os.getenv("DB_PASSWORD"),
+                    db=os.getenv("DB_NAME"),
+                )
+                self.driver = "pg8000"
+            except Exception as e:
+                logging.error(f"Cloud SQL connector init failed: {e}")
+                raise
+        else:
+            self.conn = psycopg2.connect(dbname=os.getenv("DB_NAME"), \
+                                user=os.getenv("DB_USER"), \
+                                password=os.getenv("DB_PASSWORD"), \
+                                host=os.getenv("DB_HOST", "localhost"), \
+                                port=os.getenv("DB_PORT", "5432") \
+            )
+            self.driver = "psycopg2"
         
     def exec_sql(self, sql: str, params: Tuple = ()) -> List[Tuple]:
         """Execute an SQL query and return the results."""
         try:
-            with self.conn.cursor() as cur:
+            if self.driver == "pg8000":
+                # pg8000 doesn't support context managers the same way
+                cur = self.conn.cursor()
                 cur.execute(sql, params)
-                return cur.fetchall()
+                result = cur.fetchall()
+                cur.close()
+                return result
+            else:
+                # psycopg2
+                with self.conn.cursor() as cur:
+                    cur.execute(sql, params)
+                    return cur.fetchall()
         except Exception as e:
             logging.error(f"Error executing SQL: {e}")
-            self.conn.rollback()
+            if self.driver == "psycopg2":
+                self.conn.rollback()
             # throw the exception again
             raise e
         
     def execute(self, sql: str, params: Tuple = ()):
         """Execute an SQL query and return the results."""
         try:
-            with self.conn.cursor() as cur:
+            if self.driver == "pg8000":
+                # pg8000 doesn't support context managers the same way
+                cur = self.conn.cursor()
                 cur.execute(sql, params)
+                cur.close()
+            else:
+                # psycopg2
+                with self.conn.cursor() as cur:
+                    cur.execute(sql, params)
         except Exception as e:
             logging.error(f"Error executing SQL: {e}")
-            self.conn.rollback()
+            if self.driver == "psycopg2":
+                self.conn.rollback()
             # throw the exception again
             raise e
             
@@ -526,6 +566,9 @@ class GraphAccessor:
     def generate_embedding(self, content: str) -> List[float]:
         """Generate an embedding for the given content using LangChain and OpenAI."""
         try:
+            if OpenAIEmbeddings is None:
+                logging.error("OpenAIEmbeddings not available, using fallback")
+                return [0.0] * 1536  # Return a zero vector as a fallback
             # Initialize OpenAI embeddings
             embeddings = OpenAIEmbeddings()
             #embeddings = get_embedding()
@@ -796,12 +839,21 @@ class GraphAccessor:
             params = (str(query_embedding), k)
 
         try:
-            with self.conn.cursor() as cur:
+            if self.driver == "pg8000":
+                # pg8000 doesn't support context managers the same way
+                cur = self.conn.cursor()
                 cur.execute(query, params)
                 matching_entity_ids = [row[0] for row in cur.fetchall()]
+                cur.close()
+            else:
+                # psycopg2
+                with self.conn.cursor() as cur:
+                    cur.execute(query, params)
+                    matching_entity_ids = [row[0] for row in cur.fetchall()]
         except Exception as e:
             logging.error(f"Error executing query: {e}")
-            self.conn.rollback()
+            if self.driver == "psycopg2":
+                self.conn.rollback()
             return []
 
         return matching_entity_ids
@@ -812,7 +864,9 @@ class GraphAccessor:
         """
         criteria = None
         try:
-            with self.conn.cursor() as cur:
+            if self.driver == "pg8000":
+                # pg8000 doesn't support context managers the same way
+                cur = self.conn.cursor()
                 if name is None:
                     criteria = cur.execute(f"""
                                         SELECT criteria_id, criteria_name, criteria_prompt, criteria_scope 
@@ -824,10 +878,26 @@ class GraphAccessor:
                                             (name,))
                     
                 result = [{"id": c[0], "name": c[1], "prompt": c[2], "scope": c[3]} for c in cur.fetchall()]
+                cur.close()
+            else:
+                # psycopg2
+                with self.conn.cursor() as cur:
+                    if name is None:
+                        criteria = cur.execute(f"""
+                                            SELECT criteria_id, criteria_name, criteria_prompt, criteria_scope 
+                                            FROM {self.schema}.assessment_criteria ORDER BY criteria_promise DESC;""")
+                    else:
+                        criteria = cur.execute(f"""SELECT criteria_id, criteria_name, criteria_prompt, criteria_scope 
+                                            FROM {self.schema}.assessment_criteria 
+                                            WHERE criteria_name = %s ORDER BY criteria_promise DESC;""", \
+                                                (name,))
+                        
+                    result = [{"id": c[0], "name": c[1], "prompt": c[2], "scope": c[3]} for c in cur.fetchall()]
             return result
         except Exception as e:
             logging.error(f"Error fetching assessment criteria: {e}")
-            self.conn.rollback()
+            if self.driver == "psycopg2":
+                self.conn.rollback()
             return []
     
     def add_assessment_criterion(self, name:str, prompt:str, scope: str, promise:float = 1) -> int:

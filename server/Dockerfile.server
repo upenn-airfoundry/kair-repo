@@ -1,4 +1,4 @@
-FROM python:3.9-slim
+FROM python:3.11-slim
 
 WORKDIR /app
 
@@ -8,23 +8,24 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching
-COPY requirements.txt .
+COPY server/requirements.txt ./requirements.txt
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the server directory
-COPY . /app/server/
+# Copy the server directory (from repo root build context)
+COPY server /app/server/
 
-# Copy the root directory files
-COPY ../graph_db.py /app/
-COPY ../search.py /app/
-COPY ../enrichment /app/enrichment/
-COPY ../entities /app/entities/
-COPY ../crawl /app/crawl/
+# Copy top-level code dependencies used by the server
+COPY graph_db.py /app/
+COPY search.py /app/
+COPY enrichment /app/enrichment/
+COPY entities /app/entities/
+COPY crawl /app/crawl/
 
 # Set PYTHONPATH
 ENV PYTHONPATH=/app
 
-EXPOSE 8081
+ENV PORT=8080
+EXPOSE 8080
 
-CMD ["python", "/app/server/app/server.py"] 
+CMD ["python", "/app/server/app/server.py"]

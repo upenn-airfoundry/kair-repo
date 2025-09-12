@@ -48,7 +48,8 @@ export default function CreateAccount() {
         setError(data.message || "Account creation failed. Please try again.");
       }
     } catch (err) {
-      setError("An unexpected error occurred. Please try again. " + err);
+      console.error("Error in account creation submission:", err);
+      setError("An unexpected error occurred. Please try again.");
     } finally {
       setIsLoading(false);
     }

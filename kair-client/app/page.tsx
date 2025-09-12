@@ -498,7 +498,8 @@ export default function Home() {
                     title: "Contextual Learning",
                     description: "Our platform learns from your research patterns to provide personalized, relevant insights."
                   }
-                ].map((feature, index) => {
+                // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                ].map((feature, _ ) => {
                   const Icon = feature.icon;
                   console.log(index);
                   return (
