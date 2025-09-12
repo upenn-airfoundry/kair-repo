@@ -4,10 +4,6 @@ import * as React from "react"
 import { IconCirclePlusFilled, type Icon } from "@tabler/icons-react"
 
 import Link from "next/link"
-<<<<<<< HEAD
-=======
-// import { usePathname } from "next/navigation"
->>>>>>> origin/main
 
 import { Button } from "@/components/ui/button"
 import {
