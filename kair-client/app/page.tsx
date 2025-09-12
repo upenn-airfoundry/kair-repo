@@ -501,7 +501,6 @@ export default function Home() {
                 // eslint-disable-next-line @typescript-eslint/no-unused-vars
                 ].map((feature, _ ) => {
                   const Icon = feature.icon;
-                  console.log(index);
                   return (
                     <motion.div 
                       key={feature.title}

@@ -22,7 +22,10 @@ export default function ChatPage() {
         <ChatHeader title="Search and Discuss" description=""/>
         <div className="flex flex-1 flex-col">
           <div className="@container/main flex flex-1 flex-col gap-2">
-            <ChatInput />
+            <ChatInput addMessage={(message) => {
+              // TODO: Implement message handling logic here
+              console.log("New message:", message);
+            }} />
           </div>
         </div>
       </SidebarInset>

@@ -4,7 +4,7 @@ import pandas as pd
 
 from typing import Any
 
-from enrichment.llms import analysis_llm
+from enrichment.llms import get_analysis_llm
 
 
 def describe_table(name: str, df: pd.DataFrame) -> str:
@@ -28,7 +28,7 @@ def describe_table(name: str, df: pd.DataFrame) -> str:
     context = f"Schema: {name}({schema})\n\nSample Rows:\n{sampled_rows}"
 
     # Initialize the GPT model
-    llm = analysis_llm
+    llm = get_analysis_llm()
 
     # Create a prompt template
     prompt = ChatPromptTemplate.from_messages([

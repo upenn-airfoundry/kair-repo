@@ -17,7 +17,7 @@ from langchain.chains import create_extraction_chain
 
 import pandas as pd
 
-from enrichment.llms import analysis_llm, better_llm, structured_analysis_llm
+from enrichment.llms import get_analysis_llm, get_better_llm, get_structured_analysis_llm
 from files.tables import sample_rows_to_string
 
 # Define the Pydantic Model
@@ -102,7 +102,7 @@ def answer_from_summary(json_fragment, question):
 
     try:
         # Initialize the ChatOpenAI model, specifying gpt-4o-mini
-        llm = analysis_llm
+        llm = get_analysis_llm()
 
         # Create a prompt template
         prompt = ChatPromptTemplate.from_messages([
@@ -111,7 +111,7 @@ def answer_from_summary(json_fragment, question):
             ("user", "Tip: Respond with a JSON object conforming to the ConditionalAnswer schema.")
         ])
 
-        structured_llm = llm.with_structured_output(ConditionalAnswer)
+        structured_llm = llm.with_structured_output(ConditionalAnswer) # type: ignore
         # Create a chain
         structured_chain = prompt | structured_llm# | StrOutputParser()
 
@@ -130,14 +130,14 @@ def summarize_web_page(content: str) -> str:
     """
     try:
         # Initialize the LLM (e.g., OpenAI GPT)
-        llm = analysis_llm
+        llm = get_analysis_llm()
 
         prompt = ChatPromptTemplate.from_messages([
             ("system", "You are a helpful assistant that summarizes author biographical information from HTML content."),
             ("user", "Summarize the author info from the following HTML:\n\n{html}"),
         ])
 
-        chain = prompt | llm | StrOutputParser()
+        chain = prompt | llm | StrOutputParser() # type: ignore
 
         summary = chain.invoke({"html": content})
         return summary
@@ -156,14 +156,14 @@ def answer_yes_no(question: str):
     Returns:
         str: Yes or No
     """
-    llm = analysis_llm
+    llm = get_analysis_llm()
     
     prompt = ChatPromptTemplate.from_messages([
         ("system", "You are a concise assistant. Respond to the following question with strictly 'Yes' or 'No'. No other words or punctuation."),
         ("user", "{question}")
     ])
     
-    chain = prompt | llm | StrOutputParser()
+    chain = prompt | llm | StrOutputParser() # type: ignore
     response = chain.invoke({"question": question})
     return response
 
@@ -188,7 +188,7 @@ def summarize_table(df: pd.DataFrame) -> str:
     context = f"Schema: {schema}\n\nSample Rows:\n{sample_rows}"
 
     # Initialize the GPT model
-    llm = analysis_llm
+    llm = get_analysis_llm()
 
     # Create a prompt template
     prompt = ChatPromptTemplate.from_messages([
@@ -197,7 +197,7 @@ def summarize_table(df: pd.DataFrame) -> str:
     ])
 
     # Create the LangChain chain
-    chain = prompt | llm | StrOutputParser()
+    chain = prompt | llm | StrOutputParser() # type: ignore
 
     # Run the chain with the context
     response = chain.invoke({"context": context})
@@ -246,7 +246,7 @@ def extract_faculty_from_html(html_content: str) -> dict:
     #     prompt=prompt_template
     # )
     # Use with_structured_output to create the structured LLM
-    structured_llm = structured_analysis_llm.with_structured_output(FacultyList)
+    structured_llm = get_structured_analysis_llm().with_structured_output(FacultyList)
     extraction_chain = prompt_template | structured_llm
     # Run the extraction chain on the text content.
     extracted_data = extraction_chain.invoke({"html_content": html_content})
@@ -317,7 +317,7 @@ def get_page_info(html_content: str, name: str) -> dict:
         ]
     )
 
-    structured_llm = better_llm.with_structured_output(WebPage)
+    structured_llm = get_better_llm().with_structured_output(WebPage)
     extraction_chain = prompt_template | structured_llm
     # Run the extraction chain on the text content.
     extracted_data = extraction_chain.invoke({"html_content": html_content})
@@ -327,7 +327,7 @@ def get_page_info(html_content: str, name: str) -> dict:
         ("system", "You are an expert at verifying if a web page is about a specific person."),
         ("user", "Does the following HTML content clearly relate to the person named '{name}'? Respond strictly with 'Yes' or 'No'.\n\nHTML Content:\n{html_content}")
     ])
-    verification_chain = verification_prompt | analysis_llm | StrOutputParser()
+    verification_chain = verification_prompt | get_analysis_llm() | StrOutputParser() # type: ignore
     verification_result = verification_chain.invoke({"html_content": html_content, "name": name}).strip().lower()
     if verification_result != "yes":
         return {}
@@ -383,7 +383,7 @@ def classify_json(paper_json: dict) -> str:
         ("user", "Paper metadata:\n\n{paper_json}\n\nCategory:")
     ])
 
-    structured_llm = analysis_llm.with_structured_output(PaperCategory)
+    structured_llm = get_analysis_llm().with_structured_output(PaperCategory) # type: ignore
     chain = prompt | structured_llm
     result = chain.invoke({"paper_json": paper_json})
     return result.category # type: ignore

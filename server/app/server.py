@@ -511,7 +511,7 @@ if __name__ == "__main__":
         tornado.options.parse_command_line()
         print("Initializing Tornado app...")
         app = make_app()
-        port = int(os.getenv("PORT", os.getenv("BACKEND_PORT", 8080)))
+        port = int(os.getenv("BACKEND_PORT", os.getenv("BACKEND_PORT", 8080)))
         print(f"About to listen on 0.0.0.0:{port}")
         app.listen(port, address="0.0.0.0")
         print(f"Server running on 0.0.0.0:{port}")
