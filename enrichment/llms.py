@@ -66,19 +66,24 @@ def get_structured_analysis_llm():
     try:
         ChatOpenAI = _import_openai_llm()
         return ChatOpenAI(model="gpt-4.1-mini", temperature=0.1)
-    except Exception:
+    except Exception as e:
+        print(f"Error initializing OpenAI LLM: {e}")
         return None
 
 def get_analysis_llm():
     try:
         ChatVertexAI = _import_vertex_llm()
+        _ensure_vertex_initialized()
         return ChatVertexAI(model="gemini-2.0-flash-lite-001", temperature=0, max_tokens=None, max_retries=6, stop=None)
-    except Exception:
+    except Exception as e:
+        print(f"Error initializing Vertex AI LLM: {e}")
         return None
 
 def get_better_llm():
     try:
         ChatVertexAI = _import_vertex_llm()
+        _ensure_vertex_initialized()
         return ChatVertexAI(model="gemini-2.0-flash-001", temperature=0, max_tokens=None, max_retries=6, stop=None)
-    except Exception:
+    except Exception as e:
+        print(f"Error initializing Vertex AI LLM: {e}")
         return None
