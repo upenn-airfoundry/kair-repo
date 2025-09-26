@@ -1,5 +1,6 @@
 from dotenv import load_dotenv, find_dotenv
 import os
+import logging
 
 _ = load_dotenv(find_dotenv())
 
@@ -26,7 +27,7 @@ def _ensure_vertex_initialized():
     if not _vertex_initialized:
         try:
             from google.cloud import aiplatform
-            project = os.getenv('GOOGLE_CLOUD_PROJECT') or os.getenv('GCP_PROJECT')
+            project = os.getenv('GOOGLE_CLOUD_PROJECT') or os.getenv('GCP_PROJECT') or os.getenv('GOOGLE_PROJECT_ID') or os.getenv('GCP_PROJECT_ID')
             location = os.getenv('GOOGLE_CLOUD_REGION') or os.getenv('GCP_REGION') or 'us-central1'
             aiplatform.init(project=project, location=location)
         except Exception:

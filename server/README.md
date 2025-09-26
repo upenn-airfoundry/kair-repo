@@ -17,6 +17,14 @@ uv pip install -r requirements.txt
 BACKEND_PORT=8081
 ```
 
+Also add:
+* `GOOGLE_PROJECT_ID` to the project name in Google Cloud
+* `GOOGLE_CLOUD_REGION`
+* `OPENAI_API_KEY`
+* `SEARCH_API_KEY`
+* `GOOGLE_API_KEY`
+
+
 ## Running the Server
 
 To start the server:
@@ -68,6 +76,38 @@ The server will start on port 8081 by default (or the port specified in your .en
 ### Search and Expansion
 - `POST /expand` - Expand search query
   - Body: `{"prompt": "your search query"}`
+
+
+
+### Query Task Classification
+- General knowledge
+- Get advice
+- Workflow
+  - RNA workflow
+  - LNP workflow
+  - Protein workflow
+  - Vaccine workflow
+  - etc.
+- Find target (protein, etc.)
+- Find RNA
+
+
+The goal: first figure out what we are trying to do.  Then: pass to LLM, find an expert, do RAG?
+
+Map to state machine.
+
+Let's build some context.  Project, task, branch.
+
+
+### People
+
+We need to collect info on people, including their projects and summaries.
+
+
+### Networking
+
+Connect people to papers.
+
 
 ### Scheduler Control
 - `POST /start_scheduler` - Start the scheduler
