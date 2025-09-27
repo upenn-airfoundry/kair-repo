@@ -21,7 +21,8 @@ from apscheduler.schedulers.tornado import TornadoScheduler
 # Load environment variables from .env file
 _ = load_dotenv(find_dotenv())
 
-from graph_db import GraphAccessor
+from backend.graph_db import GraphAccessor
+
 if not SKIP_ENRICHMENT:
     try:
         from enrichment.iterative_enrichment import process_next_task, iterative_enrichment

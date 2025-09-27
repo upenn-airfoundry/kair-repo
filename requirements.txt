@@ -30,3 +30,6 @@ grobid-client-python
 langchain-google-vertexai
 google-generativeai
 langchain-google-genai
+biopython>=1.80
+mcp
+

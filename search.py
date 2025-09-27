@@ -11,7 +11,7 @@ import os
 
 # Lazy imports / guards to prevent startup failures
 try:
-    from graph_db import GraphAccessor
+    from backend.graph_db import GraphAccessor
     graph_db = GraphAccessor()
     graph_accessor = GraphAccessor()
 except Exception:

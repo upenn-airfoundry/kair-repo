@@ -20,7 +20,7 @@ from aryn_sdk.partition import partition_file
 
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
-from graph_db import GraphAccessor
+from backend.graph_db import GraphAccessor
 
 from enrichment.llms import get_analysis_llm
 

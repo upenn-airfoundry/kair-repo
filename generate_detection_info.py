@@ -5,16 +5,10 @@
 ##################
 
 import requests
-from graph_db import GraphAccessor
+from backend.graph_db import GraphAccessor
 
 # Initialize the GraphAccessor
 graph_db = GraphAccessor()
-
-from bs4 import BeautifulSoup
-from urllib.parse import unquote
-from langchain_openai import ChatOpenAI
-from langchain.prompts import ChatPromptTemplate
-from langchain.schema.output_parser import StrOutputParser
 
 def get_entities_from_db(paper_id: int):
 

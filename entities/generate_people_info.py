@@ -6,7 +6,7 @@
 ##################
 
 import requests
-from graph_db import GraphAccessor
+from backend.graph_db import GraphAccessor
 
 # Initialize the GraphAccessor
 graph_db = GraphAccessor()
@@ -19,7 +19,7 @@ from langchain.prompts import ChatPromptTemplate
 from langchain.schema.output_parser import StrOutputParser
 
 from prompts.restructure import truncate_text_to_token_limit
-from prompts.prompt_for_documents import summarize_web_page
+from prompts.llm_prompts import DocumentPrompts
 from crawl.semscholar import fetch_author_from_semantic_scholar
 from crawl.duckduckgo import get_author_homepage
 
@@ -75,7 +75,7 @@ def process_authors():
                 
                 if homepage:
                     # Summarize the web page content using LangChain
-                    summary = summarize_web_page(truncate_text_to_token_limit(homepage))
+                    summary = DocumentPrompts.summarize_web_page(truncate_text_to_token_limit(homepage))
                     print(f"Summary for {author_name}: {summary}")
                     
                     if not "provided HTML" in summary and \

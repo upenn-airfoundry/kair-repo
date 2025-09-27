@@ -1,7 +1,7 @@
 from flask import Flask, jsonify
 from flask_apscheduler import APScheduler
 
-from graph_db import GraphAccessor
+from backend.graph_db import GraphAccessor
 from enrichment.iterative_enrichment import process_next_task
 from flask import request
 from flask_cors import CORS

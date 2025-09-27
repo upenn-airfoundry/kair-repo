@@ -10,7 +10,7 @@ import json
 
 from typing import List
 
-from graph_db import GraphAccessor
+from backend.graph_db import GraphAccessor
 import requests
 
 DEFAULT_BATCH = 10
@@ -71,6 +71,10 @@ def enrich_entities(graph_accessor: GraphAccessor, task: str, entity_set: List[i
             scoped_entities = graph_accessor.get_untagged_papers_by_field(scope, name, DEFAULT_BATCH)
 
         op = AssessmentOps(prompt, name, 1000)
+        
+        if scoped_entities is None or len(scoped_entities) == 0:
+            print(f"No untagged entities found for criterion {name} in scope {scope}.")
+            continue
         
         for paper in scoped_entities:
             result = graph_accessor.get_untagged_entities_as_json(paper['entity_id'], name)

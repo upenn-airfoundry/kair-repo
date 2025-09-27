@@ -1,8 +1,8 @@
-from graph_db import GraphAccessor
+from backend.graph_db import GraphAccessor
 import os
 import yaml
 import json
-from prompts.prompt_for_documents import is_about
+from prompts.llm_prompts import DocumentPrompts
 
 from crawl.web_fetch import get_person_page_from_directory, consult_person_directory_page
 

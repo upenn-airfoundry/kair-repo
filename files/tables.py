@@ -2,8 +2,7 @@ import pandas as pd
 import random
 from scipy.io import loadmat
 
-from prompts.prompt_for_tables import describe_table
-from graph_db import GraphAccessor
+from backend.graph_db import GraphAccessor
 
 SAMPLE_SIZE = 50
 
@@ -52,9 +51,10 @@ def sample_rows_to_string(df: pd.DataFrame, rows:int=SAMPLE_SIZE) -> pd.DataFram
     return sampled_df
 
 def create_table_entity(url: str, df: pd.DataFrame, graph_db: GraphAccessor):
+    from prompts.llm_prompts import TablePrompts
     
     # Get a description of the table using the LLM
-    description = describe_table(url.split('/')[-1], df)
+    description = TablePrompts.describe_table(url.split('/')[-1], df)
     
     # Create the table entity in the graph database
     entity_id = graph_db.add_table(url, url.split('/')[-1], description)

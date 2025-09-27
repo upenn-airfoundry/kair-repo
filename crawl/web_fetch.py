@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, quote_plus, urlparse
 import time
 import os
 from google.cloud import storage
-from graph_db import GraphAccessor
+from backend.graph_db import GraphAccessor
 
 import logging
 from datetime import datetime
@@ -21,13 +21,11 @@ from grobid_client.grobid_client import GrobidClient # Note the module structure
 
 import requests
 import json
-from prompts.prompt_for_documents import extract_faculty_from_html
-from prompts.prompt_for_documents import get_page_info
+from prompts.llm_prompts import DocumentPrompts
 
 _ = load_dotenv(find_dotenv())
 
-from crawl.crawler_queue import add_to_crawled
-from crawl.crawler_queue import get_urls_to_crawl
+from crawl.crawler_queue import CrawlQueue
 
 search_api_key = os.getenv("SEARCH_API_KEY")
 graph_db = GraphAccessor()
@@ -235,7 +233,7 @@ def fetch_and_crawl_frontier(downloads_dir: str = DOWNLOADS_DIR):
     # Ensure the downloads directory exists
     os.makedirs(downloads_dir, exist_ok=True)
 
-    rows = get_urls_to_crawl()
+    rows = CrawlQueue.get_urls_to_crawl()
 
     for row in rows:
         crawl_id = int(row['id'])
@@ -248,7 +246,7 @@ def fetch_and_crawl_frontier(downloads_dir: str = DOWNLOADS_DIR):
                 #     if add_to_crawled(crawl_id, "chunked_files/" + pdf_base + ".json"):  # Mark this PDF as crawled in the database
                 #         print(f"Registered pre-chunked file: {pdf_filename}")
                 # else:
-                if add_to_crawled(crawl_id, url):  # Mark this PDF as crawled in the database
+                if CrawlQueue.add_to_crawled(crawl_id, url):  # Mark this PDF as crawled in the database
                     logging.debug(f"Registered pre-crawled file: {pdf_base}")
             else:
                 file_base = url.split('/')[-1]
@@ -258,7 +256,7 @@ def fetch_and_crawl_frontier(downloads_dir: str = DOWNLOADS_DIR):
                 
                 if os.path.exists(filename):
                     logging.debug(f"File {filename} already exists. Skipping download.")
-                    add_to_crawled(crawl_id, 'file://' + filename)
+                    CrawlQueue.add_to_crawled(crawl_id, 'file://' + filename)
                     continue
 
                 # Fetch the PDF from the URL
@@ -281,7 +279,7 @@ def fetch_and_crawl_frontier(downloads_dir: str = DOWNLOADS_DIR):
                     # segment_sentences=True, # Optional: to segment sentences
                 )
                     
-                if add_to_crawled(crawl_id, ext_file):  # Mark this PDF as crawled in the database
+                if CrawlQueue.add_to_crawled(crawl_id, ext_file):  # Mark this PDF as crawled in the database
                     logging.info(f"Successfully crawled and saved: {url} to {ext_file}")
 
         except requests.RequestException as e:
@@ -364,7 +362,7 @@ def consult_person_directory_page(graph_accessor: GraphAccessor, url: str, prove
     faculty_list = []
     force = True
     if force or not graph_accessor.is_page_in_cache(url, content):
-        faculty_list = extract_faculty_from_html(content)
+        faculty_list = DocumentPrompts.extract_faculty_from_html(content)
         graph_accessor.cache_page_and_results(url, content, json.dumps(faculty_list, ensure_ascii=False))
         
     else:
@@ -432,7 +430,7 @@ def consult_person_directory_page(graph_accessor: GraphAccessor, url: str, prove
             
         provenance.pop()  # Remove the last element (name) from provenance as it is already used in the task
         
-    return faculty_list
+    return faculty_list # type: ignore
 
 
 # TODO:
@@ -470,7 +468,7 @@ def get_person_page_from_directory(graph_accessor: GraphAccessor, url: str, prov
         
     provenance.append(url)
     if force or not graph_accessor.is_page_in_cache(url, content):
-        page_info = get_page_info(content, name)
+        page_info = DocumentPrompts.get_page_info(content, name)
         graph_accessor.cache_page_and_results(url, content, json.dumps(page_info, ensure_ascii=False))
     else:
         page_info = graph_accessor.get_cached_output(url, content)
@@ -579,14 +577,14 @@ def get_person_subpage_from_directory(graph_accessor: GraphAccessor, url: str, v
         name = visited[-1]
         visited.append(url)
         if force or not graph_accessor.is_page_in_cache(url, content):
-            page_info = get_page_info(content, name)
+            page_info = DocumentPrompts.get_page_info(content, name)
             graph_accessor.cache_page_and_results(url, content, json.dumps(page_info, ensure_ascii=False))
         else:        
             page_info = graph_accessor.get_cached_output(url, content)
             # parse with GPT, summarize
             
         if page_info is None:
-            page_info = get_page_info(content, name)
+            page_info = DocumentPrompts.get_page_info(content, name)
             graph_accessor.cache_page_and_results(url, content, json.dumps(page_info, ensure_ascii=False))
             
         print(url + " - " + name)

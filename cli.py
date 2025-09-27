@@ -8,15 +8,11 @@
 import argparse
 import os
 from datetime import datetime
-from graph_db import GraphAccessor
+from backend.graph_db import GraphAccessor
 from dblp_parser.dblp_parser import DBLP
 from dotenv import load_dotenv, find_dotenv
 
-from crawl.crawler_queue import add_to_crawled
-from crawl.web_fetch import fetch_and_crawl_frontier
-
-from crawl.crawler_queue import add_local_downloads_to_crawl_queue
-from crawl.crawler_queue import add_urls_to_crawl_queue
+from crawl.crawler_queue import CrawlQueue
 
 from entities.generate_doc_info import parse_files_and_index
 
@@ -49,7 +45,7 @@ def add_urls_to_frontier_from_file(file_path: str = "starting_points/papers.yaml
     print(f"Added {count} URLs from {file_path} to the crawl queue.")
     
 def crawl_local_files(directory: str = PDFS_DIR):
-    count = add_local_downloads_to_crawl_queue(directory)
+    count = CrawlQueue.add_local_downloads_to_crawl_queue(directory)
     print(f"Added {count} local files to the crawl queue.")
     
 def split_dblp():
@@ -69,7 +65,7 @@ def main():
 
     if args.command == "add_crawl_list":
         add_urls_to_frontier_from_file()
-        fetch_and_crawl_frontier()
+        CrawlQueue.fetch_and_crawl_frontier()
     elif args.command == "re_embed":
         print("Re-embedding all documents...")
         graph_db.re_embed_all_documents()
@@ -81,7 +77,7 @@ def main():
     elif args.command == "add_local_files":
         crawl_local_files(PDFS_DIR)
         crawl_local_files(DATA_DIR)
-        fetch_and_crawl_frontier()
+        CrawlQueue.fetch_and_crawl_frontier()
     elif args.command == "process":
         parse_files_and_index()
     elif args.command == "dblp":
