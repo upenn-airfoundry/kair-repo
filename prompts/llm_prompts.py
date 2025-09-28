@@ -84,6 +84,11 @@ class FacultyMember(BaseModel):
     research_interests: Optional[List[str]] = Field(None, description="A list of the faculty member's research interests.")
     google_scholar: Optional[str] = Field(None, description="The URL of the faculty member's Google Scholar profile.")
 
+class PersonOfInterest(BaseModel):
+    biosketch: str = Field(..., description="A concise biosketch describing their background and career.")  
+    expertise_and_research: str = Field(..., description="A paragraph describing their expertise and research interests.")  
+    known_projects: str = Field(..., description="A paragraph listing known projects associated with the person.")
+
 class FacultyList(BaseModel):
     """A list of faculty members."""
     faculty: List[FacultyMember]
@@ -514,3 +519,40 @@ class WebPrompts:
             print(f"Error summarizing web page content: {e}")
             return "Summary could not be generated."
 
+
+class PeoplePrompts:
+    @classmethod
+    def get_person_profile(cls, name: str, organization: str) -> dict:
+        """
+        Uses the LLM to generate a structured profile for a person, including a biosketch, expertise/research, and known projects.
+
+        Args:
+            name (str): The person's name.
+            organization (str): The organization the person is affiliated with.
+
+        Returns:
+            dict: A dictionary with keys "biosketch", "expertise", "projects".
+        """
+        from prompts.llm_prompts import PersonOfInterest
+
+        llm = get_better_llm()
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", "You are an expert at summarizing academic and professional profiles. Respond with a structured output matching the PersonOfInterest schema."),
+            ("user", 
+                f"Summarize what is known about {name} at {organization} in three paragraphs:\n"
+                "1. A concise biosketch describing their background and career.\n"
+                "2. A paragraph describing their expertise and research interests.\n"
+                "3. A paragraph describing their known projects or major contributions.\n"
+                "Respond in clear, factual prose and use the PersonOfInterest schema."
+            )
+        ])
+        # Use structured output
+        structured_llm = llm.with_structured_output(PersonOfInterest)
+        chain = prompt | structured_llm
+        result = chain.invoke({})
+        # Return as dict with required keys
+        return {
+            "biosketch": result.biosketch,
+            "expertise": result.expertise_and_research,
+            "projects": result.known_projects
+        }

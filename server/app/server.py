@@ -22,31 +22,11 @@ from apscheduler.schedulers.tornado import TornadoScheduler
 _ = load_dotenv(find_dotenv())
 
 from backend.graph_db import GraphAccessor
+from backend.enrichment_daemon import EnrichmentDaemon
+from prompts.llm_prompts import PeoplePrompts
+# from enrichment.langchain_ops import AssessmentOps
 
-if not SKIP_ENRICHMENT:
-    try:
-        from enrichment.iterative_enrichment import process_next_task, iterative_enrichment
-    except Exception as e:
-        process_next_task = None
-        iterative_enrichment = None
-        logging.error(f"Iterative enrichment disabled at startup: {e}")
-    try:
-        from enrichment.seed_lists import consult_person_seeds
-    except Exception as e:
-        consult_person_seeds = None
-        logging.error(f"Seed lists import failed: {e}")
-    try:
-        from entities.generate_doc_info import parse_files_and_index
-    except Exception:
-        parse_files_and_index = None
-    try:
-        from enrichment.langchain_ops import AssessmentOps
-    except Exception:
-        AssessmentOps = None
-else:
-    consult_person_seeds = None
-    parse_files_and_index = None
-    AssessmentOps = None
+
 # Defer importing search until runtime to avoid DB init at import time
 
 # Configure logging
@@ -77,21 +57,20 @@ class BaseHandler(tornado.web.RequestHandler):
             return json.loads(self.request.body)
         except json.JSONDecodeError:
             return None
+        
+        
+########### Main ###########
 
 # Initialize the GraphAccessor, but don't crash if DB is unavailable (or skip)
 graph_accessor = None
 try:
     graph_accessor = GraphAccessor()
+    
+    if not SKIP_ENRICHMENT:
+        EnrichmentDaemon.initialize_enrichment(graph_accessor)
+
 except Exception as e:
     logging.error(f"Failed to initialize database connection: {e}")
-
-# Initialize and start the TornadoScheduler only if DB is available
-if not SKIP_ENRICHMENT and graph_accessor is not None and 'process_next_task' in globals() and process_next_task is not None and 'consult_person_seeds' in globals() and consult_person_seeds is not None:
-    scheduler = TornadoScheduler()
-    scheduler.configure(timezone="US/Eastern")
-    scheduler.add_job(lambda: consult_person_seeds(graph_accessor))
-    scheduler.add_job(lambda: process_next_task(graph_accessor), 'interval', seconds=30, max_instances=1)
-    scheduler.start()
 
 class LoginHandler(BaseHandler):
     def post(self):
@@ -179,6 +158,9 @@ class CreateAccountHandler(BaseHandler):
                 "INSERT INTO users (email, password_hash, name, organization, avatar) VALUES (%s, %s, %s, %s, %s);",
                 (email, password_hash, name, organization, avatar)
             )
+
+            # Create an initial user profile
+            graph_accessor.save_user_profile(email, PeoplePrompts.get_person_profile(name, organization))
             graph_accessor.commit()
             self.write({"success": True, "message": "Account created"})
         except Exception as e:
@@ -277,11 +259,11 @@ class CrawlFilesHandler(BaseHandler):
 class ParsePDFsAndIndexHandler(BaseHandler):
     def post(self):
         try:
-            if parse_files_and_index is None or SKIP_ENRICHMENT:
-                self.set_status(503)
-                self.write({"error": "Parsing not available at startup"})
-                return
-            parse_files_and_index(use_aryn=False)
+            # if parse_files_and_index is None or SKIP_ENRICHMENT:
+            #     self.set_status(503)
+            #     self.write({"error": "Parsing not available at startup"})
+            #     return
+            EnrichmentDaemon.parse_files_and_index(use_aryn=False)
             self.write({"message": "PDF parsing and indexing completed successfully"})
         except Exception as e:
             self.set_status(500)
@@ -342,8 +324,7 @@ class AddAssessmentCriterionHandler(BaseHandler):
             logging.debug("Scope: " + scope)
             logging.debug("Prompt: " + prompt)
 
-            criterion_id = graph_accessor.add_assessment_criterion(name, prompt, scope, promise)
-            iterative_enrichment(graph_accessor, name)
+            criterion_id = EnrichmentDaemon.add_enrichment_task(name, prompt, scope, promise)
 
             self.write({
                 "message": "New assessment criterion added successfully",
@@ -358,7 +339,7 @@ class AddEnrichmentHandler(BaseHandler):
         try:
             data = self.get_json()
             name = data.get('name')
-            iterative_enrichment(graph_accessor, name)
+            EnrichmentDaemon.run_enrichment_task(name)
             self.write({"message": "All enrichment tasks queued"})
         except Exception as e:
             self.set_status(500)
@@ -467,7 +448,7 @@ class ExpandSearchHandler(BaseHandler):
             logging.error(f"Error during expansion: {e}")
             self.set_status(500)
             self.write({"error": f"An error occurred: {e}"})
-
+            
 class StartSchedulerHandler(BaseHandler):
     def post(self):
         try:
@@ -485,6 +466,7 @@ class StopSchedulerHandler(BaseHandler):
         except Exception as e:
             self.set_status(500)
             self.write({"error": f"Failed to stop scheduler: {e}"})
+
 
 def make_app():
     return tornado.web.Application([

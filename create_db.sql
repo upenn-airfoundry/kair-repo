@@ -287,6 +287,39 @@ CREATE TABLE users (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE user_profiles (
+    profile_id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(user_id) ON DELETE CASCADE,
+    profile_data JSON,
+    profile_context TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE projects (
+    project_id SERIAL PRIMARY KEY,
+    project_name TEXT NOT NULL,
+    project_description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    parent_project_id INTEGER REFERENCES projects(project_id) ON DELETE SET NULL
+);
+
+CREATE TABLE user_projects (
+    user_id INTEGER REFERENCES users(user_id) ON DELETE CASCADE,
+    project_id INTEGER REFERENCES projects(project_id) ON DELETE CASCADE,
+    role TEXT,
+    context TEXT,
+    PRIMARY KEY (user_id, project_id)
+);
+
+CREATE TABLE project_tasks (
+    task_id SERIAL PRIMARY KEY,
+    project_id INTEGER REFERENCES projects(project_id) ON DELETE CASCADE,
+    task_name TEXT NOT NULL,
+    task_description TEXT,
+    task_context TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE crawl_cache (
     cache_id SERIAL PRIMARY KEY,
     url TEXT NOT NULL UNIQUE,
@@ -367,6 +400,12 @@ GRANT USAGE ON SEQUENCE indexed_tables_table_id_seq TO kair;
 GRANT USAGE ON SEQUENCE indexed_figures_figure_id_seq TO kair;
 GRANT USAGE ON SEQUENCE crawl_cache_cache_id_seq TO kair;
 GRANT USAGE ON SEQUENCE indexed_tables_table_id_seq TO kair;
+
+GRANT USAGE ON SEQUENCE user_profiles_profile_id_seq TO kair;
+
+GRANT USAGE ON SEQUENCE projects_project_id_seq TO kair;
+
+GRANT USAGE ON SEQUENCE project_tasks_task_id_seq TO kair;
 
 
 create view papers_summaries_fields_authors_view AS

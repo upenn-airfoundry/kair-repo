@@ -136,7 +136,7 @@ class CrawlQueue:
         return True
 
     @classmethod
-    def get_urls_to_crawl(cls, max: int = None) -> List[Dict[str, str]]:
+    def get_urls_to_crawl(cls, max: int = None) -> List[Dict[str, str]]: # type: ignore
         """Fetch all URLs from the crawl queue.
         This function retrieves all URLs from the crawl queue in the database,
         ordered by their ID in ascending order.

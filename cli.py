@@ -13,6 +13,7 @@ from dblp_parser.dblp_parser import DBLP
 from dotenv import load_dotenv, find_dotenv
 
 from crawl.crawler_queue import CrawlQueue
+from crawl.web_fetch import fetch_and_crawl_frontier
 
 from entities.generate_doc_info import parse_files_and_index
 
@@ -64,20 +65,23 @@ def main():
     args = parser.parse_args()
 
     if args.command == "add_crawl_list":
+        print("Adding URLs to the crawl queue...")
         add_urls_to_frontier_from_file()
-        CrawlQueue.fetch_and_crawl_frontier()
+        print("Starting crawl...")
+        fetch_and_crawl_frontier()
     elif args.command == "re_embed":
         print("Re-embedding all documents...")
         graph_db.re_embed_all_documents()
         graph_db.re_embed_all_tags()
     elif args.command == "arxiv":
+        print("Starting arxiv load...")
         load_arxiv_abstracts()
     elif args.command == "arxiv_categories":
         classify_arxiv_categories()
     elif args.command == "add_local_files":
         crawl_local_files(PDFS_DIR)
         crawl_local_files(DATA_DIR)
-        CrawlQueue.fetch_and_crawl_frontier()
+        fetch_and_crawl_frontier()
     elif args.command == "process":
         parse_files_and_index()
     elif args.command == "dblp":

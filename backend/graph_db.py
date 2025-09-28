@@ -1610,3 +1610,71 @@ class GraphAccessor:
             logging.error(f"Error recomputing entity embeddings: {e}")
             self.conn.rollback()
             raise e
+
+    def save_user_profile(self, email: str, profile_data: dict, profile_context: Optional[str] = None) -> int:
+        """
+        Save a textual user profile for the user identified by email into user_profiles.
+        The text is stored in profile_data as JSON: { "descriptor": "<profile_data>" }.
+        
+        Args:
+            email: User's email (must exist in users table).
+            profile_text: The textual profile to store.
+            profile_context: Optional context string.
+
+        Returns:
+            int: The newly created profile_id.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                # Lookup user_id by email
+                cur.execute("SELECT user_id FROM users WHERE email = %s;", (email,))
+                row = cur.fetchone()
+                if not row:
+                    raise ValueError(f"User with email {email} not found")
+                user_id = row[0]
+
+                # Insert profile row
+                cur.execute(
+                    """
+                    INSERT INTO user_profiles (user_id, profile_data, profile_context)
+                    VALUES (%s, %s, %s)
+                    RETURNING profile_id;
+                    """,
+                    (user_id, json.dumps({"descriptor": profile_data}), profile_context)
+                )
+                profile_id = cur.fetchone()[0]  # type: ignore
+
+            self.conn.commit()
+            return profile_id
+        except Exception as e:
+            logging.error(f"Error saving user profile text: {e}")
+            self.conn.rollback()
+            raise
+
+    def get_user_profile(self, email: str) -> Optional[dict]:
+        """
+        Retrieve the user's profile descriptor from user_profiles by email.
+
+        Args:
+            email: User's email.
+
+        Returns:
+            Optional[dict]: The profile descriptor dictionary, or None if not found.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("SELECT user_id FROM users WHERE email = %s;", (email,))
+                row = cur.fetchone()
+                if not row:
+                    return None
+                user_id = row[0]
+                cur.execute("SELECT profile_data FROM user_profiles WHERE user_id = %s ORDER BY profile_id DESC LIMIT 1;", (user_id,))
+                profile_row = cur.fetchone()
+                if profile_row and profile_row[0]:
+                    data = json.loads(profile_row[0])
+                    return data.get("descriptor")
+            return None
+        except Exception as e:
+            logging.error(f"Error fetching user profile: {e}")
+            self.conn.rollback()
+            return None

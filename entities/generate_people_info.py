@@ -36,6 +36,8 @@ from crawl.duckduckgo import get_author_homepage
 #             graph_db.execute(update_query, (embedding, author_id))
 #     graph_db.commit()
 
+
+
 def get_authors_from_db(with_no_affiliation=False):
     """
     Query the list of authors from the entities table.

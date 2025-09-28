@@ -1,7 +1,7 @@
 import json
 from backend.graph_db import GraphAccessor
 
-from prompts.llm_prompts import WebPrompts
+from prompts.llm_prompts import WebPrompts, DocumentPrompts
 
 def load_arxiv_abstracts(jsonl_path="starting_points/arxiv-metadata-oai-snapshot.json"):
     """
@@ -70,7 +70,7 @@ def classify_arxiv_from_json(row: dict) -> str | None:
     if not paper_ids:
         return None  # No paper found for this URL
 
-    the_class = WebPrompts.classify_json(row) # type: ignore
+    the_class = DocumentPrompts.classify_json(row) # type: ignore
 
     if the_class:
         print(f"Classifying arXiv paper {row.get('title', '')} ({row.get('id', '')}) as {the_class}")
@@ -98,7 +98,7 @@ def classify_arxiv_categories(jsonl_path="starting_points/arxiv-metadata-oai-sna
                 paper_ids = accessor.get_entity_ids_by_url(url, type='paper')
                 
                 if (paper_ids):                
-                    the_class = WebPrompts.classify_json(row)
+                    the_class = DocumentPrompts.classify_json(row)
 
                     if the_class:
                         print(f"Classifying arXiv paper {i}: {row.get('title', '')} ({row.get('id', '')}) as {the_class}")
