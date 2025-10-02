@@ -414,4 +414,15 @@ create view papers_summaries_fields_authors_view AS
   FROM entities e join entity_tags a on e.entity_id = a.entity_id JOIN entity_tags s on e.entity_id = s.entity_id JOIN entity_tags f on e.entity_id = f.entity_id
   WHERE a.tag_name = 'author' and s.tag_name = 'summary' and f.tag_name = 'field' and e.entity_type = 'paper';
 
+CREATE TABLE IF NOT EXISTS user_history (
+    history_id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(user_id) ON DELETE CASCADE,
+    project_id INTEGER REFERENCES projects(project_id) ON DELETE CASCADE,
+    task_id INTEGER REFERENCES project_tasks(task_id) ON DELETE CASCADE,
+    prompt TEXT,
+    response TEXT,
+    predicted_task_description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 ALTER SEQUENCE crawl_cache_cache_id_seq RESTART WITH 960;

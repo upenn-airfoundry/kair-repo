@@ -5,8 +5,11 @@ import logging
 import uuid
 import time
 
+import shelve
+
 # Feature flags
 SKIP_ENRICHMENT = os.getenv("SKIP_ENRICHMENT", "").lower() in ("1", "true", "yes")
+ALLOWED_ORIGIN = os.environ.get("ALLOWED_ORIGIN", "http://localhost:3000")
 
 # Add parent directory to Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -19,6 +22,8 @@ from torndsession.session import SessionMixin
 import json
 from datetime import datetime
 from dotenv import load_dotenv, find_dotenv
+
+from prompts.llm_prompts import QueryClassification, QueryPrompts
 from torndsession.sessionhandler import SessionBaseHandler
 
 # Load environment variables from .env file
@@ -29,6 +34,8 @@ from backend.enrichment_daemon import EnrichmentDaemon
 from prompts.llm_prompts import PeoplePrompts
 # from enrichment.langchain_ops import AssessmentOps
 
+
+state = shelve.open("server_state.db", writeback=True)
 
 # Defer importing search until runtime to avoid DB init at import time
 
@@ -70,9 +77,10 @@ logging.basicConfig(level=logging.INFO)
 
 class BaseHandler(tornado.web.RequestHandler):
     def set_default_headers(self):
-        self.set_header("Access-Control-Allow-Origin", "*")
+        self.set_header("Access-Control-Allow-Origin", ALLOWED_ORIGIN)
         self.set_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.set_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+        self.set_header("Access-Control-Allow-Credentials", "true")
     
     def options(self, *args, **kwargs):
         self.set_status(204)
@@ -92,6 +100,30 @@ class BaseHandler(tornado.web.RequestHandler):
             return json.loads(self.request.body)
         except json.JSONDecodeError:
             return None
+        
+    def is_session_expired(self):
+        session = getattr(self, "session", None)
+        if not session:
+            return True
+        # expires_at = session.get("expires_at")
+        # if not expires_at or time.time() > expires_at:
+        #     return True
+        return False
+
+    def is_authenticated(self):
+        # Checks if session exists and is not expired
+        session_id = self.get_cookie("msid")
+        if session_id:
+            self.session.session = state.get(session_id)
+ 
+        return self.session is not None and "username" in self.session.session
+    
+    def renew_session(self):
+        pass
+
+    def redirect_to_login(self):
+        #self.redirect("/login")  # Adjust path as needed
+        pass
 
 ########### Main ###########
 
@@ -138,21 +170,28 @@ class LoginHandler(BaseHandler, SessionMixin):
             if bcrypt.checkpw(password.encode("utf-8"), password_hash):
                 # Create a unique session
                 session_id = str(uuid.uuid4())
-                self.session["session_id"] = session_id
-                self.session["username"] = user[0][0]
+                session = {}
+                
+                session["session_id"] = session_id
+                session["username"] = user[0][0]
+                session["email"] = email
 
                 # Set session ID as a cookie for the client
-                self.set_cookie("session_id", session_id, expires_days=None, max_age=600, httponly=True, secure=False)
+                self.set_cookie("msid", session_id, expires_days=None, max_age=600, httponly=True, secure=False)
                 
                 profile = graph_accessor.get_user_profile(email)  # Load user profile if needed
-                self.session["profile"] = profile
+                session["profile"] = profile
                 if profile is not None and 'publications' not in profile:
                     scholar_id = profile.get("scholar_id") if profile else None
 
                     if scholar_id:
                         pubs = PeoplePrompts.get_person_publications(graph_accessor, user[0][0], user[0][1], scholar_id)
 
-                        self.session['profile']["publications"] = pubs
+                        if session and "profile" in session and pubs:
+                            session['profile']["publications"] = pubs
+                        
+                state[session_id] = session
+                self.session.session = session
 
                 self.write({
                     "success": True, 
@@ -240,9 +279,10 @@ class DbPingHandler(BaseHandler):
 class FindRelatedEntitiesByTagHandler(BaseHandler, SessionMixin):
     def get(self):
         # Guard: only allow if session is valid and not expired
-        if self.is_session_expired():
+        if self.is_session_expired() or not self.is_authenticated():
             self.set_status(401)
             self.write({"error": "Session expired or not authenticated"})
+            self.redirect_to_login()
             return
         self.renew_session()  # Renew expiration on access
 
@@ -259,8 +299,15 @@ class FindRelatedEntitiesByTagHandler(BaseHandler, SessionMixin):
         results = graph_accessor.find_entities_by_tag_embedding(query_embedding, tag_name, k)
         self.write({"results": results})
 
-class FindRelatedEntitiesHandler(BaseHandler):
+class FindRelatedEntitiesHandler(BaseHandler, SessionMixin):
     def get(self):
+        # Guard: only allow if session is valid and not expired
+        if self.is_session_expired() or not self.is_authenticated():
+            self.set_status(401)
+            self.write({"error": "Session expired or not authenticated"})
+            self.redirect_to_login()
+            return
+        self.renew_session()  # Renew expiration on access
         query = self.get_argument('query', None)
         k = int(self.get_argument('k', 10))
         entity_type = self.get_argument('entity_type', None)
@@ -280,8 +327,16 @@ class FindRelatedEntitiesHandler(BaseHandler):
         results = graph_accessor.find_related_entities(query, k, entity_type, keywords)
         self.write({"results": results})
 
-class AddToCrawlQueueHandler(BaseHandler):
+class AddToCrawlQueueHandler(BaseHandler, SessionMixin):
     def post(self):
+        # Guard: only allow if session is valid and not expired
+        if self.is_session_expired() or not self.is_authenticated():
+            self.set_status(401)
+            self.write({"error": "Session expired or not authenticated"})
+            self.redirect_to_login()
+            return
+        self.renew_session()  # Renew expiration on access
+
         data = self.get_json()
         if not data or 'url' not in data:
             self.set_status(400)
@@ -305,8 +360,15 @@ class AddToCrawlQueueHandler(BaseHandler):
         graph_accessor.commit()
         self.write({"message": "URL added to crawl queue"})
 
-class CrawlFilesHandler(BaseHandler):
+class CrawlFilesHandler(BaseHandler, SessionMixin):
     def post(self):
+        # Guard: only allow if session is valid and not expired
+        if self.is_session_expired() or not self.is_authenticated():
+            self.set_status(401)
+            self.write({"error": "Session expired or not authenticated"})
+            self.redirect_to_login()
+            return
+        self.renew_session()  # Renew expiration on access
         try:
             # Lazy import to avoid prompts dependency at startup
             from crawl.web_fetch import fetch_and_crawl_frontier
@@ -316,8 +378,15 @@ class CrawlFilesHandler(BaseHandler):
             self.set_status(500)
             self.write({"error": f"An error occurred during crawling: {e}"})
 
-class ParsePDFsAndIndexHandler(BaseHandler):
+class ParsePDFsAndIndexHandler(BaseHandler, SessionMixin):
     def post(self):
+        # Guard: only allow if session is valid and not expired
+        if self.is_session_expired() or not self.is_authenticated():
+            self.set_status(401)
+            self.write({"error": "Session expired or not authenticated"})
+            self.redirect_to_login()
+            return
+        self.renew_session()  # Renew expiration on access
         try:
             # if parse_files_and_index is None or SKIP_ENRICHMENT:
             #     self.set_status(503)
@@ -348,8 +417,15 @@ class UncrowledEntriesHandler(BaseHandler):
             self.set_status(500)
             self.write({"error": f"An error occurred while fetching uncrawled entries: {e}"})
 
-class GetAssessmentCriteriaHandler(BaseHandler):
+class GetAssessmentCriteriaHandler(BaseHandler, SessionMixin):
     def get(self):
+        # Guard: only allow if session is valid and not expired
+        if self.is_session_expired() or not self.is_authenticated():
+            self.set_status(401)
+            self.write({"error": "Session expired or not authenticated"})
+            self.redirect_to_login()
+            return
+        self.renew_session()  # Renew expiration on access
         try:
             name = self.get_argument('name', None)
             criteria = graph_accessor.get_assessment_criteria(name)
@@ -366,8 +442,15 @@ class GetAssessmentCriteriaHandler(BaseHandler):
             self.set_status(500)
             self.write({"error": f"An error occurred: {e}"})
 
-class AddAssessmentCriterionHandler(BaseHandler):
+class AddAssessmentCriterionHandler(BaseHandler, SessionMixin):
     def post(self):
+        # Guard: only allow if session is valid and not expired
+        if self.is_session_expired() or not self.is_authenticated():
+            self.set_status(401)
+            self.write({"error": "Session expired or not authenticated"})
+            self.redirect_to_login()
+            return
+        self.renew_session()  # Renew expiration on access
         try:
             data = self.get_json()
             name = data.get('name')
@@ -394,8 +477,15 @@ class AddAssessmentCriterionHandler(BaseHandler):
             self.set_status(500)
             self.write({"error": f"An error occurred: {e}"})
 
-class AddEnrichmentHandler(BaseHandler):
+class AddEnrichmentHandler(BaseHandler, SessionMixin):
     def post(self):
+        # Guard: only allow if session is valid and not expired
+        if self.is_session_expired() or not self.is_authenticated():
+            self.set_status(401)
+            self.write({"error": "Session expired or not authenticated"})
+            self.redirect_to_login()
+            return
+        self.renew_session()  # Renew expiration on access
         try:
             data = self.get_json()
             name = data.get('name')
@@ -405,8 +495,15 @@ class AddEnrichmentHandler(BaseHandler):
             self.set_status(500)
             self.write({"error": f"An error occurred: {e}"})
 
-class ExpandSearchHandler(BaseHandler):
+class ExpandSearchHandler(BaseHandler, SessionMixin):
     def post(self):
+        # Guard: only allow if session is valid and not expired
+        if self.is_session_expired() or not self.is_authenticated():
+            self.set_status(401)
+            self.write({"error": "Session expired or not authenticated"})
+            self.redirect_to_login()
+            return
+        self.renew_session()  # Renew expiration on access
         try:
             # Lazy import to avoid startup failures if LLM/DB not ready
             from search import (
@@ -431,6 +528,27 @@ class ExpandSearchHandler(BaseHandler):
                 self.set_status(400)
                 self.write({"error": "'prompt' parameter is required"})
                 return
+
+            session = self.session.session
+            
+            user_profile = session.get("profile", {})
+            email = session.get("email")
+            user_id = graph_accessor.exec_sql("SELECT user_id FROM users WHERE email = %s;", (email,))[0][0]
+            project_id = graph_accessor.exec_sql("SELECT project_id FROM user_projects WHERE user_id = %s ORDER BY project_id ASC LIMIT 1;", (user_id,))[0][0]
+            user_history = graph_accessor.get_user_history(user_id, project_id, limit=20)
+
+            # 1. Classify query and get task summary
+            classification = QueryPrompts.classify_query_and_summarize(user_prompt)
+            query_class = classification.query_class
+            task_summary = classification.task_summary
+
+            # 2. Build expanded prompt
+            expanded_prompt = QueryPrompts.build_expanded_prompt(user_profile, user_history, task_summary, user_prompt)
+
+            print("Expanded prompt: " + expanded_prompt)
+            
+            if classification.query_class != "search_over_papers":
+                user_prompt = expanded_prompt
 
             if not is_search_over_papers(user_prompt):
                 answer = search_basic(user_prompt)
@@ -530,14 +648,14 @@ class StopSchedulerHandler(BaseHandler):
 class Application(tornado.web.Application):
     def __init__(self, handlers):
         settings = dict(
-            debug=True,
+            #debug=True,
         )
         session_settings = dict(
             driver="memory",
             driver_settings=dict(
                 host=self,
             ),
-            sid_name='torndsession-mem',  # default is msid.
+            sid_name='msid',  # default is msid.
             session_lifetime=1800,  # default is 1200 seconds.
             force_persistence=True,
         )

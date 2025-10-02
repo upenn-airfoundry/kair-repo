@@ -53,6 +53,7 @@ export default function ChatInput({ addMessage }: ChatInputProps) {
       const response = await fetch(`${config.apiBaseUrl}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ prompt: expandedPrompt }),
       });
 

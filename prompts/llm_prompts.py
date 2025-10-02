@@ -1,18 +1,13 @@
-from bs4 import BeautifulSoup
-from urllib.parse import unquote
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 from langchain.schema.output_parser import StrOutputParser
-from langchain.chains.openai_functions import create_structured_output_runnable
 import requests
 
 from pydantic import BaseModel, Field
 from typing import Union, Literal, Any
 
-import os
 from typing import List, Optional
 
-from langchain.chains import create_extraction_chain
 from backend.graph_db import GraphAccessor
 
 import pandas as pd
@@ -94,6 +89,11 @@ class FacultyList(BaseModel):
     """A list of faculty members."""
     faculty: List[FacultyMember]
     
+    
+class QueryClassification(BaseModel):
+    query_class: Literal["general_knowledge", "training", "reading_resources", "candidate_leads"]
+    task_summary: str = Field(..., description="A brief description of the task involved.")
+
 class DocumentPrompts:
     @classmethod
     def answer_from_summary(cls, json_fragment, question):
@@ -589,3 +589,45 @@ class PeoplePrompts:
             "expertise": result.expertise_and_research,
             "projects": result.known_projects
         }
+        
+    @classmethod
+    def classify_query_and_summarize(query: str) -> QueryClassification:
+        # Use a fast LLM (e.g., Gemini Flash or GPT-3.5) with a structured output
+        from enrichment.llms import get_analysis_llm
+        from langchain.prompts import ChatPromptTemplate
+
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", "Classify the following query and summarize the task. Respond with a JSON object matching the QueryClassification schema."),
+            ("user", f"Query: {query}")
+        ])
+        llm = get_analysis_llm().with_structured_output(QueryClassification)
+        result = (prompt | llm).invoke({"query": query})
+        return result
+
+class QueryPrompts:
+    @classmethod
+    def build_expanded_prompt(cls, user_profile, user_history, task_summary, user_prompt):
+        history_str = ""
+        for prompt, response in user_history:
+            history_str += f"User: {prompt}\nSystem: {response}\n"
+        context = (
+            f"User expertise: {user_profile.get('expertise','')}\n"
+            f"Research problems: {user_profile.get('projects','')}\n"
+            f"Task summary: {task_summary}\n"
+            f"Recent history:\n{history_str}\n"
+            f"Current query: {user_prompt}"
+        )
+        return context
+
+    def classify_query_and_summarize(query: str) -> QueryClassification:
+        # Use a fast LLM (e.g., Gemini Flash or GPT-3.5) with a structured output
+        from enrichment.llms import get_analysis_llm
+        from langchain.prompts import ChatPromptTemplate
+
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", "Classify the following query and summarize the task. Respond with a JSON object matching the QueryClassification schema."),
+            ("user", f"Query: {query}")
+        ])
+        llm = get_analysis_llm().with_structured_output(QueryClassification)
+        result = (prompt | llm).invoke({"query": query})
+        return result

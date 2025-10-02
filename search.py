@@ -87,6 +87,8 @@ def get_json_fragment(criteria: List) -> str:
     return ret + "}"
 
 
+
+
 def is_search_over_papers(question: str) -> bool:
     """
     Determines if the question is about searching over papers.

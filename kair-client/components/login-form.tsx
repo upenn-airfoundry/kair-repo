@@ -37,6 +37,7 @@ export function LoginForm({
     try {
       const response = await fetch(`${config.apiBaseUrl}/api/login`, {
         method: 'POST',
+        credentials: 'include', // Include cookies in the request
         headers: {
           'Content-Type': 'application/json',
         },

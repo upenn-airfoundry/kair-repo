@@ -1713,3 +1713,35 @@ class GraphAccessor:
             logging.error(f"Error fetching author by Scholar ID: {e}")
             self.conn.rollback()
             return None
+        
+    def add_user_history(self, user_id: int, project_id: int, prompt: str, response: str, description: Optional[str] = None, task_id: Optional[int] = None):
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO user_history (user_id, project_id, task_id, predicted_task_description, prompt, response) VALUES (%s, %s, %s, %s);",
+                    (user_id, project_id, task_id, description, prompt, response)
+                )
+            self.conn.commit()
+        except Exception as e:
+            logging.error(f"Error saving user history: {e}")
+            self.conn.rollback()
+            raise
+
+    def get_user_history(self, user_id: int, project_id: int,task_id: Optional[int] = None, limit: int = 20) -> list:
+        try:
+            with self.conn.cursor() as cur:
+                if task_id:
+                    cur.execute(
+                        "SELECT prompt, response, predicted_task_description FROM user_history WHERE user_id = %s AND project_id = %s AND task_id = %s ORDER BY created_at DESC LIMIT %s;",
+                        (user_id, project_id, task_id, limit)
+                    )
+                else:
+                    cur.execute(
+                        "SELECT prompt, response, predicted_task_description FROM user_history WHERE user_id = %s AND project_id = %s ORDER BY created_at DESC LIMIT %s;",
+                        (user_id, project_id, limit)
+                    )
+                return cur.fetchall()
+        except Exception as e:
+            logging.error(f"Error fetching user history: {e}")
+            self.conn.rollback()
+            return []        
