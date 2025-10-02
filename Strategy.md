@@ -35,3 +35,21 @@ We need to identify tasks and subtasks
 
 - We need to register MCP tools to get connections to other resources.
 - Paper --> NCBI info, protein --> gene, protein --> mRNA, mRNA --> BayesOpt, etc.
+
+We need a context manager, which keeps the context window from going crazy.
+It works on transitive closure based on the task at hand, and the future downstream tasks.
+
+
+
+Task-reflective learning
+========================
+
+At each query:
+- Did I learn something new --> pending item
+- What is my goal, what should my result look like?
+
+Periodic:
+- Re-interpret the context of my objective
+- Refine strategy
+- Refine individual steps with a clearer definition
+- Does any of this subsume what I was doing before, or obsolete it?

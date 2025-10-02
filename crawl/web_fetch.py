@@ -646,14 +646,18 @@ def scholar_search_gscholar_profiles(graph_accessor: GraphAccessor, author_name:
             print(f"Invalid profile data: {profile}")
             continue
 
-        print(f"Enqueuing profile for author: {name} (ID: {author_id})")
-        
-        graph_accessor.add_task_to_queue(
-            'search:google_scholar_authorid',
-            author_id,
-            f"Search for Google Scholar profile for author ID: {author_id}",
-            f"Search for detailed information about the author with ID: {author_id} on Google Scholar."
-        )
+        # Only add to the task queue if the author is not already in the database
+        scholar_url = f"https://scholar.google.com/citations?user={author_id}"
+        if not graph_accessor.get_entity_ids_by_url(scholar_url):
+            print(f"Enqueuing profile for author: {name} (ID: {author_id})")
+            graph_accessor.add_task_to_queue(
+                'search:google_scholar_authorid',
+                author_id,
+                f"Search for Google Scholar profile for author ID: {author_id}",
+                f"Search for detailed information about the author with ID: {author_id} on Google Scholar."
+            )
+        else:
+            print(f"Author {name} (ID: {author_id}) already exists in the database. Skipping enqueue.")
 
     return profiles
 
@@ -692,7 +696,10 @@ def scholar_search_gscholar_by_id(graph_accessor: GraphAccessor, author_id: str,
         return []
 
     # Extract the name from the Google record or else the last term in provenance
-    name = author_data['author'].get("name", provenance[-1])
+    if len(provenance):
+        name = author_data['author'].get("name", provenance[-1])
+    else:
+        name = author_data['author'].get("name", "Unknown Author")
     
     # Call graph_db.add_person with the Google Scholar URL, name, and author JSON
     google_scholar_url = f"https://scholar.google.com/citations?user={author_id}"
@@ -711,8 +718,11 @@ def scholar_search_gscholar_by_id(graph_accessor: GraphAccessor, author_id: str,
             "scholar profile " + author_id,
             json.dumps(author_data))
         print(f"Added author {name} (ID: {author_id}) to the database.")
+        
+        return author_data.get("articles", [])
     except Exception as e:
         print(f"Error adding author {name} (ID: {author_id}) to the database: {e}")
+    return []
 
 def fetch_pdf_from_arxiv_repo(arxiv_path, local_download_path=DOWNLOADS_DIR):
     """

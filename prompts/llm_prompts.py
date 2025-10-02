@@ -13,12 +13,13 @@ import os
 from typing import List, Optional
 
 from langchain.chains import create_extraction_chain
-
+from backend.graph_db import GraphAccessor
 
 import pandas as pd
 
 from enrichment.llms import get_analysis_llm, get_better_llm, get_structured_analysis_llm
 from files.tables import sample_rows_to_string
+
 
 # Define the Pydantic Model
 class ConditionalAnswer(BaseModel):
@@ -521,6 +522,38 @@ class WebPrompts:
 
 
 class PeoplePrompts:
+    
+    @classmethod
+    def get_person_publications(cls, graph_accessor: GraphAccessor, name: str, organization: str, scholar_id: str) -> List[dict]:
+        from crawl.web_fetch import scholar_search_gscholar_by_id
+        """
+        Uses Google Scholar and the LLM to generate a list of publications for a person.
+
+        Args:
+            name (str): The person's name.
+            organization (str): The organization the person is affiliated with.
+            scholar_id (Optional[str]): The Google Scholar ID of the person, if available.
+            
+        Returns:
+            List[dict]: A list of publications, each represented as a dictionary with keys "title", "authors", "venue", "year", and "url".
+        """
+
+        if not scholar_id:
+            return []
+
+        # Use GraphAccessor to load author data by scholar_id, optionally filtering by name and organization
+        author_data = graph_accessor.get_author_by_scholar_id(scholar_id)
+        if not author_data or "articles" not in author_data:
+            # TODO: if pubs is empty we need to fetch
+            profile = scholar_search_gscholar_by_id(graph_accessor, scholar_id, [])
+
+            if profile:
+                return profile.get("articles", [])
+        if author_data:
+            return author_data.get("articles", [])
+        else:
+            return []
+    
     @classmethod
     def get_person_profile(cls, name: str, organization: str) -> dict:
         """

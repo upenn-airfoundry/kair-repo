@@ -292,6 +292,7 @@ CREATE TABLE user_profiles (
     user_id INTEGER REFERENCES users(user_id) ON DELETE CASCADE,
     profile_data JSON,
     profile_context TEXT,
+    scholar_id VARCHAR,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -412,3 +413,5 @@ create view papers_summaries_fields_authors_view AS
   SELECT e.entity_id, e.entity_name, e.entity_detail, f.tag_value as "field", s.tag_value as summary, a.tag_value as author
   FROM entities e join entity_tags a on e.entity_id = a.entity_id JOIN entity_tags s on e.entity_id = s.entity_id JOIN entity_tags f on e.entity_id = f.entity_id
   WHERE a.tag_name = 'author' and s.tag_name = 'summary' and f.tag_name = 'field' and e.entity_type = 'paper';
+
+ALTER SEQUENCE crawl_cache_cache_id_seq RESTART WITH 960;

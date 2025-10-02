@@ -1,4 +1,5 @@
 tornado
+torndsession
 python-dotenv
 psycopg2-binary
 numpy

@@ -2,6 +2,8 @@ import os
 import sys
 import bcrypt
 import logging
+import uuid
+import time
 
 # Feature flags
 SKIP_ENRICHMENT = os.getenv("SKIP_ENRICHMENT", "").lower() in ("1", "true", "yes")
@@ -12,11 +14,12 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 import tornado.ioloop
 import tornado.web
 import tornado.options
+from torndsession.session import SessionManager
+from torndsession.session import SessionMixin
 import json
 from datetime import datetime
 from dotenv import load_dotenv, find_dotenv
-
-from apscheduler.schedulers.tornado import TornadoScheduler
+from torndsession.sessionhandler import SessionBaseHandler
 
 # Load environment variables from .env file
 _ = load_dotenv(find_dotenv())
@@ -32,6 +35,39 @@ from prompts.llm_prompts import PeoplePrompts
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 
+
+# class MainHandler(SessionBaseHandler):
+#     def get(self):
+#         self.write("Memory Session Object Demo:<br/>")
+#         if "sv" in self.session:
+#             current_value = self.session["sv"]
+#         else:
+#             current_value = 0
+#         if not current_value:
+#             self.write("current_value is None(0)<br/>")
+#             current_value = 1
+#         else:
+#             current_value = int(current_value) + 1
+#         self.write('<br/> Current Value is: %d' % current_value)
+#         self.write('<br/>Current Python Version: %s' % version)
+#         self.session["sv"] = current_value
+
+
+# class DeleteHandler(SessionBaseHandler):
+#     def get(self):
+#         '''
+#         Please don't do this in production environments.
+#         '''
+#         self.write("Memory Session Object Demo:")
+#         if "sv" in self.session:
+#             current_value = self.session["sv"]
+#             self.write("current sv value is %s, and system will delete this value.<br/>" % self.session["sv"])
+#             self.session.delete("sv")
+#             if "sv" not in self.session:
+#                 self.write("current sv value is empty")
+#         else:
+#             self.write("Session data not found")
+
 class BaseHandler(tornado.web.RequestHandler):
     def set_default_headers(self):
         self.set_header("Access-Control-Allow-Origin", "*")
@@ -43,7 +79,6 @@ class BaseHandler(tornado.web.RequestHandler):
         self.finish()
 
     def prepare(self):
-        # If DB isn't available, only allow health endpoint
         global graph_accessor
         if os.getenv("SKIP_ENRICHMENT", "").lower() in ("1", "true", "yes"):
             return
@@ -57,8 +92,7 @@ class BaseHandler(tornado.web.RequestHandler):
             return json.loads(self.request.body)
         except json.JSONDecodeError:
             return None
-        
-        
+
 ########### Main ###########
 
 # Initialize the GraphAccessor, but don't crash if DB is unavailable (or skip)
@@ -72,7 +106,7 @@ try:
 except Exception as e:
     logging.error(f"Failed to initialize database connection: {e}")
 
-class LoginHandler(BaseHandler):
+class LoginHandler(BaseHandler, SessionMixin):
     def post(self):
         try:
             data = self.get_json()
@@ -83,7 +117,6 @@ class LoginHandler(BaseHandler):
                 self.write({"error": "'email' and 'password' are required"})
                 return
 
-            # Ensure database is available
             if graph_accessor is None:
                 logging.error("Login attempted but database is not configured (graph_accessor is None)")
                 self.set_status(503)
@@ -93,7 +126,6 @@ class LoginHandler(BaseHandler):
                 })
                 return
 
-            # Fetch user from DB and check password
             user = graph_accessor.exec_sql(
                 "SELECT name, organization, avatar, password_hash FROM users WHERE email = %s;", (email,)
             )
@@ -104,14 +136,35 @@ class LoginHandler(BaseHandler):
 
             password_hash = user[0][3].encode("utf-8")
             if bcrypt.checkpw(password.encode("utf-8"), password_hash):
+                # Create a unique session
+                session_id = str(uuid.uuid4())
+                self.session["session_id"] = session_id
+                self.session["username"] = user[0][0]
+
+                # Set session ID as a cookie for the client
+                self.set_cookie("session_id", session_id, expires_days=None, max_age=600, httponly=True, secure=False)
+                
+                profile = graph_accessor.get_user_profile(email)  # Load user profile if needed
+                self.session["profile"] = profile
+                if profile is not None and 'publications' not in profile:
+                    scholar_id = profile.get("scholar_id") if profile else None
+
+                    if scholar_id:
+                        pubs = PeoplePrompts.get_person_publications(graph_accessor, user[0][0], user[0][1], scholar_id)
+
+                        self.session['profile']["publications"] = pubs
+
                 self.write({
                     "success": True, 
                     "user": {
                         "name": user[0][0],
                         "organization": user[0][1],
-                        "avatar": user[0][2]
+                        "avatar": user[0][2],
+                        "profile": self.session.get("profile", {})
                     },
-                    "message": "Login successful"})
+                    "session_id": session_id,
+                    "message": "Login successful"
+                })
             else:
                 self.set_status(401)
                 self.write({"success": False, "message": "Invalid credentials"})
@@ -184,8 +237,15 @@ class DbPingHandler(BaseHandler):
             self.set_status(500)
             self.write({"ok": False, "error": f"{e}"})
 
-class FindRelatedEntitiesByTagHandler(BaseHandler):
+class FindRelatedEntitiesByTagHandler(BaseHandler, SessionMixin):
     def get(self):
+        # Guard: only allow if session is valid and not expired
+        if self.is_session_expired():
+            self.set_status(401)
+            self.write({"error": "Session expired or not authenticated"})
+            return
+        self.renew_session()  # Renew expiration on access
+
         tag_name = self.get_argument('tag_name', None)
         query = self.get_argument('query', None)
         k = int(self.get_argument('k', 10))
@@ -467,9 +527,28 @@ class StopSchedulerHandler(BaseHandler):
             self.set_status(500)
             self.write({"error": f"Failed to stop scheduler: {e}"})
 
+class Application(tornado.web.Application):
+    def __init__(self, handlers):
+        settings = dict(
+            debug=True,
+        )
+        session_settings = dict(
+            driver="memory",
+            driver_settings=dict(
+                host=self,
+            ),
+            sid_name='torndsession-mem',  # default is msid.
+            session_lifetime=1800,  # default is 1200 seconds.
+            force_persistence=True,
+        )
+        settings.update(session=session_settings)
+        tornado.web.Application.__init__(self, handlers=handlers, **settings)
+
+
+
 
 def make_app():
-    return tornado.web.Application([
+    return Application([
         (r"/health", HealthCheckHandler),
         (r"/db_ping", DbPingHandler),
         (r"/find_related_entities_by_tag", FindRelatedEntitiesByTagHandler),
@@ -486,7 +565,7 @@ def make_app():
         (r"/stop_scheduler", StopSchedulerHandler),
         (r"/api/login", LoginHandler),
         (r"/api/create", CreateAccountHandler),        
-        (r"/api/chat", ExpandSearchHandler),        
+        (r"/api/chat", ExpandSearchHandler),
     ])
 
 if __name__ == "__main__":

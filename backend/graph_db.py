@@ -333,7 +333,7 @@ class GraphAccessor:
                             ON CONFLICT (entity_type, entity_name, entity_url)
                             DO UPDATE SET
                                 entity_detail = EXCLUDED.entity_detail,
-                                entity_contact = EXCLUDED.entity_contact 
+                                entity_contact = EXCLUDED.entity_contact, 
                                 entity_json = EXCLUDED.entity_json,
                                 entity_embed = EXCLUDED.entity_embed
                         RETURNING entity_id;
@@ -1668,13 +1668,48 @@ class GraphAccessor:
                 if not row:
                     return None
                 user_id = row[0]
-                cur.execute("SELECT profile_data FROM user_profiles WHERE user_id = %s ORDER BY profile_id DESC LIMIT 1;", (user_id,))
+                cur.execute("SELECT profile_data, scholar_id FROM user_profiles WHERE user_id = %s ORDER BY profile_id DESC LIMIT 1;", (user_id,))
                 profile_row = cur.fetchone()
                 if profile_row and profile_row[0]:
-                    data = json.loads(profile_row[0])
-                    return data.get("descriptor")
-            return None
+                    data = profile_row[0]
+                    ret = data.get("descriptor")
+                    ret['scholar_id'] = profile_row[1]
+                    
+                    return ret
         except Exception as e:
             logging.error(f"Error fetching user profile: {e}")
+            self.conn.rollback()
+            return None
+        
+    def get_author_by_scholar_id(self, scholar_id: str) -> Optional[dict]:
+        """
+        Find the author entity matching a Google Scholar ID and return the person's Scholar JSON record.
+
+        Args:
+            scholar_id (str): The Google Scholar ID to search for.
+            name (Optional[str]): Optionally filter by name.
+            organization (Optional[str]): Optionally filter by organization.
+
+        Returns:
+            Optional[dict]: The author's Scholar JSON record, or None if not found.
+        """
+        try:
+            # Build the Scholar profile URL
+            scholar_url = f"https://scholar.google.com/citations?user={scholar_id}"
+            query = f"SELECT entity_json FROM {self.schema}.entities WHERE entity_type = 'google_scholar_profile' AND entity_url = %s"
+            params = [scholar_url]
+
+            with self.conn.cursor() as cur:
+                cur.execute(query, tuple(params))
+                row = cur.fetchone()
+                if row and row[0]:
+                    # entity_json is stored as JSON string
+                    try:
+                        return row[0]
+                    except Exception:
+                        return row[0]
+            return None
+        except Exception as e:
+            logging.error(f"Error fetching author by Scholar ID: {e}")
             self.conn.rollback()
             return None
