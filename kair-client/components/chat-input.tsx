@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import { Send } from 'lucide-react';
 import { config } from "@/config";
 import ReactMarkdown from 'react-markdown';
-import { useAuth } from "@/context/auth-context";
 
 // Message type
 interface Message {
@@ -20,7 +19,6 @@ interface ChatInputProps {
 }
 
 export default function ChatInput({ addMessage }: ChatInputProps) {
-  const { user } = useAuth();
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -39,17 +37,6 @@ export default function ChatInput({ addMessage }: ChatInputProps) {
     setIsLoading(true);
 
     try {
-      // Build expanded prompt
-      let expandedPrompt = trimmedMessage;
-      if (user?.profile) {
-        expandedPrompt =
-          `User profile:\n` +
-          `Biosketch: ${user.profile.biosketch}\n` +
-          `Expertise: ${user.profile.expertise}\n` +
-          `Projects: ${user.profile.projects}\n\n` +
-          `User query: ${trimmedMessage}`;
-      }
-
       const response = await fetch(`${config.apiBaseUrl}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

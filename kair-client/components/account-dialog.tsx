@@ -1,10 +1,23 @@
+'use client';
+
 import React, { useState, useEffect } from "react";
 import { Dialog, DialogTitle, DialogContent, DialogActions } from "@mui/material";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { useAuth } from "@/context/auth-context";
 
-export default function AccountDialog({ open, onClose }) {
+interface AccountDialogProps {
+  open: boolean;
+  onClose: () => void;
+}
+
+type Project = {
+  id: string;
+  name: string;
+  // add other fields if needed
+};
+
+export default function AccountDialog({ open, onClose }: AccountDialogProps) {
   const { user } = useAuth();
   const [profile, setProfile] = useState({
     fullName: user?.name || "",
@@ -13,9 +26,9 @@ export default function AccountDialog({ open, onClose }) {
     projects: user?.profile?.projects || "",
     publications: user?.profile?.publications || [],
   });
-  const [projects, setProjects] = useState([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [search, setSearch] = useState("");
-  const [selectedProject, setSelectedProject] = useState(null);
+  const [selectedProject, setSelectedProject] = useState<string | null>(null);
   const [newProjectName, setNewProjectName] = useState("");
   const [newProjectDesc, setNewProjectDesc] = useState("");
 
@@ -50,7 +63,7 @@ export default function AccountDialog({ open, onClose }) {
   };
 
   // Publication fields: title, authors, venue, year, url, doi, abstract
-  const handlePublicationChange = (idx, field, value) => {
+  const handlePublicationChange = (idx: number, field: string, value: string) => {
     const pubs = [...profile.publications];
     pubs[idx][field] = value;
     setProfile({ ...profile, publications: pubs });
@@ -66,7 +79,7 @@ export default function AccountDialog({ open, onClose }) {
     });
   };
 
-  const handleRemovePublication = (idx) => {
+  const handleRemovePublication = (idx: number) => {
     const pubs = [...profile.publications];
     pubs.splice(idx, 1);
     setProfile({ ...profile, publications: pubs });
@@ -213,7 +226,7 @@ export default function AccountDialog({ open, onClose }) {
             {projects.map(proj => (
               <li key={proj.id}>
                 <Button
-                  variant={selectedProject === proj.id ? "contained" : "outlined"}
+                  variant={selectedProject === proj.id ? "default" : "outline"}
                   onClick={() => setSelectedProject(proj.id)}
                 >
                   {proj.name}

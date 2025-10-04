@@ -1,3 +1,5 @@
+'use client';
+
 import { Separator } from "@/components/ui/separator"
 import { SidebarTrigger } from "@/components/ui/sidebar"
 import Image from "next/image"
@@ -34,7 +36,9 @@ export function ChatHeader({ title, description }: ChatHeaderProps) {
           )}
         </div>
         <div>
-          Discovery mode for {user.name} at {user.organization}
+          {user
+            ? `Discovery mode for ${user.name} at ${user.organization}`
+            : "Discovery mode"}
         </div>
         <div className="ml-auto flex items-center gap-2">
           {/* Additional header elements can go here */}
