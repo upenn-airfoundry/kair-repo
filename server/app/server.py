@@ -184,7 +184,8 @@ class LoginHandler(BaseHandler, SessionMixin):
                         "name": user[0][0],
                         "organization": user[0][1],
                         "avatar": user[0][2],
-                        "profile": self.session.get("profile", {})
+                        "profile": self.session.get("profile", {}),
+                        "project_id": project_id,
                     },
                     "session_id": session_id,
                     "message": "Login successful"
@@ -750,6 +751,41 @@ class CreateProjectHandler(BaseHandler, SessionMixin):
         self.write({"project_id": project_id})
 
 
+class ChatHistoryHandler(BaseHandler, SessionMixin):
+    def get(self):
+        if not self.is_authenticated():
+            self.set_status(401)
+            self.write({"error": "Session expired or not authenticated"})
+            return
+
+        try:
+            project_id = self.get_argument("project_id")
+            user_id = graph_accessor.get_user_and_project_ids(self.session.session.get("email"))[0]
+
+            if not user_id or not project_id:
+                self.set_status(400)
+                self.write({"error": "User ID and Project ID are required."})
+                return
+
+            # Fetch history from the database
+            history_tuples = graph_accessor.get_user_history(user_id, int(project_id))
+            
+            # Was in desc order by age, but we want chronological
+            history_tuples.reverse()
+
+            # Format for the client
+            messages = []
+            for i, (prompt, response, desc) in enumerate(history_tuples):
+                messages.append({"id": f"hist_{i}_user", "sender": "user", "content": prompt})
+                messages.append({"id": f"hist_{i}_bot", "sender": "bot", "content": response})
+
+            self.write({"history": messages})
+
+        except Exception as e:
+            logging.error(f"Error fetching chat history: {e}")
+            self.set_status(500)
+            self.write({"error": "An error occurred while fetching chat history."})
+
 class Application(tornado.web.Application):
     def __init__(self, handlers):
         settings = dict(
@@ -788,6 +824,7 @@ def make_app():
         (r"/stop_scheduler", StopSchedulerHandler),
         (r"/api/login", LoginHandler),
         (r"/api/create", CreateAccountHandler),        
+        (r"/api/chat/history", ChatHistoryHandler),
         (r"/api/chat", ExpandSearchHandler),
         (r"/api/account", AccountInfoHandler),
         (r"/api/account/update", UpdateAccountHandler),

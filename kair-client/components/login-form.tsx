@@ -52,7 +52,8 @@ export function LoginForm({
           email: email,
           organization: data.user.organization,
           avatar: data.user.avatar,
-          profile: data.user.profile ?? null // <-- include profile from server
+          profile: data.user.profile ?? null, // <-- include profile from server
+          project_id: data.user.project_id // <-- include project_id from server
         });
         router.push('/chat'); // Redirect to /dashboard
       } else {

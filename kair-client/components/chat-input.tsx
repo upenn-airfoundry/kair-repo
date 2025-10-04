@@ -1,69 +1,116 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Button } from "@/components/ui/button";
 import { Send } from 'lucide-react';
 import { config } from "@/config";
 import ReactMarkdown from 'react-markdown';
+import { useAuth } from '@/context/auth-context';
 
 // Message type
-interface Message {
+export interface Message {
   id: string;
   sender: 'user' | 'bot';
   content: string;
 }
 
-
 interface ChatInputProps {
   addMessage: (message: Message) => void;
+  projectId: number; // Assume project ID is passed as a prop
 }
 
-export default function ChatInput({ addMessage }: ChatInputProps) {
+export default function ChatInput({ addMessage, projectId }: ChatInputProps) {
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const { user } = useAuth();
+
+  // Create refs for the input element and the end of the messages container
+  const inputRef = useRef<HTMLInputElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Function to scroll to the bottom of the message list
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  // Scroll to bottom whenever messages are updated
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  // Fetch chat history on component mount
+  useEffect(() => {
+    if (projectId) {
+      const fetchHistory = async () => {
+        try {
+          console.log("Fetching chat history for project ID:", projectId);
+            const response = await fetch(`${config.apiBaseUrl}/api/chat/history?project_id=${projectId}`, {
+            credentials: 'include',
+            });
+          if (response.ok) {
+            const data = await response.json();
+            setMessages(data.history || []);
+          }
+        } catch (error) {
+          console.error("Failed to fetch chat history:", error);
+        }
+      };
+      fetchHistory();
+    }
+  }, [projectId]);
+
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const trimmedMessage = message.trim();
     if (!trimmedMessage) return;
 
-    // Add user message
     const userMessageId = Date.now().toString();
     const userMsg: Message = { id: userMessageId, sender: 'user', content: trimmedMessage };
-    setMessages((prev) => [...prev, userMsg]);
-    addMessage(userMsg); // Call the prop function to add message to parent
+    const newMessages = [...messages, userMsg];
+    setMessages(newMessages);
+    addMessage(userMsg);
     setMessage('');
     setIsLoading(true);
 
     try {
+      // Expand prompt with user profile context
+      let expandedPrompt = trimmedMessage;
+      if (user?.profile) {
+          expandedPrompt =
+              `User profile:\n` +
+              `Biosketch: ${user.profile.biosketch}\n` +
+              `Expertise: ${user.profile.expertise}\n` +
+              `Projects: ${user.profile.projects}\n\n` +
+              `User query: ${trimmedMessage}`;
+      }
+
       const response = await fetch(`${config.apiBaseUrl}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ prompt: trimmedMessage }),
+        body: JSON.stringify({ prompt: expandedPrompt, project_id: projectId }),
       });
 
       if (!response.ok) throw new Error('Network response was not ok');
       const botResponse = await response.json();
 
-      // Add bot response
       const botMessageId = Date.now().toString() + '-bot';
       const botMsg: Message = { id: botMessageId, sender: 'bot', content: botResponse.data.message };
       setMessages((prev) => [...prev, botMsg]);
-      addMessage(botMsg); // Call the prop function to add message to parent
+      addMessage(botMsg);
     } catch (error) {
-      console.error("Error in chat input submission:", error);
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: Date.now().toString() + '-error',
-          sender: 'bot',
-          content: 'Sorry, something went wrong. Please try again.',
-        }
-      ]);
+      const errorMsg: Message = {
+        id: Date.now().toString() + '-error',
+        sender: 'bot',
+        content: 'Sorry, something went wrong. Please try again. ' + error,
+      };
+      setMessages((prev) => [...prev, errorMsg]);
+      addMessage(errorMsg);
     } finally {
       setIsLoading(false);
+      // Set focus back to the input field
+      inputRef.current?.focus();
     }
   };
 
@@ -99,6 +146,8 @@ export default function ChatInput({ addMessage }: ChatInputProps) {
             </div>
           </div>
         )}
+        {/* Empty div to act as a scroll target */}
+        <div ref={messagesEndRef} />
       </div>
       {/* Input form */}
       <form
@@ -106,6 +155,7 @@ export default function ChatInput({ addMessage }: ChatInputProps) {
         className="p-4 bg-background border-t flex items-center gap-2"
       >
         <input
+          ref={inputRef} // Attach the ref to the input element
           value={message}
           onChange={(e) => setMessage(e.target.value)}
           placeholder="Send a message..."

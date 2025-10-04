@@ -1,12 +1,22 @@
 "use client";
 
 import ChatInput from '@/components/chat-input';
+import { Message } from '@/components/chat-input';
 import { AppSidebar } from '@/components/app-sidebar';
 import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar';
 import { ProtectedRoute } from "@/components/protected-route"
 import { ChatHeader } from '@/components/chat-header';
+import { useAuth } from '@/context/auth-context';
+import { useState } from 'react';
 
 export default function ChatPage() {
+  const { user } = useAuth();
+
+  const [, setMessages] = useState<Message[]>([]);
+
+  // Determine the project ID from the user's session data
+  // We'll use the first project in the list as the default.
+  const projectId = user?.project_id;
 
   return (
     <ProtectedRoute>
@@ -20,13 +30,22 @@ export default function ChatPage() {
     >
       <AppSidebar variant="inset" />
       <SidebarInset>
-        <ChatHeader title="KAIR" description="AI-aided discovery" />
+        <ChatHeader title="" description={projectId?.toString()} />
         <div className="flex flex-1 flex-col">
           <div className="@container/main flex flex-1 flex-col gap-2">
-            <ChatInput addMessage={(message) => {
-              // TODO: Implement message handling logic here
-              console.log("New message:", message);
-            }} />
+            {projectId ? (
+              <ChatInput 
+                projectId={projectId}
+                addMessage={(message: Message) => {
+                  setMessages(prev => [...prev, message]);
+                  console.log("New message:", message);
+                }} 
+              />
+            ) : (
+              <div className="p-4 text-center text-muted-foreground">
+                Loading chat or no project selected...
+              </div>
+            )}
           </div>
         </div>
       </SidebarInset>

@@ -5,7 +5,6 @@ import { ProtectedRoute } from "@/components/protected-route"
 
 export default function ProjectsPage() {
   return (
-    <ProtectedRoute>
     <SidebarProvider
       style={
         {
@@ -27,6 +26,5 @@ export default function ProjectsPage() {
         </div>
       </SidebarInset>
     </SidebarProvider>
-    </ProtectedRoute>
   );
 } 
