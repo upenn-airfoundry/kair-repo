@@ -5,7 +5,7 @@
 ##################
 
 import requests
-from typing import List
+from typing import List, Optional
 import json
 import os
 
@@ -113,13 +113,16 @@ def is_search_over_papers(question: str) -> bool:
         return any(k in question.lower() for k in keywords)
 
 
-def search_basic(question: str) -> str:
+def search_basic(question: str, sys_prompt: Optional[str] = None) -> str:
     """Simple fallback answer if LLM unavailable."""
     try:
         if better_llm is None or ChatPromptTemplate is None or StrOutputParser is None:
             return "Unable to reach LLM right now."
+        
+        if sys_prompt is None:
+            sys_prompt = "You are an expert in answering questions about science, targeting educational or scientific users."
         prompt = ChatPromptTemplate.from_messages([
-            ("system", "You are an expert in answering questions about science, targeting educational or scientific users."),
+            ("system", sys_prompt),
             ("user", "{question}\n\nAnswer:")
         ])
         chain = prompt | better_llm | StrOutputParser()

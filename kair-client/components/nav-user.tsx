@@ -29,6 +29,9 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar"
 
+import AccountDialog from "./account-dialog";
+import { useState } from "react"
+
 export function NavUser({
   user,
 }: {
@@ -46,7 +49,11 @@ export function NavUser({
     router.push("/login")
   }
 
+  const [open, setOpen] = useState(false);
+
   return (
+    <>
+  <AccountDialog open={open} onClose={() => setOpen(false)} />
     <SidebarMenu>
       <SidebarMenuItem>
         <DropdownMenu>
@@ -90,7 +97,7 @@ export function NavUser({
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
-              <DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setOpen(true)}>
                 <IconUserCircle />
                 Account
               </DropdownMenuItem>
@@ -108,5 +115,6 @@ export function NavUser({
         </DropdownMenu>
       </SidebarMenuItem>
     </SidebarMenu>
+    </>
   )
 }

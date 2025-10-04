@@ -91,7 +91,7 @@ class FacultyList(BaseModel):
     
     
 class QueryClassification(BaseModel):
-    query_class: Literal["general_knowledge", "training", "reading_resources", "candidate_leads"]
+    query_class: Literal["general_knowledge", "technical_training", "papers_reports_or_prior_work", "molecules_algorithms_solutions_sources_and_justifications"]
     task_summary: str = Field(..., description="A brief description of the task involved.")
 
 class DocumentPrompts:
@@ -606,13 +606,16 @@ class PeoplePrompts:
 
 class QueryPrompts:
     @classmethod
-    def build_expanded_prompt(cls, user_profile, user_history, task_summary, user_prompt):
+    def build_expanded_prompt(cls, system_profile: str, user_profile: dict, user_history: list, task_summary: str, user_prompt: str):
         history_str = ""
-        for prompt, response in user_history:
+        for items in user_history[-5:]:
+            prompt = items[0]
+            response = items[1]
             history_str += f"User: {prompt}\nSystem: {response}\n"
         context = (
+            f"General instructions: {system_profile}\n"
             f"User expertise: {user_profile.get('expertise','')}\n"
-            f"Research problems: {user_profile.get('projects','')}\n"
+            f"Projects and interests: {user_profile.get('projects','')}\n"
             f"Task summary: {task_summary}\n"
             f"Recent history:\n{history_str}\n"
             f"Current query: {user_prompt}"

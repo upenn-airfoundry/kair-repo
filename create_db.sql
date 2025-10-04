@@ -321,6 +321,13 @@ CREATE TABLE project_tasks (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Add columns for biosketch, research areas, projects to user_profiles if not present
+ALTER TABLE user_profiles
+    ADD COLUMN IF NOT EXISTS biosketch TEXT,
+    ADD COLUMN IF NOT EXISTS research_areas TEXT,
+    ADD COLUMN IF NOT EXISTS projects TEXT,
+    ADD COLUMN IF NOT EXISTS publications JSON;
+
 CREATE TABLE crawl_cache (
     cache_id SERIAL PRIMARY KEY,
     url TEXT NOT NULL UNIQUE,
@@ -407,6 +414,8 @@ GRANT USAGE ON SEQUENCE user_profiles_profile_id_seq TO kair;
 GRANT USAGE ON SEQUENCE projects_project_id_seq TO kair;
 
 GRANT USAGE ON SEQUENCE project_tasks_task_id_seq TO kair;
+
+GRANT USAGE ON SEQUENCE user_history_history_id_seq TO kair;
 
 
 create view papers_summaries_fields_authors_view AS

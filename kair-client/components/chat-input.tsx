@@ -54,7 +54,7 @@ export default function ChatInput({ addMessage }: ChatInputProps) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ prompt: expandedPrompt }),
+        body: JSON.stringify({ prompt: trimmedMessage }),
       });
 
       if (!response.ok) throw new Error('Network response was not ok');

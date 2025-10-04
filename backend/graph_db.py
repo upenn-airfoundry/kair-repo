@@ -1713,12 +1713,111 @@ class GraphAccessor:
             logging.error(f"Error fetching author by Scholar ID: {e}")
             self.conn.rollback()
             return None
+
+    def get_system_profile(self) -> Optional[dict]:
+        """
+        Retrieve the system profile from user_profiles where user_id is NULL.
+
+        Returns:
+            Optional[dict]: The system profile descriptor dictionary, or None if not found.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("SELECT profile_data, profile_context FROM user_profiles WHERE user_id IS NULL ORDER BY profile_id DESC LIMIT 1;")
+                profile_row = cur.fetchone()
+                if profile_row and profile_row[1]:
+                    data = profile_row[0]
+                    ret = data.get("descriptor") if isinstance(data, dict) else data
+                    # Optionally add context if present
+                    if isinstance(ret, dict):
+                        ret['profile_context'] = profile_row[1]
+                    elif ret is None:
+                        ret = {'profile_context': profile_row[1]}
+                    return ret
+        except Exception as e:
+            logging.error(f"Error fetching system profile: {e}")
+            self.conn.rollback()
+            return None
+
+    def set_system_profile(self, profile_data: dict, profile_context: Optional[str] = None) -> int:
+        """
+        Save the system profile into user_profiles with user_id as NULL.
+
+        Args:
+            profile_data: The profile descriptor dictionary.
+            profile_context: Optional context string.
+            scholar_id: Optional scholar ID.
+
+        Returns:
+            int: The newly created profile_id.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO user_profiles (user_id, profile_data, profile_context)
+                    VALUES (NULL, %s, %s)
+                    RETURNING profile_id;
+                    """,
+                    (json.dumps({"descriptor": profile_data}), profile_context)
+                )
+                profile_id = cur.fetchone()[0]  # type: ignore
+            self.conn.commit()
+            return profile_id
+        except Exception as e:
+            logging.error(f"Error saving system profile: {e}")
+            self.conn.rollback()
+            raise
+                
+                
+    def get_user_and_project_ids(self, email: str, project_name: Optional[str] = None) -> Optional[Tuple[int, int]]:
+        """_summary_
+        Retrieve the user ID and project ID associated with the given email and project name.
+
+        Args:
+            email (str): The email of the user.
+            project_name (Optional[str]): The name of the project.
+
+        Returns:
+            Optional[Tuple[int, int]]: A tuple containing the user ID and project ID, or None if not found.
+        """
         
+        user_id = self.exec_sql("SELECT user_id FROM users WHERE email = %s;", (email,))[0][0]
+        
+        if user_id is None or user_id == 0:
+            raise ValueError("User not found")
+
+        if project_name is not None and project_name.strip() != '':
+            project_id = self.exec_sql("SELECT p.project_id FROM projects p JOIN user_projects up ON p.project_id = up.project_id WHERE up.user_id = %s AND p.project_name = %s ORDER BY p.project_id ASC LIMIT 1;", (user_id, project_name))
+        else:
+            project_id = self.exec_sql("SELECT project_id FROM user_projects WHERE user_id = %s ORDER BY project_id ASC LIMIT 1;", (user_id,))
+            
+        if project_id is None or len(project_id) == 0:
+            # Create a new project and associate it with the user
+            new_project_id = self.exec_sql(
+                "INSERT INTO projects (project_name, project_description, created_at) VALUES (%s, %s, %s) RETURNING project_id;",
+                (project_name, "New project created", datetime.now())
+            )
+            self.commit()
+            if new_project_id is None or len(new_project_id) == 0:
+                raise ValueError("Failed to create new project")
+            new_project_id = new_project_id[0][0]
+            self.execute(
+                "INSERT INTO user_projects (user_id, project_id) VALUES (%s, %s);",
+                (user_id, new_project_id)
+            )
+            self.commit()
+            project_id = new_project_id
+        else:
+            project_id = project_id[0][0]
+        return (user_id, project_id)
+
+
     def add_user_history(self, user_id: int, project_id: int, prompt: str, response: str, description: Optional[str] = None, task_id: Optional[int] = None):
         try:
             with self.conn.cursor() as cur:
                 cur.execute(
-                    "INSERT INTO user_history (user_id, project_id, task_id, predicted_task_description, prompt, response) VALUES (%s, %s, %s, %s);",
+                    "INSERT INTO user_history (user_id, project_id, task_id, predicted_task_description, prompt, response) VALUES (%s, %s, %s, %s, %s, %s);",
                     (user_id, project_id, task_id, description, prompt, response)
                 )
             self.conn.commit()
@@ -1745,3 +1844,77 @@ class GraphAccessor:
             logging.error(f"Error fetching user history: {e}")
             self.conn.rollback()
             return []        
+        
+    def update_user_profile(self, email: str, profile: dict):
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("SELECT user_id FROM users WHERE email = %s;", (email,))
+                row = cur.fetchone()
+                if not row:
+                    raise ValueError("User not found")
+                user_id = row[0]
+                cur.execute("""
+                    UPDATE user_profiles
+                    SET biosketch = %s, research_areas = %s, projects = %s, publications = %s, profile = %s 
+                    WHERE user_id = %s;
+                """, (
+                    profile.get("biosketch"),
+                    profile.get("expertise"),
+                    profile.get("projects"),
+                    profile.get("publications"),
+                    profile,
+                    user_id
+                ))
+            self.conn.commit()
+        except Exception as e:
+            logging.error(f"Error updating user profile: {e}")
+            self.conn.rollback()
+            raise
+
+    def get_user_projects(self, user_id: int):
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    SELECT p.project_id, p.project_name, p.project_description
+                    FROM user_projects up
+                    JOIN projects p ON up.project_id = p.project_id
+                    WHERE up.user_id = %s;
+                """, (user_id,))
+                return [{"id": r[0], "name": r[1], "description": r[2]} for r in cur.fetchall()]
+        except Exception as e:
+            logging.error(f"Error fetching user projects: {e}")
+            self.conn.rollback()
+            return []
+
+    def search_projects(self, search: str):
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    SELECT project_id, project_name, project_description
+                    FROM projects
+                    WHERE project_name ILIKE %s OR project_description ILIKE %s
+                    LIMIT 20;
+                """, (f"%{search}%", f"%{search}%"))
+                return [{"id": r[0], "name": r[1], "description": r[2]} for r in cur.fetchall()]
+        except Exception as e:
+            logging.error(f"Error searching projects: {e}")
+            self.conn.rollback()
+            return []
+
+    def create_project(self, name: str, description: str, user_id: int):
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO projects (project_name, project_description, created_at)
+                    VALUES (%s, %s, NOW()) RETURNING project_id;
+                """, (name, description))
+                project_id = cur.fetchone()[0]
+                cur.execute("""
+                    INSERT INTO user_projects (user_id, project_id) VALUES (%s, %s);
+                """, (user_id, project_id))
+            self.conn.commit()
+            return project_id
+        except Exception as e:
+            logging.error(f"Error creating project: {e}")
+            self.conn.rollback()
+            raise
