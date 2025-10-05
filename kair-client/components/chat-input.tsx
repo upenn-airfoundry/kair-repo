@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Send } from 'lucide-react';
 import { config } from "@/config";
 import ReactMarkdown from 'react-markdown';
-import { useAuth } from '@/context/auth-context';
+// import { useAuth } from '@/context/auth-context';
 import remarkGfm from 'remark-gfm';
 
 // Message type
@@ -17,14 +17,15 @@ export interface Message {
 
 interface ChatInputProps {
   addMessage: (message: Message) => void;
-  projectId: number; // Assume project ID is passed as a prop
+  projectId: number;
+  onRefreshRequest: () => void; // Add the new prop to the interface
 }
 
-export default function ChatInput({ addMessage, projectId }: ChatInputProps) {
+export default function ChatInput({ addMessage, projectId, onRefreshRequest }: ChatInputProps) {
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const { user } = useAuth();
+  // const { user } = useAuth();
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -107,25 +108,31 @@ export default function ChatInput({ addMessage, projectId }: ChatInputProps) {
 
     try {
       // Expand prompt with user profile context
-      let expandedPrompt = trimmedMessage;
-      if (user?.profile) {
-          expandedPrompt =
-              `User profile:\n` +
-              `Biosketch: ${user.profile.biosketch}\n` +
-              `Expertise: ${user.profile.expertise}\n` +
-              `Projects: ${user.profile.projects}\n\n` +
-              `User query: ${trimmedMessage}`;
-      }
+      const expandedPrompt = trimmedMessage;
+      // if (user?.profile) {
+      //     expandedPrompt =
+      //         `User profile:\n` +
+      //         `Biosketch: ${user.profile.biosketch}\n` +
+      //         `Expertise: ${user.profile.expertise}\n` +
+      //         `Projects: ${user.profile.projects}\n\n` +
+      //         `User query: ${trimmedMessage}`;
+      // }
 
       const response = await fetch(`${config.apiBaseUrl}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({ prompt: expandedPrompt, project_id: projectId }),
+        credentials: 'include',
       });
 
       if (!response.ok) throw new Error('Network response was not ok');
       const botResponse = await response.json();
+
+      // Check for the refresh trigger in the response
+      if (botResponse.data.refresh_project) {
+        console.log("Refresh project requested by backend.");
+        onRefreshRequest(); // Call the handler function from the parent
+      }
 
       const botMessageId = Date.now().toString() + '-bot';
       const botMsg: Message = { id: botMessageId, sender: 'bot', content: botResponse.data.message };

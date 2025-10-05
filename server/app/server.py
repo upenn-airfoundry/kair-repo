@@ -166,9 +166,6 @@ class LoginHandler(BaseHandler, SessionMixin):
                         if session and "profile" in session and pubs:
                             session['profile']["publications"] = pubs
                         
-                state[session_id] = session
-                self.session.session = session
-
                 results = graph_accessor.get_user_and_project_ids(email)
                 
                 if results is None:
@@ -186,6 +183,9 @@ class LoginHandler(BaseHandler, SessionMixin):
                 if project_details:
                     project_name = project_details[0][0]
                     project_description = project_details[0][1]
+
+                state[session_id] = session
+                self.session.session = session
 
                 question_handlers[session_id] = AnswerQuestionHandler(graph_accessor, 
                                                                       user[0][0], 

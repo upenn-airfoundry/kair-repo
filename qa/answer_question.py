@@ -66,7 +66,7 @@ class AnswerQuestionHandler():
                 answer = search_basic(user_prompt, "You are an expert assistant. Please answer the following general knowledge question concisely and accurately.\n\nIf you don't know the answer, just say you don't know. Do not make up an answer.")
                 self.graph_accessor.add_user_history(self.user_id, self.project_id, original_prompt, answer)
                 return (answer, 0)
-            elif classification.query_class == "technical_training":
+            elif classification.query_class == "learning_resources_or_technical_training":
                 # answer = search_basic(user_prompt, "You are an expert technical trainer. Please provide a clear and concise explanation, or a list of resources for further learning.\n\nIf you don't know the answer, just say you don't know. Do not make up an answer.")
                 answer = WebPrompts.find_learning_resources(user_prompt)
                 markdown_answer = WebPrompts.format_resources_as_markdown(answer)

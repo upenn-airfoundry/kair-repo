@@ -22,6 +22,12 @@ export interface Message {
 export default function ChatPage() {
   const { user } = useAuth();
   const [, setMessages] = useState<Message[]>([]);
+  const [refreshKey, setRefreshKey] = useState(0); // State to trigger refresh
+
+  // Function to increment the key, causing a re-render in child components
+  const handleRefreshRequest = () => {
+    setRefreshKey(prevKey => prevKey + 1);
+  };
 
   // Determine the project ID and name from the user's session data
   const projectId = user?.project_id;
@@ -44,7 +50,11 @@ export default function ChatPage() {
             <Panel defaultSize={25} minSize={15}>
               <div className="h-full w-full">
                 {projectId && projectName ? (
-                  <ProjectGraphPane projectId={projectId} projectName={projectName} />
+                  <ProjectGraphPane
+                    projectId={projectId}
+                    projectName={projectName}
+                    refreshKey={refreshKey} // Pass the key as a prop
+                  />
                 ) : (
                   <div className="h-full w-full border rounded-lg flex items-center justify-center text-muted-foreground">
                     Loading project workflow...
@@ -67,6 +77,7 @@ export default function ChatPage() {
                     addMessage={(message: Message) => {
                       setMessages(prev => [...prev, message]);
                     }}
+                    onRefreshRequest={handleRefreshRequest} // Pass the handler function
                   />
                 ) : (
                   <div className="p-4 text-center text-muted-foreground">

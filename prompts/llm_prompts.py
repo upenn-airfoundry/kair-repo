@@ -103,7 +103,7 @@ class FacultyList(BaseModel):
     
     
 class QueryClassification(BaseModel):
-    query_class: Literal["general_knowledge", "technical_training", "papers_reports_or_prior_work", "molecules_algorithms_solutions_sources_and_justifications"]
+    query_class: Literal["general_knowledge", "learning_resources_or_technical_training", "papers_reports_or_prior_work", "molecules_algorithms_solutions_sources_and_justifications"]
     task_summary: str = Field(..., description="A brief description of the task involved.")
 
 class DocumentPrompts:

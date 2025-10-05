@@ -34,9 +34,10 @@ interface Dependency {
 interface ProjectGraphPaneProps {
   projectId: number;
   projectName: string;
+  refreshKey: number; // Add the new prop
 }
 
-export default function ProjectGraphPane({ projectId, projectName }: ProjectGraphPaneProps) {
+export default function ProjectGraphPane({ projectId, projectName, refreshKey }: ProjectGraphPaneProps) {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [selectedElement, setSelectedElement] = useState<Node | Edge | null>(null);
@@ -45,6 +46,7 @@ export default function ProjectGraphPane({ projectId, projectName }: ProjectGrap
   const onEdgesChange: OnEdgesChange = useCallback((changes) => setEdges((eds) => applyEdgeChanges(changes, eds)), [setEdges]);
 
   useEffect(() => {
+    console.log("Fetching project graph data...");
     if (!projectId) return;
 
     const fetchData = async () => {
@@ -56,6 +58,14 @@ export default function ProjectGraphPane({ projectId, projectName }: ProjectGrap
         ]);
         const tasksData = await tasksRes.json();
         const depsData = await depsRes.json();
+
+        console.log("Tasks data:", tasksData);
+        console.log("Dependencies data:", depsData);
+
+        if (!tasksRes.ok || !depsRes.ok) {
+          console.error("Failed to fetch tasks or dependencies");
+          return;
+        }
 
         // Create nodes from tasks
         const initialNodes: Node[] = tasksData.tasks.map((task: Task, index: number) => ({
@@ -94,14 +104,14 @@ export default function ProjectGraphPane({ projectId, projectName }: ProjectGrap
     };
 
     fetchData();
-  }, [projectId]);
+  }, [projectId, refreshKey]); // Add refreshKey to the dependency array
 
   const onNodeClick = (_: React.MouseEvent, node: Node) => setSelectedElement(node);
   const onEdgeClick = (_: React.MouseEvent, edge: Edge) => setSelectedElement(edge);
 
   return (
     <div className="h-full w-full border rounded-lg flex flex-col">
-      <h2 className="p-2 font-semibold border-b bg-muted/40">{projectName} - Workflow</h2>
+      <h2 className="p-2 font-semibold border-b bg-muted/40">Tasks for Project {projectName} - Workflow</h2>
       <div className="flex-1 flex">
         <div className="w-2/3 h-full border-r">
           <ReactFlow
