@@ -4,9 +4,9 @@ from datetime import datetime
 
 from flask import json
 from backend.graph_db import GraphAccessor
-from prompts.llm_prompts import QueryPrompts
+from prompts.llm_prompts import QueryPrompts, WebPrompts, LearningResource, LearningResourceList
 from search import search_over_criteria, search_multiple_criteria, generate_rag_answer, search_basic, is_relevant_answer_with_data
-
+from enrichment.llms import gemini_doc_embedding, gemini_query_embedding
 
 class AnswerQuestionHandler():
     def __init__(self, graph_accessor: GraphAccessor, username: str, user_profile: dict[str, Any], user_id: int, project_id: int) -> None:
@@ -25,7 +25,7 @@ class AnswerQuestionHandler():
     def get_history(self, user_id: int, project_id: int) -> List[Dict[str, Any]]:
         return self.graph_accessor.get_user_history(user_id, project_id, limit=20)
     
-    def answer_question(self, user_prompt: str):
+    def answer_question(self, user_prompt: str) -> tuple[Optional[str], Optional[int]]:
         try:
             if self.project_id is None:
                 # Create a new project and associate it with the user
@@ -65,11 +65,48 @@ class AnswerQuestionHandler():
             if query_class == "general_knowledge":
                 answer = search_basic(user_prompt, "You are an expert assistant. Please answer the following general knowledge question concisely and accurately.\n\nIf you don't know the answer, just say you don't know. Do not make up an answer.")
                 self.graph_accessor.add_user_history(self.user_id, self.project_id, original_prompt, answer)
-                return answer
+                return (answer, 0)
             elif classification.query_class == "technical_training":
-                answer = search_basic(user_prompt, "You are an expert technical trainer. Please provide a clear and concise explanation, or a list of resources for further learning.\n\nIf you don't know the answer, just say you don't know. Do not make up an answer.")
-                self.graph_accessor.add_user_history(self.user_id, self.project_id, original_prompt, answer)
-                return answer
+                # answer = search_basic(user_prompt, "You are an expert technical trainer. Please provide a clear and concise explanation, or a list of resources for further learning.\n\nIf you don't know the answer, just say you don't know. Do not make up an answer.")
+                answer = WebPrompts.find_learning_resources(user_prompt)
+                markdown_answer = WebPrompts.format_resources_as_markdown(answer)
+
+                existing_task = self.graph_accessor.exec_sql("SELECT task_id, task_name FROM project_tasks WHERE project_id = %s", (self.project_id,))
+                
+                for item in existing_task:
+                    embed1 = gemini_doc_embedding(item[1])
+                    embed2 = gemini_doc_embedding(task_summary)
+                    similarity = sum(a*b for a, b in zip(embed1, embed2))
+                    if similarity > 0.9:
+                        existing_task = [item]
+                        break
+                    else:
+                        existing_task = []
+                
+                if existing_task and len(existing_task) > 0:
+                    # Task already exists, no need to create a new one
+                    task_id = existing_task[0][0]
+                else:
+                    task_id = self.graph_accessor.create_project_task(self.project_id, task_summary, "Learning resources for project " + str(self.project_id), "(title:string,rationale:string,resource:url)")
+                    
+                for resource in answer.resources:
+                    entity_id = self.graph_accessor.get_entity_by_url(resource.url)
+                    
+                    if entity_id is None:
+                        # Entity does not exist, create a new one
+                        video_sites = ['youtube.com', 'youtu.be', 'vimeo.com', 'coursera.org', 'edx.org', 'khanacademy.org', 'udemy.com', 'dailymotion.com']
+                        entity_type = 'learning_resource' if any(site in resource.url for site in video_sites) else 'paper'
+                        
+                        entity_id = self.graph_accessor.add_source(resource.url, entity_type, resource.title)
+                    
+                    # Link the task to the new or existing entity
+                    if entity_id and task_id:
+                        self.graph_accessor.link_entity_to_task(task_id, entity_id, 9.0)
+
+                self.graph_accessor.add_user_history(self.user_id, self.project_id, original_prompt, markdown_answer)
+                
+                # Update the project task info!
+                return (markdown_answer, 1)
             elif classification.query_class == "papers_reports_or_prior_work":
 
                 pass # through
@@ -77,7 +114,7 @@ class AnswerQuestionHandler():
                 # user_prompt = f"You are an expert consultant. Please provide potential solutions, sources, and justifications for the following problem or question:\n\n{user_prompt}\n\nIf you don't know the answer, just say you don't know. Do not make up an answer."
                 answer = search_basic(user_prompt, "You are an expert data engineer who understands data resources, data modeling, schemas and types, MCP servers, and related elements. Please suggest a complete set of fields (i.e., a schema) for possible solutions to the question, including citations to sources, evidence, expected properties and features with their expected modalities or datatypes, factors useful for decision-making, and justifications.\n\nIf you don't know the answer, just say you don't know. Do not make up an answer.")
                 self.graph_accessor.add_user_history(self.user_id, self.project_id, original_prompt, answer)
-                return answer
+                return (answer, 0)
 
             
             # if not is_search_over_papers(user_prompt):
@@ -129,12 +166,12 @@ class AnswerQuestionHandler():
                     question_map = json.loads(questions)
                     for q in question_map.keys():
                         question_str += f' * {q}: {question_map[q]}\n'
-                        
-                    return answer + '\n\nWe additionally looked for assessment criteria: \n\n' + question_str
+
+                    return (answer + '\n\nWe additionally looked for assessment criteria: \n\n' + question_str, 1)
                 else:
-                    return answer
+                    return (answer, 0)
             else:
-                return None
+                return (None, 0)
         except Exception as e:
             logging.error(f"Error during expansion: {e}")
             raise e

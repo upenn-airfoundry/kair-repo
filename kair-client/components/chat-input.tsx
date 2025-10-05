@@ -6,6 +6,7 @@ import { Send } from 'lucide-react';
 import { config } from "@/config";
 import ReactMarkdown from 'react-markdown';
 import { useAuth } from '@/context/auth-context';
+import remarkGfm from 'remark-gfm';
 
 // Message type
 export interface Message {
@@ -25,19 +26,49 @@ export default function ChatInput({ addMessage, projectId }: ChatInputProps) {
   const [isLoading, setIsLoading] = useState(false);
   const { user } = useAuth();
 
-  // Create refs for the input element and the end of the messages container
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null); // Ref for the scrollable message container
 
   // Function to scroll to the bottom of the message list
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
-  // Scroll to bottom whenever messages are updated
+  // Scroll to bottom whenever new messages are added
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Effect to handle resizing and maintain scroll position from the bottom
+  useEffect(() => {
+    const scrollContainer = scrollContainerRef.current;
+    if (!scrollContainer) return;
+
+    let oldScrollHeight = 0;
+    let oldScrollTop = 0;
+
+    const observer = new ResizeObserver(() => {
+      if (scrollContainer.scrollHeight !== oldScrollHeight) {
+        scrollContainer.scrollTop = oldScrollTop + (scrollContainer.scrollHeight - oldScrollHeight);
+      }
+    });
+
+    const handleScroll = () => {
+      oldScrollHeight = scrollContainer.scrollHeight;
+      oldScrollTop = scrollContainer.scrollTop;
+    };
+
+    // Observe the container and listen for scroll events to update our stored position
+    observer.observe(scrollContainer);
+    scrollContainer.addEventListener('scroll', handleScroll);
+
+    // Cleanup
+    return () => {
+      observer.disconnect();
+      scrollContainer.removeEventListener('scroll', handleScroll);
+    };
+  }, []);
 
   // Fetch chat history on component mount
   useEffect(() => {
@@ -89,6 +120,7 @@ export default function ChatInput({ addMessage, projectId }: ChatInputProps) {
       const response = await fetch(`${config.apiBaseUrl}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ prompt: expandedPrompt, project_id: projectId }),
       });
 
@@ -117,7 +149,7 @@ export default function ChatInput({ addMessage, projectId }: ChatInputProps) {
   return (
     <div className="flex flex-col h-full">
       {/* Message list */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.map((msg) => (
           <div
             key={msg.id}
@@ -134,7 +166,7 @@ export default function ChatInput({ addMessage, projectId }: ChatInputProps) {
                   : "inline-block bg-gray-100 dark:bg-gray-800 rounded px-3 py-2"
               }
             >
-              <ReactMarkdown>{msg.content}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
             </div>
           </div>
         ))}
@@ -154,12 +186,13 @@ export default function ChatInput({ addMessage, projectId }: ChatInputProps) {
         onSubmit={handleSubmit}
         className="p-4 bg-background border-t flex items-center gap-2"
       >
-        <input
-          ref={inputRef} // Attach the ref to the input element
+        <textarea
+          ref={inputRef} // Attach the ref to the textarea element
           value={message}
           onChange={(e) => setMessage(e.target.value)}
           placeholder="Send a message..."
-          className="flex-grow resize-none border rounded px-3 py-2"
+          className="flex-grow resize-none border rounded px-3 py-2 max-h-40 overflow-y-auto"
+          rows={1}
           disabled={isLoading}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey && !isLoading) {

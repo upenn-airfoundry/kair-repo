@@ -1,55 +1,83 @@
 "use client";
 
 import ChatInput from '@/components/chat-input';
-import { Message } from '@/components/chat-input';
 import { AppSidebar } from '@/components/app-sidebar';
 import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar';
 import { ProtectedRoute } from "@/components/protected-route"
-import { ChatHeader } from '@/components/chat-header';
 import { useAuth } from '@/context/auth-context';
 import { useState } from 'react';
+import ProjectGraphPane from '@/components/project-graph-pane';
+import {
+  Panel,
+  PanelGroup,
+  PanelResizeHandle,
+} from "react-resizable-panels";
+
+export interface Message {
+  id: string;
+  sender: 'user' | 'bot';
+  content: string;
+}
 
 export default function ChatPage() {
   const { user } = useAuth();
-
   const [, setMessages] = useState<Message[]>([]);
 
-  // Determine the project ID from the user's session data
-  // We'll use the first project in the list as the default.
+  // Determine the project ID and name from the user's session data
   const projectId = user?.project_id;
+  const projectName = user?.project_name;
 
   return (
     <ProtectedRoute>
-    <SidebarProvider
-      style={
-        {
-          "--sidebar-width": "calc(var(--spacing) * 72)",
-          "--header-height": "calc(var(--spacing) * 12)",
-        } as React.CSSProperties
-      }
-    >
-      <AppSidebar variant="inset" />
-      <SidebarInset>
-        <ChatHeader title="" description={projectId?.toString()} />
-        <div className="flex flex-1 flex-col">
-          <div className="@container/main flex flex-1 flex-col gap-2">
-            {projectId ? (
-              <ChatInput 
-                projectId={projectId}
-                addMessage={(message: Message) => {
-                  setMessages(prev => [...prev, message]);
-                  console.log("New message:", message);
-                }} 
-              />
-            ) : (
-              <div className="p-4 text-center text-muted-foreground">
-                Loading chat or no project selected...
+      <SidebarProvider
+        style={
+          {
+            "--sidebar-width": "calc(var(--spacing) * 72)",
+            "--header-height": "calc(var(--spacing) * 12)",
+          } as React.CSSProperties
+        }
+      >
+        <AppSidebar variant="inset" />
+        <SidebarInset>
+          <PanelGroup direction="vertical" className="h-screen w-full">
+            {/* Top Panel for Project Graph */}
+            <Panel defaultSize={25} minSize={15}>
+              <div className="h-full w-full">
+                {projectId && projectName ? (
+                  <ProjectGraphPane projectId={projectId} projectName={projectName} />
+                ) : (
+                  <div className="h-full w-full border rounded-lg flex items-center justify-center text-muted-foreground">
+                    Loading project workflow...
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-        </div>
-      </SidebarInset>
-    </SidebarProvider>
+            </Panel>
+
+            {/* Resizable Handle */}
+            <PanelResizeHandle className="h-2 flex items-center justify-center bg-muted transition-colors hover:bg-muted-foreground/20">
+              <div className="w-8 h-1 rounded-full bg-border" />
+            </PanelResizeHandle>
+
+            {/* Bottom Panel for Chat */}
+            <Panel defaultSize={75} minSize={20}>
+              <div className="h-full w-full flex flex-col">
+                {projectId ? (
+                  <ChatInput
+                    projectId={projectId}
+                    addMessage={(message: Message) => {
+                      setMessages(prev => [...prev, message]);
+                    }}
+                  />
+                ) : (
+                  <div className="p-4 text-center text-muted-foreground">
+                    Loading chat or no project selected...
+                  </div>
+                )}
+              </div>
+            </Panel>
+          </PanelGroup>
+        </SidebarInset>
+      </SidebarProvider>
     </ProtectedRoute>
   );
 }

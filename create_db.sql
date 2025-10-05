@@ -75,6 +75,12 @@ CREATE TYPE entity_types AS ENUM ('synopsis',
                                   'result');
 
 ALTER TYPE entity_types ADD VALUE IF NOT EXISTS 'google_scholar_profile';
+
+ALTER TYPE entity_types ADD VALUE IF NOT EXISTS 'learning_resource';
+ALTER TYPE entity_types ADD VALUE IF NOT EXISTS 'url';
+
+ALTER TYPE entity_types ADD VALUE IF NOT EXISTS 'accession_number';
+
 -- Data is "chunked" into hierarchies of entities.
 -- An entity can be a synopsis, fact, new concept, claim, author, organization,
 -- tag, paper, section, paragraph, table, hypothesis, source, method, event,
@@ -328,6 +334,37 @@ ALTER TABLE user_profiles
     ADD COLUMN IF NOT EXISTS projects TEXT,
     ADD COLUMN IF NOT EXISTS publications JSON;
 
+ALTER TABLE project_tasks 
+  ADD COLUMN task_schema text;
+COMMENT ON COLUMN project_tasks.task_schema IS 'For capturing a string list of attributes:types;descriptions';
+
+ALTER TABLE project_tasks 
+  ADD COLUMN task_description_embed vector(1536);
+
+CREATE INDEX task_description_embed_idx ON project_tasks
+USING hnsw (task_description_embed vector_cosine_ops);
+
+CREATE TABLE task_entities (
+    task_entity_id SERIAL PRIMARY KEY,
+    task_id INTEGER REFERENCES project_tasks(task_id) ON DELETE CASCADE,
+    entity_id INTEGER REFERENCES entities(entity_id) ON DELETE CASCADE,
+    user_feedback TEXT,
+    feedback_rating INTEGER,
+    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (task_id, entity_id)
+);
+
+CREATE TYPE data_flow_type AS ENUM ('automatic', 'gated by user feedback', 'rethinking the previous task');
+
+CREATE TABLE task_dependencies (
+    source_task_id INTEGER REFERENCES project_tasks(task_id) ON DELETE CASCADE,
+    dependent_task_id INTEGER REFERENCES project_tasks(task_id) ON DELETE CASCADE,
+    relationship_description TEXT,
+    data_schema TEXT,
+    data_flow data_flow_type,
+    PRIMARY KEY (source_task_id, dependent_task_id)
+);
+
 CREATE TABLE crawl_cache (
     cache_id SERIAL PRIMARY KEY,
     url TEXT NOT NULL UNIQUE,
@@ -417,6 +454,9 @@ GRANT USAGE ON SEQUENCE project_tasks_task_id_seq TO kair;
 
 GRANT USAGE ON SEQUENCE user_history_history_id_seq TO kair;
 
+GRANT USAGE ON SEQUENCE user_history_history_id_seq TO kair;
+
+GRANT USAGE ON SEQUENCE task_entities_task_entity_id_seq TO kair;
 
 create view papers_summaries_fields_authors_view AS
   SELECT e.entity_id, e.entity_name, e.entity_detail, f.tag_value as "field", s.tag_value as summary, a.tag_value as author

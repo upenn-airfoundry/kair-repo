@@ -8,6 +8,18 @@ from typing import Union, Literal, Any
 
 from typing import List, Optional
 
+# Add the new Pydantic models for learning resources
+class LearningResource(BaseModel):
+    """A learning resource related to a specific topic."""
+    title: str = Field(..., description="The title of the learning resource.")
+    rationale: str = Field(..., description="A brief explanation of why this resource is relevant and useful.")
+    url: str = Field(..., description="The URL of the learning resource.")
+
+class LearningResourceList(BaseModel):
+    """A list of learning resources."""
+    resources: List[LearningResource]
+
+
 from backend.graph_db import GraphAccessor
 
 import pandas as pd
@@ -464,6 +476,58 @@ class TablePrompts:
             return "TEXT"
 
 class WebPrompts:
+    @classmethod
+    def find_learning_resources(cls, topic: str) -> LearningResourceList:
+        """
+        Finds learning resources for a given topic using a structured LLM prompt.
+
+        Args:
+            topic (str): The topic to find learning resources for.
+
+        Returns:
+            LearningResourceList: A Pydantic object containing a list of learning resources.
+        """
+        llm = get_better_llm()
+        
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", "You are an expert at finding high-quality learning resources on the web, and you understand what resources are at a technical level appropriate to the user. Your task is to identify tutorials, Youtube videos, online courses, published papers, and documentation relevant to the user's topic. Provide a title, a rationale for its usefulness, and a valid URL for each resource. Respond with a JSON object matching the LearningResourceList schema."),
+            ("user", f"Please find learning resources for the following topic: {topic}")
+        ])
+        
+        structured_llm = llm.with_structured_output(LearningResourceList)
+        chain = prompt | structured_llm
+        
+        result = chain.invoke({"topic": topic})
+        return result
+    
+    @classmethod
+    def format_resources_as_markdown(cls, resource_list: LearningResourceList) -> str:
+        """
+        Formats a list of learning resources into a Markdown table.
+
+        Args:
+            resource_list (LearningResourceList): The list of learning resources.
+
+        Returns:
+            str: A string containing the Markdown formatted table.
+        """
+        if not resource_list or not resource_list.resources:
+            return "No learning resources were found."
+
+        header = "| Title | Rationale | URL |\n"
+        separator = "|---|---|---|\n"
+        
+        rows = []
+        for resource in resource_list.resources:
+            # Escape pipe characters to prevent breaking the table format
+            title = resource.title.replace('|', '\\|')
+            rationale = resource.rationale.replace('|', '\\|')
+            # Format URL as a clickable link in Markdown
+            url_link = f"[{resource.url}]({resource.url})"
+            rows.append(f"| {title} | {rationale} | {url_link} |")
+            
+        return header + separator + "\n".join(rows)
+
     @classmethod
     def answer_from_summary(cls, json_fragment, question):
         """

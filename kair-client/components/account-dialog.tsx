@@ -5,6 +5,7 @@ import { Dialog, DialogTitle, DialogContent, DialogActions } from "@mui/material
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { useAuth } from "@/context/auth-context";
+import { config } from "@/config";
 
 interface AccountDialogProps {
   open: boolean;
@@ -33,24 +34,28 @@ export default function AccountDialog({ open, onClose }: AccountDialogProps) {
   const [newProjectDesc, setNewProjectDesc] = useState("");
 
   useEffect(() => {
-    fetch(`/api/projects/list?search=${search}`)
+    fetch(`${config.apiBaseUrl}/api/projects/list?search=${search}`, {
+      credentials: 'include',
+    })
       .then(res => res.json())
       .then(data => setProjects(data.projects || []));
   }, [search]);
 
   const handleSave = async () => {
-    await fetch("/api/account/update", {
+    await fetch(`${config.apiBaseUrl}/api/account/update`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      credentials: 'include',
       body: JSON.stringify({ profile }),
     });
     onClose();
   };
 
   const handleCreateProject = async () => {
-    const res = await fetch("/api/projects/create", {
+    const res = await fetch(`${config.apiBaseUrl}/api/projects/create`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      credentials: 'include',
       body: JSON.stringify({ name: newProjectName, description: newProjectDesc }),
     });
     const data = await res.json();

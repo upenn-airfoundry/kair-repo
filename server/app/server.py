@@ -83,9 +83,14 @@ class BaseHandler(tornado.web.RequestHandler):
         # Checks if session exists and is not expired
         session_id = self.get_cookie("msid")
         if session_id:
-            self.session.session = state.get(session_id)
- 
-            return self.session is not None and "username" in self.session.session
+            session_data = state.get(session_id)
+            if session_data and "username" in session_data:
+                self.session.session = session_data
+                # Ensure user_id is available for other handlers
+                if "user_id" not in self.session.session:
+                     (user_id, _) = graph_accessor.get_user_and_project_ids(self.session.session.get("email"))
+                     self.session.session["user_id"] = user_id
+                return True
         return False
 
     def renew_session(self):
@@ -172,6 +177,16 @@ class LoginHandler(BaseHandler, SessionMixin):
                     return
                 (user_id, project_id) = results
 
+                # Get project details
+                project_details = graph_accessor.exec_sql(
+                    "SELECT project_name, project_description FROM projects WHERE project_id = %s;", (project_id,)
+                )
+                project_name = ""
+                project_description = ""
+                if project_details:
+                    project_name = project_details[0][0]
+                    project_description = project_details[0][1]
+
                 question_handlers[session_id] = AnswerQuestionHandler(graph_accessor, 
                                                                       user[0][0], 
                                                                       session['profile'], 
@@ -186,6 +201,8 @@ class LoginHandler(BaseHandler, SessionMixin):
                         "avatar": user[0][2],
                         "profile": self.session.get("profile", {}),
                         "project_id": project_id,
+                        "project_name": project_name,
+                        "project_description": project_description,
                     },
                     "session_id": session_id,
                     "message": "Login successful"
@@ -491,15 +508,6 @@ class ExpandSearchHandler(BaseHandler, SessionMixin):
             return
         self.renew_session()  # Renew expiration on access
         try:
-            # Lazy import to avoid startup failures if LLM/DB not ready
-            from search import (
-                search_over_criteria,
-                search_multiple_criteria,
-                generate_rag_answer,
-                is_search_over_papers,
-                search_basic,
-                is_relevant_answer_with_data,
-            )
             # Ensure search module can access the same graph accessor
             try:
                 import search as search_module
@@ -532,14 +540,24 @@ class ExpandSearchHandler(BaseHandler, SessionMixin):
             question_handlers[session_id].set_project_id(project_id)
 
             try:
-                answer = question_handlers[session_id].answer_question(user_prompt)
+                (answer, answer_type) = question_handlers[session_id].answer_question(user_prompt)
 
                 if answer is not None:
-                    self.write({
-                        "data": {
-                            "message": answer
-                        }
-                    })
+                    if answer_type == 1:
+                        logging.info("Answer created a task")
+                        self.write({
+                            "data": {
+                                "message": answer,
+                                "refresh_project": project_id
+                            }
+                        })
+                    else:
+                        logging.info("Answer returned without criteria")
+                        self.write({
+                            "data": {
+                                "message": answer
+                            }
+                        })
                 else:
                     logging.error("Answer returned was None")
                     self.write({"error": "No relevant answers were found"})
@@ -751,6 +769,121 @@ class CreateProjectHandler(BaseHandler, SessionMixin):
         self.write({"project_id": project_id})
 
 
+class ProjectTaskHandler(BaseHandler, SessionMixin):
+    def post(self, project_id):
+        """Create a new project task."""
+        if not self.is_authenticated():
+            self.set_status(401); self.write({"error": "Not authenticated"}); return
+        
+        data = self.get_json()
+        name = data.get("name")
+        description = data.get("description")
+        schema = data.get("schema")
+
+        if not all([name, description, schema]):
+            self.set_status(400); self.write({"error": "Missing name, description, or schema"}); return
+
+        task_id = graph_accessor.create_project_task(int(project_id), name, description, schema)
+        self.write({"success": True, "task_id": task_id})
+
+    def get(self, project_id):
+        """Retrieve all tasks for a project or find the most related one."""
+        if not self.is_authenticated():
+            self.set_status(401); self.write({"error": "Not authenticated"}); return
+        
+        description = self.get_argument("description", None)
+        if description:
+            task = graph_accessor.find_most_related_task_in_project(int(project_id), description)
+            self.write({"task": task})
+        else:
+            tasks = graph_accessor.get_tasks_for_project(int(project_id))
+            self.write({"tasks": tasks})
+
+
+class TaskEntityHandler(BaseHandler, SessionMixin):
+    def post(self, task_id):
+        """Add and link an entity to a task."""
+        if not self.is_authenticated():
+            self.set_status(401); self.write({"error": "Not authenticated"}); return
+        
+        data = self.get_json()
+        entity_id = data.get("entity_id")
+        feedback_rating = data.get("feedback_rating")
+
+        if not entity_id or feedback_rating is None:
+            self.set_status(400); self.write({"error": "Missing entity_id or feedback_rating"}); return
+
+        graph_accessor.link_entity_to_task(int(task_id), entity_id, feedback_rating)
+        self.write({"success": True})
+
+    def get(self, task_id):
+        """Retrieve all entities for a task."""
+        if not self.is_authenticated():
+            self.set_status(401); self.write({"error": "Not authenticated"}); return
+        
+        entities = graph_accessor.get_entities_for_task(int(task_id))
+        self.write({"entities": entities})
+
+
+class TaskDependencyHandler(BaseHandler, SessionMixin):
+    def post(self, dependent_task_id):
+        """Create a dependency between two tasks."""
+        if not self.is_authenticated():
+            self.set_status(401); self.write({"error": "Not authenticated"}); return
+
+        data = self.get_json()
+        source_task_id = data.get("source_task_id")
+        relationship_description = data.get("relationship_description")
+        data_schema = data.get("data_schema")
+        data_flow = data.get("data_flow")
+
+        if not all([source_task_id, relationship_description, data_schema, data_flow]):
+            self.set_status(400); self.write({"error": "Missing required fields for dependency"}); return
+
+        graph_accessor.create_task_dependency(
+            int(source_task_id),
+            int(dependent_task_id),
+            relationship_description,
+            data_schema,
+            data_flow
+        )
+        self.write({"success": True, "message": "Task dependency created."})
+
+    def get(self, dependent_task_id):
+        """Retrieve all tasks that a given task depends on."""
+        if not self.is_authenticated():
+            self.set_status(401); self.write({"error": "Not authenticated"}); return
+
+        dependencies = graph_accessor.get_task_dependencies(int(dependent_task_id))
+        self.write({"dependencies": dependencies})
+
+
+class ProjectDependenciesHandler(BaseHandler, SessionMixin):
+    def get(self, project_id):
+        """Retrieve all task dependencies for a project."""
+        if not self.is_authenticated():
+            self.set_status(401); self.write({"error": "Not authenticated"}); return
+
+        dependencies = graph_accessor.get_all_dependencies_for_project(int(project_id))
+        self.write({"dependencies": dependencies})
+
+
+class UserFindTaskHandler(BaseHandler, SessionMixin):
+    def get(self):
+        """Find the most similar task for a user across all projects."""
+        if not self.is_authenticated():
+            self.set_status(401); self.write({"error": "Not authenticated"}); return
+        
+        user_id = self.session.session.get("user_id")
+        description = self.get_argument("description", None)
+
+        if not description:
+            self.set_status(400); self.write({"error": "Missing description parameter"}); return
+
+        task = graph_accessor.find_most_related_task_for_user(user_id, description)
+        self.write({"task": task})
+
+
 class ChatHistoryHandler(BaseHandler, SessionMixin):
     def get(self):
         if not self.is_authenticated():
@@ -829,7 +962,12 @@ def make_app():
         (r"/api/account", AccountInfoHandler),
         (r"/api/account/update", UpdateAccountHandler),
         (r"/api/projects/list", ListProjectsHandler),
-        (r"/api/projects/create", CreateProjectHandler)
+        (r"/api/projects/create", CreateProjectHandler),
+        (r"/api/project/(\d+)/tasks", ProjectTaskHandler), # GET for list/find, POST for create
+        (r"/api/task/(\d+)/entities", TaskEntityHandler),   # GET for list, POST for link
+        (r"/api/task/(\d+)/dependencies", TaskDependencyHandler), # GET for list, POST for create
+        (r"/api/project/(\d+)/dependencies", ProjectDependenciesHandler), # Add this line
+        (r"/api/user/find_task", UserFindTaskHandler),      # GET to find task for user
     ])
 
 if __name__ == "__main__":

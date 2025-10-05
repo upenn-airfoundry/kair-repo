@@ -238,11 +238,14 @@ class GraphAccessor:
             # throw the exception again
             raise e
         
-    def add_source(self, url: str) -> int:
+    def add_source(self, url: str, source_type: str='source', description: Optional[str] = None) -> int:
         """Add a source by URL and return its source ID."""
         try:
             with self.conn.cursor() as cur:
-                cur.execute(f"INSERT INTO {self.schema}.entities (entity_type, entity_url) VALUES (%s,%s) RETURNING entity_id;", ('source', url,))
+                if description is None:
+                    cur.execute(f"INSERT INTO {self.schema}.entities (entity_type, entity_url) VALUES (%s,%s) RETURNING entity_id;", (source_type, url,))
+                else:
+                    cur.execute(f"INSERT INTO {self.schema}.entities (entity_type, entity_url, entity_name) VALUES (%s,%s,%s) RETURNING entity_id;", (source_type, url, description,))
                 source_id = cur.fetchone()[0] # type: ignore
             self.conn.commit()
             return source_id
@@ -992,6 +995,28 @@ class GraphAccessor:
             raise e
              
         return results
+    
+    def get_entity_by_url(self, url: str) -> Optional[int]:
+        """
+        Return the entity ID for which the entity_url matches the given URL.
+
+        Args:
+            url (str): The URL to search for.
+
+        Returns:
+            Optional[int]: The matching entity ID, or None if not found.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(f"SELECT entity_id FROM {self.schema}.entities WHERE entity_url = %s LIMIT 1;", (url,))
+                result = cur.fetchone()
+                if result:
+                    return result[0]
+                return None
+        except Exception as e:
+            logging.error(f"Error fetching entity by URL: {e}")
+            self.conn.rollback()
+            return None
     
     def get_papers_by_field(self, field: str, k: int = 1):
         """
@@ -1746,7 +1771,6 @@ class GraphAccessor:
         Args:
             profile_data: The profile descriptor dictionary.
             profile_context: Optional context string.
-            scholar_id: Optional scholar ID.
 
         Returns:
             int: The newly created profile_id.
@@ -1918,3 +1942,267 @@ class GraphAccessor:
             logging.error(f"Error creating project: {e}")
             self.conn.rollback()
             raise
+
+    def create_project_task(self, project_id: int, name: str, description: str, schema: str) -> int:
+        """
+        Create a new task for a given project.
+
+        Args:
+            project_id (int): The ID of the project.
+            name (str): The name of the task.
+            description (str): A description of the task.
+            schema (str): The schema description for the task.
+
+        Returns:
+            int: The ID of the newly created task.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                embedding = self.generate_embedding(description)
+                cur.execute(
+                    """
+                    INSERT INTO project_tasks (project_id, task_name, task_description, task_schema, task_description_embed)
+                    VALUES (%s, %s, %s, %s, %s)
+                    RETURNING task_id;
+                    """,
+                    (project_id, name, description, schema, embedding)
+                )
+                task_id = cur.fetchone()[0]
+            self.conn.commit()
+            return task_id
+        except Exception as e:
+            logging.error(f"Error creating project task: {e}")
+            self.conn.rollback()
+            raise
+
+    def link_entity_to_task(self, task_id: int, entity_id: int, feedback_rating: float):
+        """
+        Link an entity to a task with a feedback rating.
+
+        Args:
+            task_id (int): The ID of the task.
+            entity_id (int): The ID of the entity.
+            feedback_rating (float): The rating for the entity's relevance to the task.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO task_entities (task_id, entity_id, feedback_rating)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (task_id, entity_id) DO UPDATE SET feedback_rating = EXCLUDED.feedback_rating;
+                    """,
+                    (task_id, entity_id, feedback_rating)
+                )
+            self.conn.commit()
+        except Exception as e:
+            logging.error(f"Error linking entity to task: {e}")
+            self.conn.rollback()
+            raise
+
+    def get_tasks_for_project(self, project_id: int) -> List[dict]:
+        """
+        Retrieve all tasks for a given project.
+
+        Args:
+            project_id (int): The ID of the project.
+
+        Returns:
+            List[dict]: A list of tasks.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT task_id, task_name, task_description, task_schema FROM project_tasks WHERE project_id = %s ORDER BY task_id;",
+                    (project_id,)
+                )
+                return [{"id": r[0], "name": r[1], "description": r[2], "schema": r[3]} for r in cur.fetchall()]
+        except Exception as e:
+            logging.error(f"Error fetching tasks for project: {e}")
+            return []
+
+    def find_most_related_task_in_project(self, project_id: int, description: str) -> Optional[dict]:
+        """
+        Find the most related task in a project based on a description.
+
+        Args:
+            project_id (int): The ID of the project.
+            description (str): The description to match against.
+
+        Returns:
+            Optional[dict]: The most related task, or None if not found.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                embedding = self.generate_embedding(description)
+                cur.execute(
+                    """
+                    SELECT task_id, task_name, task_description, task_schema
+                    FROM project_tasks
+                    WHERE project_id = %s
+                    ORDER BY task_description_embed <-> %s::vector
+                    LIMIT 1;
+                    """,
+                    (project_id, embedding)
+                )
+                task = cur.fetchone()
+                if task:
+                    return {"id": task[0], "name": task[1], "description": task[2], "schema": task[3]}
+            return None
+        except Exception as e:
+            logging.error(f"Error finding related task in project: {e}")
+            return None
+
+    def get_entities_for_task(self, task_id: int) -> List[dict]:
+        """
+        Retrieve all entities for a task, ordered by feedback rating.
+
+        Args:
+            task_id (int): The ID of the task.
+
+        Returns:
+            List[dict]: A list of entities with their details and ratings.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT e.entity_id, e.entity_type, e.entity_name, e.entity_detail, te.feedback_rating
+                    FROM entities e
+                    JOIN task_entities te ON e.entity_id = te.entity_id
+                    WHERE te.task_id = %s
+                    ORDER BY te.feedback_rating DESC;
+                    """,
+                    (task_id,)
+                )
+                return [{"id": r[0], "type": r[1], "name": r[2], "detail": r[3], "rating": r[4]} for r in cur.fetchall()]
+        except Exception as e:
+            logging.error(f"Error fetching entities for task: {e}")
+            return []
+
+    def find_most_related_task_for_user(self, user_id: int, description: str) -> Optional[dict]:
+        """
+        Find the most similar task for a user across all their projects.
+
+        Args:
+            user_id (int): The ID of the user.
+            description (str): The description to match against.
+
+        Returns:
+            Optional[dict]: The most related task, or None if not found.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                embedding = self.generate_embedding(description)
+                cur.execute(
+                    """
+                    SELECT pt.task_id, pt.task_name, pt.task_description, pt.task_schema
+                    FROM project_tasks pt
+                    JOIN user_projects up ON pt.project_id = up.project_id
+                    WHERE up.user_id = %s
+                    ORDER BY pt.task_description_embed <-> %s::vector
+                    LIMIT 1;
+                    """,
+                    (user_id, embedding)
+                )
+                task = cur.fetchone()
+                if task:
+                    return {"id": task[0], "name": task[1], "description": task[2], "schema": task[3]}
+            return None
+        except Exception as e:
+            logging.error(f"Error finding related task for user: {e}")
+            return None
+
+    def create_task_dependency(self, source_task_id: int, dependent_task_id: int, relationship_description: str, data_schema: str, data_flow: str):
+        """
+        Create a dependency between two tasks.
+
+        Args:
+            source_task_id (int): The ID of the source task (the one that must be completed first).
+            dependent_task_id (int): The ID of the dependent task.
+            relationship_description (str): A description of the dependency.
+            data_schema (str): The schema of the data passed between tasks.
+            data_flow (str): The type of data flow (e.g., 'automatic').
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO task_dependencies (source_task_id, dependent_task_id, relationship_description, data_schema, data_flow)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (source_task_id, dependent_task_id) DO UPDATE SET
+                        relationship_description = EXCLUDED.relationship_description,
+                        data_schema = EXCLUDED.data_schema,
+                        data_flow = EXCLUDED.data_flow;
+                    """,
+                    (source_task_id, dependent_task_id, relationship_description, data_schema, data_flow)
+                )
+            self.conn.commit()
+        except Exception as e:
+            logging.error(f"Error creating task dependency: {e}")
+            self.conn.rollback()
+            raise
+
+    def get_task_dependencies(self, task_id: int) -> List[dict]:
+        """
+        Retrieve all tasks that a given task depends on.
+
+        Args:
+            task_id (int): The ID of the dependent task.
+
+        Returns:
+            List[dict]: A list of source tasks.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT pt.task_id, pt.task_name, pt.task_description, pt.task_schema, td.data_flow
+                    FROM project_tasks pt
+                    JOIN task_dependencies td ON pt.task_id = td.source_task_id
+                    WHERE td.dependent_task_id = %s;
+                    """,
+                    (task_id,)
+                )
+                return [{"id": r[0], "name": r[1], "description": r[2], "schema": r[3], "dataflow": r[4]} for r in cur.fetchall()]
+                
+        except Exception as e:
+            logging.error(f"Error fetching task dependencies: {e}")
+            self.conn.rollback()
+            return []
+
+    def get_all_dependencies_for_project(self, project_id: int) -> List[dict]:
+        """
+        Retrieve all task dependencies within a given project.
+
+        Args:
+            project_id (int): The ID of the project.
+
+        Returns:
+            List[dict]: A list of dependency relationships.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT td.source_task_id, td.dependent_task_id, td.relationship_description, td.data_schema, td.data_flow
+                    FROM task_dependencies td
+                    JOIN project_tasks pt_source ON td.source_task_id = pt_source.task_id
+                    JOIN project_tasks pt_dependent ON td.dependent_task_id = pt_dependent.task_id
+                    WHERE pt_source.project_id = %s AND pt_dependent.project_id = %s;
+                    """,
+                    (project_id, project_id)
+                )
+                return [
+                    {
+                        "source": r[0],
+                        "target": r[1],
+                        "relationship_description": r[2],
+                        "data_schema": r[3],
+                        "data_flow": r[4]
+                    } for r in cur.fetchall()
+                ]
+        except Exception as e:
+            logging.error(f"Error fetching all project dependencies: {e}")
+            return []
+

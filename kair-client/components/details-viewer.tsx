@@ -48,7 +48,7 @@ export default function DetailsViewer({ selectedElement }: DetailsViewerProps) {
   // Render Edge Details
   if ('source' in selectedElement) { // It's an Edge
     return (
-      <div className="p-4 space-y-2">
+      <div className="p-4 space-y-2 h-full overflow-y-auto">
         <h3 className="font-bold">Dependency Details</h3>
         <div><strong>From Task:</strong> {selectedElement.source}</div>
         <div><strong>To Task:</strong> {selectedElement.target}</div>
@@ -61,7 +61,7 @@ export default function DetailsViewer({ selectedElement }: DetailsViewerProps) {
 
   // Render Node Details
   return (
-    <div className="p-4 space-y-2">
+    <div className="p-4 space-y-2 h-full overflow-y-auto">
       <h3 className="font-bold">Task Entities for &quot;{selectedElement.data.label}&quot;</h3>
       {isLoading ? (
         <p>Loading entities...</p>

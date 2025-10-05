@@ -17,10 +17,11 @@ interface AuthContextType {
     avatar: string, 
     organization: string,
     profile?: UserProfile | null,
-    project_id?: number
+    project_id?: number,
+    project_name?: string
   } | null;
   isLoading: boolean;
-  login: (user: { name: string, email: string, avatar: string, organization: string, profile?: UserProfile | null, project_id: number }) => void;
+  login: (user: { name: string, email: string, avatar: string, organization: string, profile?: UserProfile | null, project_id: number, project_name: string }) => void;
   logout: () => void;
 }
 
@@ -39,7 +40,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     avatar: string,
     organization: string,
     profile?: UserProfile | null,
-    project_id?: number
+    project_id?: number,
+    project_name?: string
   } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -58,7 +60,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     avatar: string,
     organization: string,
     profile?: UserProfile | null,
-    project_id: number
+    project_id: number,
+    project_name?: string
   }) => {
     setUser(user);
     localStorage.setItem("user", JSON.stringify(user));
