@@ -4,8 +4,9 @@ import React, { useState, useEffect } from "react";
 import { Dialog, DialogTitle, DialogContent, DialogActions } from "@mui/material";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
-import { useAuth } from "@/context/auth-context";
-import { config } from "@/config";
+import { useAuth } from '@/context/auth-context';
+import { config } from '@/config';
+import { useSecureFetch } from '@/hooks/useSecureFetch';
 
 interface AccountDialogProps {
   open: boolean;
@@ -34,12 +35,21 @@ export default function AccountDialog({ open, onClose }: AccountDialogProps) {
   const [newProjectDesc, setNewProjectDesc] = useState("");
 
   useEffect(() => {
-    fetch(`${config.apiBaseUrl}/api/projects/list?search=${search}`, {
-      credentials: 'include',
-    })
-      .then(res => res.json())
-      .then(data => setProjects(data.projects || []));
-  }, [search]);
+    if (open) {
+      const fetchProjects = async () => {
+        try {
+          const response = await secureFetch(`${config.apiBaseUrl}/api/projects/list?search=${search}`);
+          if (response.ok) {
+            const data = await response.json();
+            setProjects(data.projects || []);
+          }    
+        } catch (error) {
+          console.error("Error fetching projects:", error);
+        }
+      };
+      fetchProjects();
+    }
+  }, [open, search]);
 
   const handleSave = async () => {
     await fetch(`${config.apiBaseUrl}/api/account/update`, {
@@ -64,7 +74,7 @@ export default function AccountDialog({ open, onClose }: AccountDialogProps) {
       setNewProjectName("");
       setNewProjectDesc("");
       setSearch("");
-    }
+          }
   };
 
   // Publication fields: title, authors, venue, year, url, doi, abstract

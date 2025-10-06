@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { config } from "@/config";
 import { Node, Edge } from 'reactflow';
+import { useSecureFetch } from '@/hooks/useSecureFetch';
 
 interface DetailsViewerProps {
   selectedElement: Node | Edge | null;
@@ -13,19 +14,22 @@ interface Entity {
   id: number | string;
   name: string;
   type: string;
+  detail?: string;
+  url?: string;
   rating: number;
 }
 
 export default function DetailsViewer({ selectedElement }: DetailsViewerProps) {
   const [entities, setEntities] = useState<Entity[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const secureFetch = useSecureFetch();
 
   useEffect(() => {
     if (selectedElement && 'position' in selectedElement) { // It's a Node
       setIsLoading(true);
       const fetchEntities = async () => {
         try {
-          const response = await fetch(`${config.apiBaseUrl}/api/task/${selectedElement.id}/entities`, { credentials: 'include' });
+          const response = await secureFetch(`${config.apiBaseUrl}/api/task/${selectedElement.id}/entities`);
           const data = await response.json();
           setEntities(data.entities || []);
         } catch (error) {
@@ -62,14 +66,14 @@ export default function DetailsViewer({ selectedElement }: DetailsViewerProps) {
   // Render Node Details
   return (
     <div className="p-4 space-y-2 h-full overflow-y-auto">
-      <h3 className="font-bold">Task Entities for &quot;{selectedElement.data.label}&quot;</h3>
+      <h3 className="font-bold">Resources for &quot;{selectedElement.data.label} {selectedElement.data.schema}&quot;</h3>
       {isLoading ? (
         <p>Loading entities...</p>
       ) : entities.length > 0 ? (
         <ul className="list-disc list-inside">
           {entities.map(entity => (
             <li key={entity.id}>
-              {entity.name} <span className="text-xs text-muted-foreground">({entity.type}, Rating: {entity.rating})</span>
+              <a href={entity.url} target="_blank" className="font-semibold">{entity.name}</a> <span className="text-xs text-muted-foreground">({entity.type}, Rating: {entity.rating})</span>
             </li>
           ))}
         </ul>

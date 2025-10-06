@@ -5,7 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Send } from 'lucide-react';
 import { config } from "@/config";
 import ReactMarkdown from 'react-markdown';
-// import { useAuth } from '@/context/auth-context';
+import { useAuth } from '@/context/auth-context';
+import { useSecureFetch } from '@/hooks/useSecureFetch';
 import remarkGfm from 'remark-gfm';
 
 // Message type
@@ -25,7 +26,8 @@ export default function ChatInput({ addMessage, projectId, onRefreshRequest }: C
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  // const { user } = useAuth();
+  const { user } = useAuth();
+  const secureFetch = useSecureFetch(); // Get the secure fetch function
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -77,9 +79,7 @@ export default function ChatInput({ addMessage, projectId, onRefreshRequest }: C
       const fetchHistory = async () => {
         try {
           console.log("Fetching chat history for project ID:", projectId);
-            const response = await fetch(`${config.apiBaseUrl}/api/chat/history?project_id=${projectId}`, {
-            credentials: 'include',
-            });
+            const response = await secureFetch(`${config.apiBaseUrl}/api/chat/history?project_id=${projectId}`);
           if (response.ok) {
             const data = await response.json();
             setMessages(data.history || []);
@@ -118,7 +118,7 @@ export default function ChatInput({ addMessage, projectId, onRefreshRequest }: C
       //         `User query: ${trimmedMessage}`;
       // }
 
-      const response = await fetch(`${config.apiBaseUrl}/api/chat`, {
+      const response = await secureFetch(`${config.apiBaseUrl}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt: expandedPrompt, project_id: projectId }),

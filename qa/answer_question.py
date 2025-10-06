@@ -4,9 +4,12 @@ from datetime import datetime
 
 from flask import json
 from backend.graph_db import GraphAccessor
-from prompts.llm_prompts import QueryPrompts, WebPrompts, LearningResource, LearningResourceList
+from prompts.llm_prompts import QueryPrompts, WebPrompts, PlanningPrompts
+from prompts.llm_prompts import QueryClassification
+# from prompts.llm_prompts import LearningResource, LearningResourceList, PotentialSource, TaskOutput, SolutionTask, SolutionPlan
 from search import search_over_criteria, search_multiple_criteria, generate_rag_answer, search_basic, is_relevant_answer_with_data
-from enrichment.llms import gemini_doc_embedding, gemini_query_embedding
+from enrichment.llms import gemini_query_embedding
+
 
 class AnswerQuestionHandler():
     def __init__(self, graph_accessor: GraphAccessor, username: str, user_profile: dict[str, Any], user_id: int, project_id: int) -> None:
@@ -31,7 +34,7 @@ class AnswerQuestionHandler():
                 # Create a new project and associate it with the user
                 new_project_id = self.graph_accessor.exec_sql(
                     "INSERT INTO projects (project_name, project_description, created_at) VALUES (%s, %s, %s) RETURNING project_id;",
-                    (f"{session.get('username', 'User')}'s Project", "New project created", datetime.now())
+                    (f"{self.username}'s Project", "New project created", datetime.now())
                 )
                 self.graph_accessor.commit()
                 if new_project_id is None or len(new_project_id) == 0:
@@ -74,8 +77,8 @@ class AnswerQuestionHandler():
                 existing_task = self.graph_accessor.exec_sql("SELECT task_id, task_name FROM project_tasks WHERE project_id = %s", (self.project_id,))
                 
                 for item in existing_task:
-                    embed1 = gemini_doc_embedding(item[1])
-                    embed2 = gemini_doc_embedding(task_summary)
+                    embed1 = gemini_query_embedding(item[1])
+                    embed2 = gemini_query_embedding(task_summary)
                     similarity = sum(a*b for a, b in zip(embed1, embed2))
                     if similarity > 0.9:
                         existing_task = [item]
@@ -110,11 +113,49 @@ class AnswerQuestionHandler():
             elif classification.query_class == "papers_reports_or_prior_work":
 
                 pass # through
-            elif classification.query_class == "molecules_algorithms_solutions_sources_and_justifications":
-                # user_prompt = f"You are an expert consultant. Please provide potential solutions, sources, and justifications for the following problem or question:\n\n{user_prompt}\n\nIf you don't know the answer, just say you don't know. Do not make up an answer."
-                answer = search_basic(user_prompt, "You are an expert data engineer who understands data resources, data modeling, schemas and types, MCP servers, and related elements. Please suggest a complete set of fields (i.e., a schema) for possible solutions to the question, including citations to sources, evidence, expected properties and features with their expected modalities or datatypes, factors useful for decision-making, and justifications.\n\nIf you don't know the answer, just say you don't know. Do not make up an answer.")
-                self.graph_accessor.add_user_history(self.user_id, self.project_id, original_prompt, answer)
-                return (answer, 0)
+            elif classification.query_class == "molecules_algorithms_solutions_strategies_or_plans":#"molecules_algorithms_solutions_sources_and_justifications":
+                # Generate a structured plan from the user's prompt
+                solution_plan = PlanningPrompts.generate_solution_plan(original_prompt)
+
+                markdown_response = "I have generated a plan to address your request. Here are the proposed tasks:\n\n"
+                
+                if not solution_plan or not solution_plan.tasks:
+                    answer = search_basic(user_prompt, "You are an expert data engineer who understands data resources, data modeling, schemas and types, MCP servers, and related elements. Please suggest a complete set of fields (i.e., a schema) for possible solutions to the question, including citations to sources, evidence, expected properties and features with their expected modalities or datatypes, factors useful for decision-making, and justifications.\n\nIf you don't know the answer, just say you don't know. Do not make up an answer.")
+                    self.graph_accessor.add_user_history(self.user_id, self.project_id, original_prompt, answer)
+                    return (answer, 0)
+
+                # Process each task in the generated plan
+                for i, task in enumerate(solution_plan.tasks):
+                    # Create a concise task name from the description
+                    task_name = f"Task {i+1}: {task.description_and_goals.split('.')[0]}"
+
+                    # Create a schema string from the task outputs
+                    schema_parts = [f"{output.name}:{output.datatype}" for output in task.outputs]
+                    schema_string = f"({', '.join(schema_parts)})"
+
+                    # Create the task in the database
+                    task_id = self.graph_accessor.create_project_task(
+                        project_id=self.project_id,
+                        name=task_name,
+                        description=task.description_and_goals,
+                        schema=schema_string,
+                        task_context=str(task.model_dump_json())
+                    )
+
+                    # Append a summary of the created task to the user-facing response
+                    markdown_response += f"\n### {task_name}\n\n"
+                    markdown_response += f"**Goal:** {task.description_and_goals}\n\n"
+                    if task.needs_user_clarification:
+                        markdown_response += "**Action Required:** This task needs further clarification from you.\n\n"
+                    markdown_response += "**Outputs:** " + schema_string + "\n\n"
+                    for output in task.outputs:
+                        markdown_response += f"- **{output.name}** (`{output.datatype}`): {output.description}\n\n"
+                    markdown_response += "\n\n"
+
+                self.graph_accessor.add_user_history(self.user_id, self.project_id, original_prompt, markdown_response)
+                
+                # Return 1 to indicate that the project was modified and should be refreshed
+                return (markdown_response, 1)
 
             
             # if not is_search_over_papers(user_prompt):

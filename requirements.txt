@@ -5,8 +5,9 @@ psycopg2-binary
 numpy
 pandas
 langchain
-langchain-openai
+langchain_openai
 langchain-community
+langchain-mcp-adapters
 openai
 python-magic
 PyPDF2

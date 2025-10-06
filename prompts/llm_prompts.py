@@ -20,6 +20,38 @@ class LearningResourceList(BaseModel):
     resources: List[LearningResource]
 
 
+# Pydantic models for generating a structured solution plan
+class PotentialSource(BaseModel):
+    """Describes a potential source for acquiring a piece of data."""
+    source_description: str = Field(..., description="A description of the potential source of data (e.g., a specific API, a web search, a database query).")
+    required_inputs: str = Field(..., description="The inputs that this source requires to function.")
+    # mcp_request: Optional[str] = Field(None, description="If the source is a known MCP (Meta-Cognitive Primitives) call, specify the exact request format.")
+
+class TaskOutput(BaseModel):
+    """Defines a single output field for a task."""
+    name: str = Field(..., description="The name of the output field.")
+    datatype: str = Field(..., description="The expected data type of the output (e.g., string, list, number).")
+    description: str = Field(..., description="A clear description of what this output represents.")
+    importance: str = Field(..., description="The importance of this output to the overall task (e.g., 'critical', 'high', 'medium', 'low').")
+    ranking_means: str = Field(..., description="The method for choosing or ranking multiple potential values for this output.")
+    potential_sources: List[PotentialSource] = Field(..., description="A list of potential sources to obtain the data for this output.")
+
+class SolutionTask(BaseModel):
+    """A single, well-defined task within a larger solution plan."""
+    description_and_goals: str = Field(..., description="A detailed description of the task and its specific objectives.")
+    info_acquisition_strategy: str = Field(..., description="How to acquire the necessary information to complete the task: from human input, from searching, from looking up an entry in a database, from calling a tool, etc.")
+    decision_strategy: str = Field(..., description="How to make decisions about the task: from human input, from ranking candidates on a metric (if so, specify the metric), from calling a tool, etc.")
+    inputs: List[str] = Field(..., description="A list of inputs required to perform this task.")
+    outputs: List[TaskOutput] = Field(..., description="A list of structured outputs that this task will produce.")
+    evaluation_evidence: str = Field(..., description="The evidence and methods that will be used to evaluate or assess the success of this task.")
+    revisiting_criteria: str = Field(..., description="Criteria that would trigger a return to a prior decision or task.")
+    needs_user_clarification: bool = Field(..., description="Whether this task requires clarification from the user before proceeding.")
+
+class SolutionPlan(BaseModel):
+    """A structured plan composed of a list of tasks to solve a user's request."""
+    tasks: List[SolutionTask]
+
+
 from backend.graph_db import GraphAccessor
 
 import pandas as pd
@@ -103,7 +135,7 @@ class FacultyList(BaseModel):
     
     
 class QueryClassification(BaseModel):
-    query_class: Literal["general_knowledge", "learning_resources_or_technical_training", "papers_reports_or_prior_work", "molecules_algorithms_solutions_sources_and_justifications"]
+    query_class: Literal["general_knowledge", "learning_resources_or_technical_training", "papers_reports_or_prior_work", "molecules_algorithms_solutions_strategies_or_plans"]
     task_summary: str = Field(..., description="A brief description of the task involved.")
 
 class DocumentPrompts:
@@ -697,4 +729,37 @@ class QueryPrompts:
         ])
         llm = get_analysis_llm().with_structured_output(QueryClassification)
         result = (prompt | llm).invoke({"query": query})
+        return result
+
+
+class PlanningPrompts:
+    @classmethod
+    def generate_solution_plan(cls, user_request: str) -> SolutionPlan:
+        """
+        Generates a structured solution plan for a user's request.
+
+        Args:
+            user_request (str): The user's prompt or request.
+
+        Returns:
+            SolutionPlan: A Pydantic object containing a list of structured tasks.
+        """
+        llm = get_better_llm()
+
+        prompt = ChatPromptTemplate.from_messages([
+            ("system",
+             "You are a master planner and problem solver. Your goal is to break down a complex user request into a series of concrete, actionable tasks. "
+             "For each task, you must define its goals, inputs, and outputs. For each output, you must specify its structure and potential sources, including any known internal API (MCP) calls. "
+             "You must also define how to evaluate the task's success and when to reconsider previous steps. "
+             "Finally, indicate if a task requires user clarification. "
+             "Respond with a JSON object that strictly conforms to the SolutionPlan schema."),
+            ("user",
+             "Please generate a detailed, structured solution plan for the following request:\n\n"
+             "Request: \"{user_request}\"")
+        ])
+
+        structured_llm = llm.with_structured_output(SolutionPlan)
+        chain = prompt | structured_llm
+
+        result = chain.invoke({"user_request": user_request})
         return result

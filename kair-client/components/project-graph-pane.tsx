@@ -46,7 +46,6 @@ export default function ProjectGraphPane({ projectId, projectName, refreshKey }:
   const onEdgesChange: OnEdgesChange = useCallback((changes) => setEdges((eds) => applyEdgeChanges(changes, eds)), [setEdges]);
 
   useEffect(() => {
-    console.log("Fetching project graph data...");
     if (!projectId) return;
 
     const fetchData = async () => {
@@ -59,19 +58,20 @@ export default function ProjectGraphPane({ projectId, projectName, refreshKey }:
         const tasksData = await tasksRes.json();
         const depsData = await depsRes.json();
 
-        console.log("Tasks data:", tasksData);
-        console.log("Dependencies data:", depsData);
-
-        if (!tasksRes.ok || !depsRes.ok) {
-          console.error("Failed to fetch tasks or dependencies");
-          return;
-        }
-
         // Create nodes from tasks
         const initialNodes: Node[] = tasksData.tasks.map((task: Task, index: number) => ({
           id: task.id.toString(),
           position: { x: (index % 5) * 250, y: Math.floor(index / 5) * 150 },
           data: { label: task.name, schema: task.schema },
+          style: {
+            backgroundColor: '#F0F4FA', // A very light, complementary blue
+            border: '1px solid #011F5B', // Penn Blue
+            borderRadius: 8,
+            padding: '10px 15px',
+            fontSize: '12px',
+            width: 180,
+            color: '#011F5B', // Use Penn Blue for the text color for better contrast
+          },
         }));
         setNodes(initialNodes);
 
@@ -104,15 +104,15 @@ export default function ProjectGraphPane({ projectId, projectName, refreshKey }:
     };
 
     fetchData();
-  }, [projectId, refreshKey]); // Add refreshKey to the dependency array
+  }, [projectId, refreshKey]);
 
   const onNodeClick = (_: React.MouseEvent, node: Node) => setSelectedElement(node);
   const onEdgeClick = (_: React.MouseEvent, edge: Edge) => setSelectedElement(edge);
 
   return (
     <div className="h-full w-full border rounded-lg flex flex-col">
-      <h2 className="p-2 font-semibold border-b bg-muted/40">Tasks for Project {projectName} - Workflow</h2>
-      <div className="flex-1 flex">
+      <h2 className="p-2 font-semibold border-b bg-muted/40">{projectName} - Workflow</h2>
+      <div className="flex-1 flex min-h-0">
         <div className="w-2/3 h-full border-r">
           <ReactFlow
             nodes={nodes}
@@ -127,7 +127,7 @@ export default function ProjectGraphPane({ projectId, projectName, refreshKey }:
             <Background />
           </ReactFlow>
         </div>
-        <div className="w-1/3 h-full overflow-y-auto">
+        <div className="w-1/3 flex flex-col">
           <DetailsViewer selectedElement={selectedElement} />
         </div>
       </div>

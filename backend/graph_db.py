@@ -1943,7 +1943,7 @@ class GraphAccessor:
             self.conn.rollback()
             raise
 
-    def create_project_task(self, project_id: int, name: str, description: str, schema: str) -> int:
+    def create_project_task(self, project_id: int, name: str, description: str, schema: str, task_context: Optional[dict] = None) -> int:
         """
         Create a new task for a given project.
 
@@ -1952,6 +1952,7 @@ class GraphAccessor:
             name (str): The name of the task.
             description (str): A description of the task.
             schema (str): The schema description for the task.
+            task_context (Optional[dict]): Optional JSON-serializable context for the task.
 
         Returns:
             int: The ID of the newly created task.
@@ -1961,11 +1962,11 @@ class GraphAccessor:
                 embedding = self.generate_embedding(description)
                 cur.execute(
                     """
-                    INSERT INTO project_tasks (project_id, task_name, task_description, task_schema, task_description_embed)
-                    VALUES (%s, %s, %s, %s, %s)
+                    INSERT INTO project_tasks (project_id, task_name, task_description, task_schema, task_description_embed, task_context)
+                    VALUES (%s, %s, %s, %s, %s, %s)
                     RETURNING task_id;
                     """,
-                    (project_id, name, description, schema, embedding)
+                    (project_id, name, description, schema, embedding, json.dumps(task_context) if task_context else None)
                 )
                 task_id = cur.fetchone()[0]
             self.conn.commit()
@@ -2067,7 +2068,7 @@ class GraphAccessor:
             with self.conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT e.entity_id, e.entity_type, e.entity_name, e.entity_detail, te.feedback_rating
+                    SELECT e.entity_id, e.entity_type, e.entity_name, e.entity_detail, e.entity_url, te.feedback_rating
                     FROM entities e
                     JOIN task_entities te ON e.entity_id = te.entity_id
                     WHERE te.task_id = %s
@@ -2075,7 +2076,8 @@ class GraphAccessor:
                     """,
                     (task_id,)
                 )
-                return [{"id": r[0], "type": r[1], "name": r[2], "detail": r[3], "rating": r[4]} for r in cur.fetchall()]
+                return [{"id": r[0], "type": r[1], "name": r[2], "detail": r[3], "url": r[4], "rating": r[5]} for r in cur.fetchall()]
+                
         except Exception as e:
             logging.error(f"Error fetching entities for task: {e}")
             return []
