@@ -8,6 +8,7 @@ langchain
 langchain_openai
 langchain-community
 langchain-mcp-adapters
+langgraph
 openai
 python-magic
 PyPDF2

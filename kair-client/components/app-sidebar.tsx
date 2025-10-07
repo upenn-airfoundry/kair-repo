@@ -32,22 +32,23 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
+import { cn } from "@/lib/utils";
 
 const data = {
   user: {
     name: "kair-user",
     email: "kair-user@seas.upenn.edu",
     avatar: "/avatars/shadcn.jpg",
-    organization: "KAIR",
+    organization: "AIRFoundry",
   },
   navMain: [
+    // {
+    //   title: "Dashboard",
+    //   url: "/dashboard",
+    //   icon: IconDashboard,
+    // },
     {
-      title: "Dashboard",
-      url: "/dashboard",
-      icon: IconDashboard,
-    },
-    {
-      title: "Chat",
+      title: "Discover",
       url: "/chat",
       icon: IconMessage,
     },
@@ -161,7 +162,7 @@ const data = {
   ],
 }
 
-export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
+export function AppSidebar({ className, ...props }: React.ComponentProps<typeof Sidebar>) {
   const { user } = useAuth();
   const pathname = usePathname();
 
@@ -173,7 +174,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 }
 
   return (
-    <Sidebar collapsible="offcanvas" {...props}>
+    <Sidebar collapsible {...props} className={cn("h-full", className)}>
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
@@ -183,7 +184,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             >
               <a href="#">
                 <IconBrain className="!size-5" />
-                <span className="text-base font-semibold">KAIR Prototype</span>
+                <span className="text-base font-semibold">KAIR Research</span>
               </a>
             </SidebarMenuButton>
           </SidebarMenuItem>

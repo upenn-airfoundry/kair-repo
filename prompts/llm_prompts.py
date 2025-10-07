@@ -7,6 +7,12 @@ from pydantic import BaseModel, Field
 from typing import Union, Literal, Any
 
 from typing import List, Optional
+from enrichment.llms import get_agentic_llm
+import logging
+import asyncio
+from langchain_core.prompts import MessagesPlaceholder
+from langchain import hub
+from langchain.agents import AgentExecutor
 
 # Add the new Pydantic models for learning resources
 class LearningResource(BaseModel):
@@ -41,7 +47,7 @@ class SolutionTask(BaseModel):
     description_and_goals: str = Field(..., description="A detailed description of the task and its specific objectives.")
     info_acquisition_strategy: str = Field(..., description="How to acquire the necessary information to complete the task: from human input, from searching, from looking up an entry in a database, from calling a tool, etc.")
     decision_strategy: str = Field(..., description="How to make decisions about the task: from human input, from ranking candidates on a metric (if so, specify the metric), from calling a tool, etc.")
-    inputs: List[str] = Field(..., description="A list of inputs required to perform this task.")
+    inputs: List[str] = Field(..., description="A list of inputs required (from the user or from prior tasks) to perform this task.")
     outputs: List[TaskOutput] = Field(..., description="A list of structured outputs that this task will produce.")
     evaluation_evidence: str = Field(..., description="The evidence and methods that will be used to evaluate or assess the success of this task.")
     revisiting_criteria: str = Field(..., description="Criteria that would trigger a return to a prior decision or task.")
@@ -52,12 +58,38 @@ class SolutionPlan(BaseModel):
     tasks: List[SolutionTask]
 
 
+# Pydantic models for describing dependencies between tasks in a SolutionPlan
+class TaskDependency(BaseModel):
+    """Represents a single dependency between two tasks in a solution plan."""
+    source_task_id: str = Field(..., description="The unique identifier of the source task that produces the data.")
+    source_task_description: str = Field(..., description="The full 'description_and_goals' of the source task that produces the data.")
+    dependent_task_id: str = Field(..., description="The unique identifier of the dependent task that consumes the data.")
+    dependent_task_description: str = Field(..., description="The full 'description_and_goals' of the dependent task that consumes the data.")
+    data_schema: str = Field(..., description="The schema of the data flowing from the source to the dependent task, formatted as 'field:type'.")
+    data_flow_type: Literal["automatic", "gated by user feedback", "rethinking the previous task"] = Field(..., description="The nature of the data flow between the tasks.")
+    relationship_description: str = Field(..., description="A description of the dependency, including the criteria evaluated from the source task's output before the dependent task can proceed.")
+
+class TaskDependencyList(BaseModel):
+    """A list of dependencies between tasks."""
+    dependencies: List[TaskDependency]
+
+
 from backend.graph_db import GraphAccessor
 
 import pandas as pd
+import json
 
-from enrichment.llms import get_analysis_llm, get_better_llm, get_structured_analysis_llm
+from enrichment.llms import get_analysis_llm, get_better_llm, get_structured_analysis_llm, get_agentic_llm
 from files.tables import sample_rows_to_string
+
+
+def _patch_pydantic_schema_v1(schema: dict):
+    """
+    Patches a Pydantic v2 schema to be compatible with older parsers
+    by copying '$defs' to 'definitions' if it exists.
+    """
+    if '$defs' in schema:
+        schema['definitions'] = schema['$defs']
 
 
 # Define the Pydantic Model
@@ -509,29 +541,51 @@ class TablePrompts:
 
 class WebPrompts:
     @classmethod
-    def find_learning_resources(cls, topic: str) -> LearningResourceList:
+    async def find_learning_resources(cls, topic: str) -> LearningResourceList:
         """
-        Finds learning resources for a given topic using a structured LLM prompt.
-
-        Args:
-            topic (str): The topic to find learning resources for.
-
-        Returns:
-            LearningResourceList: A Pydantic object containing a list of learning resources.
+        Finds learning resources for a given topic, with support for tool calls.
         """
-        llm = get_better_llm()
-        
+        # Build and escape the schema for safe inclusion in a PromptTemplate
+        schema_dict = LearningResourceList.model_json_schema()
+        _patch_pydantic_schema_v1(schema_dict)
+        schema_str = json.dumps(schema_dict, indent=2)
+        escaped_schema_str = schema_str.replace("{", "{{").replace("}", "}}")
+
+        # Tool-calling friendly prompt
         prompt = ChatPromptTemplate.from_messages([
-            ("system", "You are an expert at finding high-quality learning resources on the web, and you understand what resources are at a technical level appropriate to the user. Your task is to identify tutorials, Youtube videos, online courses, published papers, and documentation relevant to the user's topic. Provide a title, a rationale for its usefulness, and a valid URL for each resource. Respond with a JSON object matching the LearningResourceList schema."),
-            ("user", f"Please find learning resources for the following topic: {topic}")
+            ("system",
+             "You are an expert at finding high-quality learning resources. "
+             "You have tools available, including a Semantic Scholar search tool. "
+             "Always call at least one tool to gather evidence before answering. "
+             "After gathering information, return a single JSON object that strictly conforms to this schema:\n"
+             f"```json\n{escaped_schema_str}\n```"),
+            MessagesPlaceholder("chat_history"),
+            ("human", "{input}"),
+            MessagesPlaceholder("agent_scratchpad"),
         ])
-        
-        structured_llm = llm.with_structured_output(LearningResourceList)
-        chain = prompt | structured_llm
-        
-        result = chain.invoke({"topic": topic})
-        return result
-    
+
+        agent = await get_agentic_llm(prompt=prompt)
+        if agent is None:
+            return LearningResourceList(resources=[])
+
+        # Invoke the agent; provide chat_history if you have it, else empty
+        response = await agent.ainvoke({
+            "input": f"Find learning resources for: {topic}",
+            "chat_history": []
+        })
+
+        try:
+            final_output_str = response.get("output", "").strip()
+            if final_output_str.startswith("```json"):
+                final_output_str = final_output_str[7:]
+            if final_output_str.endswith("```"):
+                final_output_str = final_output_str[:-3]
+            parsed = json.loads(final_output_str) if final_output_str else {"resources": []}
+            return LearningResourceList(**parsed)
+        except Exception as e:
+            logging.error(f"Failed to parse agent output: {e}")
+            return LearningResourceList(resources=[])
+
     @classmethod
     def format_resources_as_markdown(cls, resource_list: LearningResourceList) -> str:
         """
@@ -763,3 +817,50 @@ class PlanningPrompts:
 
         result = chain.invoke({"user_request": user_request})
         return result
+
+    @classmethod
+    def determine_task_dependencies(cls, solution_plan: SolutionPlan) -> TaskDependencyList:
+        """
+        Analyzes a SolutionPlan to determine dependencies and dataflows between its tasks.
+
+        Args:
+            solution_plan (SolutionPlan): The plan containing the list of tasks.
+
+        Returns:
+            TaskDependencyList: A Pydantic object containing the list of identified dependencies.
+        """
+        llm = get_better_llm()
+
+        # Convert the plan to a string representation for the prompt
+        plan_str = ""
+        for i, task in enumerate(solution_plan.tasks):
+            plan_str += f"--- Task {i+1} ---\n"
+            plan_str += f"ID: task_{i}\n"
+            plan_str += f"Description and Goals: {task.description_and_goals}\n"
+            plan_str += f"Inputs: {', '.join(task.inputs)}\n"
+            plan_str += f"Outputs: {', '.join([f'{o.name}:{o.datatype}' for o in task.outputs])}\n"
+            plan_str += f"Evaluation Evidence: {task.evaluation_evidence}\n"
+            plan_str += f"Revisiting Criteria: {task.revisiting_criteria}\n"
+            plan_str += f"Needs User Clarification: {task.needs_user_clarification}\n\n"
+
+        prompt = ChatPromptTemplate.from_messages([
+            ("system",
+             "You are an expert system architect specializing in data flow analysis. Your task is to analyze a list of tasks and identify the dependencies between them. "
+             "A task depends on another if it consumes one or more of its outputs as an input. "
+             "For each dependency, you must determine the data schema being passed and the nature of the data flow. "
+             "If a task's `revisiting_criteria` suggests a feedback loop to a prior task, model this as a 'rethinking the previous task' dependency. "
+             "If a task's `decision_strategy` or `needs_user_clarification` flag indicates user input is required, the flow is 'gated by user feedback'. "
+             "Otherwise, the flow is 'automatic'. "
+             "The `relationship_description` should capture the evaluation criteria from the source task. "
+             "Respond with a JSON object that strictly conforms to the TaskDependencyList schema."),
+            ("user",
+             "Based on the following solution plan, please identify all dependencies between the tasks:\n\n"
+             "{solution_plan_str}")
+        ])
+
+        structured_llm = llm.with_structured_output(TaskDependencyList)
+        chain = prompt | structured_llm
+
+        result = chain.invoke({"solution_plan_str": plan_str})
+        return result
+

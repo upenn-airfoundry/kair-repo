@@ -185,13 +185,10 @@ class LoginHandler(BaseHandler, SessionMixin):
                     project_description = project_details[0][1]
 
                 state[session_id] = session
+                state.sync()  # Force the session data to be written to disk immediately
                 self.session.session = session
 
-                question_handlers[session_id] = AnswerQuestionHandler(graph_accessor, 
-                                                                      user[0][0], 
-                                                                      session['profile'], 
-                                                                      user_id, 
-                                                                      project_id)
+                question_handlers[session_id] = AnswerQuestionHandler(graph_accessor, user[0][0], session['profile'], user_id, project_id)
 
                 self.write({
                     "success": True, 
@@ -499,7 +496,7 @@ class AddEnrichmentHandler(BaseHandler, SessionMixin):
             self.write({"error": f"An error occurred: {e}"})
 
 class ExpandSearchHandler(BaseHandler, SessionMixin):
-    def post(self):
+    async def post(self):
         # Guard: only allow if session is valid and not expired
         if self.is_session_expired() or not self.is_authenticated():
             self.set_status(401)
@@ -540,7 +537,7 @@ class ExpandSearchHandler(BaseHandler, SessionMixin):
             question_handlers[session_id].set_project_id(project_id)
 
             try:
-                (answer, answer_type) = question_handlers[session_id].answer_question(user_prompt)
+                (answer, answer_type) = await question_handlers[session_id].answer_question(user_prompt)
 
                 if answer is not None:
                     if answer_type == 1:

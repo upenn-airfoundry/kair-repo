@@ -2,7 +2,7 @@
 
 import ChatInput from '@/components/chat-input';
 import { AppSidebar } from '@/components/app-sidebar';
-import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar';
+import { SidebarProvider, SidebarInset, SidebarTrigger } from '@/components/ui/sidebar';
 import { ProtectedRoute } from "@/components/protected-route"
 import { useAuth } from '@/context/auth-context';
 import { useState } from 'react';
@@ -12,6 +12,7 @@ import {
   PanelGroup,
   PanelResizeHandle,
 } from "react-resizable-panels";
+import { Separator } from "@/components/ui/separator";
 
 export interface Message {
   id: string;
@@ -22,38 +23,35 @@ export interface Message {
 export default function ChatPage() {
   const { user } = useAuth();
   const [, setMessages] = useState<Message[]>([]);
-  const [refreshKey, setRefreshKey] = useState(0); // State to trigger refresh
+  const [refreshKey, setRefreshKey] = useState(0);
 
-  // Function to increment the key, causing a re-render in child components
   const handleRefreshRequest = () => {
     setRefreshKey(prevKey => prevKey + 1);
   };
 
-  // Determine the project ID and name from the user's session data
   const projectId = user?.project_id;
   const projectName = user?.project_name;
 
   return (
     <ProtectedRoute>
-      <SidebarProvider
-        style={
-          {
-            "--sidebar-width": "calc(var(--spacing) * 72)",
-            "--header-height": "calc(var(--spacing) * 12)",
-          } as React.CSSProperties
-        }
-      >
-        <AppSidebar variant="inset" />
+      <SidebarProvider>
+        <AppSidebar />
         <SidebarInset>
-          <PanelGroup direction="vertical" className="h-screen w-full">
-            {/* Top Panel for Project Graph */}
+          <header className="flex h-16 shrink-0 items-center gap-2 border-b px-4">
+            <SidebarTrigger className="-ml-1" />
+            <Separator orientation="vertical" className="mr-2 h-4" />
+            <div className="text-sm font-semibold">
+              {projectName || 'KAIR Platform'}
+            </div>
+          </header>
+          <PanelGroup direction="vertical" className="h-[calc(100vh-4rem)] w-full">
             <Panel defaultSize={25} minSize={15}>
               <div className="h-full w-full">
                 {projectId && projectName ? (
                   <ProjectGraphPane
                     projectId={projectId}
                     projectName={projectName}
-                    refreshKey={refreshKey} // Pass the key as a prop
+                    refreshKey={refreshKey}
                   />
                 ) : (
                   <div className="h-full w-full border rounded-lg flex items-center justify-center text-muted-foreground">
@@ -63,12 +61,10 @@ export default function ChatPage() {
               </div>
             </Panel>
 
-            {/* Resizable Handle */}
             <PanelResizeHandle className="h-2 flex items-center justify-center bg-muted transition-colors hover:bg-muted-foreground/20">
               <div className="w-8 h-1 rounded-full bg-border" />
             </PanelResizeHandle>
 
-            {/* Bottom Panel for Chat */}
             <Panel defaultSize={75} minSize={20}>
               <div className="h-full w-full flex flex-col">
                 {projectId ? (
@@ -77,7 +73,7 @@ export default function ChatPage() {
                     addMessage={(message: Message) => {
                       setMessages(prev => [...prev, message]);
                     }}
-                    onRefreshRequest={handleRefreshRequest} // Pass the handler function
+                    onRefreshRequest={handleRefreshRequest}
                   />
                 ) : (
                   <div className="p-4 text-center text-muted-foreground">

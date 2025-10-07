@@ -7,6 +7,7 @@
 import requests
 from typing import List, Optional
 import json
+import asyncio
 import os
 
 # Lazy imports / guards to prevent startup failures
@@ -30,7 +31,10 @@ try:
     from langchain.output_parsers import PydanticOutputParser
     from langchain.prompts import ChatPromptTemplate
     from langchain.output_parsers import PydanticOutputParser
+    from enrichment.llms import get_agentic_llm
     from pydantic import BaseModel, Field
+    # NEW: MessagesPlaceholder for agent prompt
+    from langchain_core.prompts import MessagesPlaceholder
 except Exception:
     ChatOpenAI = None  # type: ignore
     ChatPromptTemplate = None  # type: ignore
@@ -38,6 +42,7 @@ except Exception:
     PydanticOutputParser = None  # type: ignore
     BaseModel = object  # type: ignore
     Field = lambda *args, **kwargs: None  # type: ignore
+    MessagesPlaceholder = None  # type: ignore
 
 try:
     from enrichment.llms import get_analysis_llm, get_better_llm
@@ -113,20 +118,43 @@ def is_search_over_papers(question: str) -> bool:
         return any(k in question.lower() for k in keywords)
 
 
-def search_basic(question: str, sys_prompt: Optional[str] = None) -> str:
-    """Simple fallback answer if LLM unavailable."""
+async def search_basic(question: str, sys_prompt: Optional[str] = None) -> str:
+    """
+    Answers a question using the agentic LLM. The agent can call tools when needed.
+    """
     try:
-        if better_llm is None or ChatPromptTemplate is None or StrOutputParser is None:
-            return "Unable to reach LLM right now."
-        
+        # Build a tool-calling friendly prompt (system + placeholders)
+        if ChatPromptTemplate is None or MessagesPlaceholder is None:
+            return "Agentic LLM is unavailable."
+
         if sys_prompt is None:
-            sys_prompt = "You are an expert in answering questions about science, targeting educational or scientific users."
+            sys_prompt = (
+                "You are an expert in answering questions about science, targeting educational "
+                "or scientific users. Use tools when helpful to gather evidence. "
+                "Produce a clear, concise answer."
+            )
+
         prompt = ChatPromptTemplate.from_messages([
             ("system", sys_prompt),
-            ("user", "{question}\n\nAnswer:")
+            MessagesPlaceholder("chat_history"),
+            ("human", "{input}"),
+            MessagesPlaceholder("agent_scratchpad"),
         ])
-        chain = prompt | better_llm | StrOutputParser()
-        return chain.invoke({"question": question})
+
+        # Get an agent executor configured with MCP tools and this prompt
+        agent = await get_agentic_llm(prompt=prompt)
+        if agent is None:
+            return "Unable to reach LLM right now."
+
+        # Invoke the agent. Provide chat_history if you maintain it; empty for now.
+        resp = await agent.ainvoke({
+            "input": question,
+            "chat_history": []
+        })
+
+        # AgentExecutor returns a dict with "output"
+        answer = resp.get("output", "").strip()
+        return answer or "I couldn't find enough information to answer that."
     except Exception as e:
         return f"An error occurred: {e}"
 

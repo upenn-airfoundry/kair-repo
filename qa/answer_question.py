@@ -6,6 +6,8 @@ from flask import json
 from backend.graph_db import GraphAccessor
 from prompts.llm_prompts import QueryPrompts, WebPrompts, PlanningPrompts
 from prompts.llm_prompts import QueryClassification
+
+import asyncio
 # from prompts.llm_prompts import LearningResource, LearningResourceList, PotentialSource, TaskOutput, SolutionTask, SolutionPlan
 from search import search_over_criteria, search_multiple_criteria, generate_rag_answer, search_basic, is_relevant_answer_with_data
 from enrichment.llms import gemini_query_embedding
@@ -28,7 +30,7 @@ class AnswerQuestionHandler():
     def get_history(self, user_id: int, project_id: int) -> List[Dict[str, Any]]:
         return self.graph_accessor.get_user_history(user_id, project_id, limit=20)
     
-    def answer_question(self, user_prompt: str) -> tuple[Optional[str], Optional[int]]:
+    async def answer_question(self, user_prompt: str) -> tuple[Optional[str], Optional[int]]:
         try:
             if self.project_id is None:
                 # Create a new project and associate it with the user
@@ -66,12 +68,15 @@ class AnswerQuestionHandler():
             # query_class: Literal["general_knowledge", "technical_training", "papers_reports_or_prior_work", "solutions_sources_and_justifications"]
 
             if query_class == "general_knowledge":
-                answer = search_basic(user_prompt, "You are an expert assistant. Please answer the following general knowledge question concisely and accurately.\n\nIf you don't know the answer, just say you don't know. Do not make up an answer.")
+                answer = await search_basic(
+                    user_prompt,
+                    "You are an expert assistant. Please answer the following general knowledge question concisely and accurately.\n\nIf you don't know the answer, just say you don't know. Do not make up an answer."
+                )
                 self.graph_accessor.add_user_history(self.user_id, self.project_id, original_prompt, answer)
                 return (answer, 0)
-            elif classification.query_class == "learning_resources_or_technical_training":
+            elif classification.query_class == "learning_resources_or_technical_training" or classification.query_class == "papers_reports_or_prior_work":
                 # answer = search_basic(user_prompt, "You are an expert technical trainer. Please provide a clear and concise explanation, or a list of resources for further learning.\n\nIf you don't know the answer, just say you don't know. Do not make up an answer.")
-                answer = WebPrompts.find_learning_resources(user_prompt)
+                answer = await WebPrompts.find_learning_resources(user_prompt)
                 markdown_answer = WebPrompts.format_resources_as_markdown(answer)
 
                 existing_task = self.graph_accessor.exec_sql("SELECT task_id, task_name FROM project_tasks WHERE project_id = %s", (self.project_id,))
@@ -120,9 +125,14 @@ class AnswerQuestionHandler():
                 markdown_response = "I have generated a plan to address your request. Here are the proposed tasks:\n\n"
                 
                 if not solution_plan or not solution_plan.tasks:
-                    answer = search_basic(user_prompt, "You are an expert data engineer who understands data resources, data modeling, schemas and types, MCP servers, and related elements. Please suggest a complete set of fields (i.e., a schema) for possible solutions to the question, including citations to sources, evidence, expected properties and features with their expected modalities or datatypes, factors useful for decision-making, and justifications.\n\nIf you don't know the answer, just say you don't know. Do not make up an answer.")
+                    answer = await search_basic(
+                        user_prompt,
+                        "You are an expert data engineer who understands data resources, data modeling, schemas and types, MCP servers, and related elements. Please suggest a complete set of fields (i.e., a schema) for possible solutions to the question, including citations to sources, evidence, expected properties and features with their expected modalities or datatypes, factors useful for decision-making, and justifications.\n\nIf you don't know the answer, just say you don't know. Do not make up an answer."
+                    )
                     self.graph_accessor.add_user_history(self.user_id, self.project_id, original_prompt, answer)
                     return (answer, 0)
+                
+                task_descriptions_to_ids = {}
 
                 # Process each task in the generated plan
                 for i, task in enumerate(solution_plan.tasks):
@@ -139,8 +149,9 @@ class AnswerQuestionHandler():
                         name=task_name,
                         description=task.description_and_goals,
                         schema=schema_string,
-                        task_context=str(task.model_dump_json())
+                        task_context=task.model_dump_json()
                     )
+                    task_descriptions_to_ids[f"task_{i}"] = task_id
 
                     # Append a summary of the created task to the user-facing response
                     markdown_response += f"\n### {task_name}\n\n"
@@ -151,6 +162,28 @@ class AnswerQuestionHandler():
                     for output in task.outputs:
                         markdown_response += f"- **{output.name}** (`{output.datatype}`): {output.description}\n\n"
                     markdown_response += "\n\n"
+                    
+                
+                # After creating all tasks, determine and create their dependencies
+                dependency_list = PlanningPrompts.determine_task_dependencies(solution_plan)
+                if dependency_list and dependency_list.dependencies:
+                    for dep in dependency_list.dependencies:
+                        source_name = dep.source_task_id
+                        source_id = task_descriptions_to_ids.get(source_name)
+                        dependent_name = dep.dependent_task_id
+                        dependent_id = task_descriptions_to_ids.get(dependent_name)
+
+                        if source_id and dependent_id:
+                            self.graph_accessor.create_task_dependency(
+                                source_task_id=source_id,
+                                dependent_task_id=dependent_id,
+                                relationship_description=dep.relationship_description,
+                                data_schema=dep.data_schema,
+                                data_flow=dep.data_flow_type
+                            )
+                        else:
+                            logging.warning(f"Could not find task IDs for dependency: {dep.source_task_description} -> {dep.dependent_task_description}")
+
 
                 self.graph_accessor.add_user_history(self.user_id, self.project_id, original_prompt, markdown_response)
                 
@@ -200,7 +233,7 @@ class AnswerQuestionHandler():
                 self.graph_accessor.add_user_history(self.user_id, self.project_id, questions, answer)
                 if answer is None or len(answer) == 0 or "i am sorry" in answer.lower() or not is_relevant_answer_with_data(user_prompt, answer):
                     questions = None
-                    answer = search_basic(user_prompt)
+                    answer = await search_basic(user_prompt)
                 
                 if questions:
                     question_str = ''

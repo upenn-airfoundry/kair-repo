@@ -53,12 +53,9 @@ export default function DetailsViewer({ selectedElement }: DetailsViewerProps) {
   if ('source' in selectedElement) { // It's an Edge
     return (
       <div className="p-4 space-y-2 h-full overflow-y-auto">
-        <h3 className="font-bold">Dependency Details</h3>
-        <div><strong>From Task:</strong> {selectedElement.source}</div>
-        <div><strong>To Task:</strong> {selectedElement.target}</div>
-        <div><strong>Description:</strong> {selectedElement.data.relationship_description}</div>
-        <div><strong>Data Schema:</strong> {selectedElement.data.data_schema}</div>
-        <div><strong>Data Flow:</strong> {selectedElement.data.data_flow}</div>
+        <h3 className="font-bold">{selectedElement.data.relationship_description}</h3>
+        <div><strong>Schema:</strong> {selectedElement.data.data_schema}</div>
+        <div><strong>Dataflow sequencing:</strong> {selectedElement.data.data_flow}</div>
       </div>
     );
   }
@@ -66,9 +63,9 @@ export default function DetailsViewer({ selectedElement }: DetailsViewerProps) {
   // Render Node Details
   return (
     <div className="p-4 space-y-2 h-full overflow-y-auto">
-      <h3 className="font-bold">Resources for &quot;{selectedElement.data.label} {selectedElement.data.schema}&quot;</h3>
+      <h3 className="font-bold">{selectedElement.data.label} {selectedElement.data.schema}</h3>
       {isLoading ? (
-        <p>Loading entities...</p>
+        <p>Loading related resources...</p>
       ) : entities.length > 0 ? (
         <ul className="list-disc list-inside">
           {entities.map(entity => (
@@ -78,7 +75,7 @@ export default function DetailsViewer({ selectedElement }: DetailsViewerProps) {
           ))}
         </ul>
       ) : (
-        <p>No entities linked to this task.</p>
+        <p>We haven't yet retrieved resources related to this task.</p>
       )}
     </div>
   );
