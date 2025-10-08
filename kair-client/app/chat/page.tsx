@@ -5,7 +5,7 @@ import { AppSidebar } from '@/components/app-sidebar';
 import { SidebarProvider, SidebarInset, SidebarTrigger } from '@/components/ui/sidebar';
 import { ProtectedRoute } from "@/components/protected-route"
 import { useAuth } from '@/context/auth-context';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import ProjectGraphPane from '@/components/project-graph-pane';
 import {
   Panel,
@@ -25,20 +25,23 @@ export default function ChatPage() {
   const [, setMessages] = useState<Message[]>([]);
   const [refreshKey, setRefreshKey] = useState(0);
 
-  const handleRefreshRequest = () => {
-    setRefreshKey(prevKey => prevKey + 1);
+  // NEW: hold the active project locally
+  const [activeProjectId, setActiveProjectId] = useState<number | null>(null);
+  const [activeProjectName, setActiveProjectName] = useState<string>("");
+
+  useEffect(() => {
+    if (user?.project_id) setActiveProjectId(user.project_id);
+    if (user?.project_name) setActiveProjectName(user.project_name);
+  }, [user?.project_id, user?.project_name]);
+
+  const handleRefreshRequest = () => setRefreshKey(prevKey => prevKey + 1);
+
+  // Called by ProjectGraphPane when user selects/creates a project
+  const handleProjectChanged = (pid: number) => {
+    setActiveProjectId(pid);
+    // Name can be updated via account refetch if desired; for now keep existing
+    setRefreshKey(prev => prev + 1); // trigger graph refresh
   };
-
-  const projectId = user?.project_id;
-  const projectName = user?.project_name;
-
-            // <SidebarTrigger className="-ml-1" />
-            // <Separator orientation="vertical" className="mr-2 h-4" />
-          // <header className="flex h-16 shrink-0 items-center gap-2 border-b px-4">
-          //   <div className="text-sm font-semibold">
-          //     {projectName || 'New KAIR Project'}
-          //   </div>
-          // </header>
 
   return (
     <ProtectedRoute>
@@ -48,11 +51,12 @@ export default function ChatPage() {
           <PanelGroup direction="vertical" className="h-[calc(100vh-4rem)] w-full">
             <Panel defaultSize={25} minSize={15}>
               <div className="h-full w-full">
-                {projectId && projectName ? (
+                {activeProjectId && activeProjectName ? (
                   <ProjectGraphPane
-                    projectId={projectId}
-                    projectName={projectName}
+                    projectId={activeProjectId}
+                    projectName={activeProjectName}
                     refreshKey={refreshKey}
+                    onProjectChanged={handleProjectChanged}  // pass callback
                   />
                 ) : (
                   <div className="h-full w-full border rounded-lg flex items-center justify-center text-muted-foreground">
@@ -68,12 +72,10 @@ export default function ChatPage() {
 
             <Panel defaultSize={75} minSize={20}>
               <div className="h-full w-full flex flex-col">
-                {projectId ? (
+                {activeProjectId ? (
                   <ChatInput
-                    projectId={projectId}
-                    addMessage={(message: Message) => {
-                      setMessages(prev => [...prev, message]);
-                    }}
+                    projectId={activeProjectId}                  // use active project
+                    addMessage={(message: Message) => setMessages(prev => [...prev, message])}
                     onRefreshRequest={handleRefreshRequest}
                   />
                 ) : (

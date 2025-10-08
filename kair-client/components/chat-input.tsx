@@ -73,24 +73,29 @@ export default function ChatInput({ addMessage, projectId, onRefreshRequest }: C
     };
   }, []);
 
-  // Fetch chat history on component mount
+  // Fetch chat history when project changes; clear old messages first
   useEffect(() => {
-    if (projectId) {
-      const fetchHistory = async () => {
-        try {
-          console.log("Fetching chat history for project ID:", projectId);
-            const response = await secureFetch(`${config.apiBaseUrl}/api/chat/history?project_id=${projectId}`);
-          if (response.ok) {
-            const data = await response.json();
-            setMessages(data.history || []);
+    if (!projectId) return;
+
+    const fetchHistory = async () => {
+      try {
+        setMessages([]); // clear immediately on project change
+        const response = await secureFetch(`${config.apiBaseUrl}/api/chat/history?project_id=${projectId}`);
+        if (response.ok) {
+          const data = await response.json();
+          if (data.history && data.history.length > 0) {
+            setMessages(data.history);
+          } else {
+            setMessages([{ id: 'welcome', sender: 'bot', content: 'How can the KAIR Assistant help you today?' }]);
           }
-        } catch (error) {
-          console.error("Failed to fetch chat history:", error);
         }
-      };
-      fetchHistory();
-    }
-  }, [projectId]);
+      } catch (error) {
+        console.error("Failed to fetch chat history:", error);
+      }
+    };
+
+    fetchHistory();
+  }, [projectId, secureFetch]);
 
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -197,7 +202,7 @@ export default function ChatInput({ addMessage, projectId, onRefreshRequest }: C
           ref={inputRef} // Attach the ref to the textarea element
           value={message}
           onChange={(e) => setMessage(e.target.value)}
-          placeholder="Send a message..."
+          placeholder="Make a request of the KAIR Assistant..."
           className="flex-grow resize-none border rounded px-3 py-2 max-h-40 overflow-y-auto"
           rows={1}
           disabled={isLoading}

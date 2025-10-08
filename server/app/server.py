@@ -8,7 +8,7 @@ import time
 import shelve
 
 # Feature flags
-SKIP_ENRICHMENT = os.getenv("SKIP_ENRICHMENT", "").lower() in ("1", "true", "yes")
+SKIP_ENRICHMENT = os.getenv("SKIP_ENRICHMENT", "true").lower() in ("1", "true", "yes")
 ALLOWED_ORIGIN = os.environ.get("ALLOWED_ORIGIN", "http://localhost:3000")
 
 # Add parent directory to Python path
@@ -741,12 +741,68 @@ class UpdateAccountHandler(BaseHandler, SessionMixin):
         graph_accessor.update_user_profile(email, data.get("profile", {}))
         self.write({"success": True})
 
+class SelectProjectHandler(BaseHandler, SessionMixin):
+    def post(self):
+        """Select an existing project for the current user and persist it in the profile."""
+        if self.is_session_expired() or not self.is_authenticated():
+            self.set_status(401); self.write({"error": "Session expired or not authenticated"}); return
+        try:
+            data = self.get_json()
+            project_id = int(data.get("project_id", 0))
+            if not project_id:
+                self.set_status(400); self.write({"error": "Missing project_id"}); return
+
+            email = self.session.session.get("email")
+            user_id = graph_accessor.exec_sql("SELECT user_id FROM users WHERE email = %s;", (email,))[0][0]
+            # Validate membership
+            rows = graph_accessor.exec_sql(
+                "SELECT 1 FROM user_projects WHERE user_id = %s AND project_id = %s;",
+                (user_id, project_id)
+            )
+            if not rows:
+                self.set_status(403); self.write({"error": "Not a member of this project"}); return
+
+            # Persist selection
+            graph_accessor.set_selected_project_for_user(user_id, project_id)
+
+            # Update session + handler
+            self.session.session["project_id"] = project_id
+            session_id = self.get_cookie("msid")
+            if session_id in question_handlers:
+                question_handlers[session_id].set_project_id(project_id)
+            state[session_id] = self.session.session; state.sync()
+
+            proj = graph_accessor.exec_sql(
+                "SELECT project_name, project_description FROM projects WHERE project_id = %s;",
+                (project_id,)
+            )
+            self.write({
+                "success": True,
+                "project": {
+                    "id": project_id,
+                    "name": proj[0][0] if proj else "",
+                    "description": proj[0][1] if proj else ""
+                }
+            })
+        except Exception as e:
+            self.set_status(500)
+            self.write({"error": f"An error occurred: {e}"})
+
 class ListProjectsHandler(BaseHandler, SessionMixin):
     def get(self):
         if self.is_session_expired() or not self.is_authenticated():
             self.set_status(401)
             self.write({"error": "Session expired or not authenticated"})
             return
+        # If mine=1, return the full set of this user's projects (no limit)
+        mine = self.get_argument("mine", "").lower() in ("1", "true", "yes")
+        if mine:
+            email = self.session.session.get("email")
+            user_id = graph_accessor.exec_sql("SELECT user_id FROM users WHERE email = %s;", (email,))[0][0]
+            projects = graph_accessor.get_user_projects(user_id)
+            self.write({"projects": projects})
+            return
+
         search = self.get_argument("search", "")
         projects = graph_accessor.search_projects(search)
         self.write({"projects": projects})
@@ -754,17 +810,27 @@ class ListProjectsHandler(BaseHandler, SessionMixin):
 class CreateProjectHandler(BaseHandler, SessionMixin):
     def post(self):
         if self.is_session_expired() or not self.is_authenticated():
-            self.set_status(401)
-            self.write({"error": "Session expired or not authenticated"})
-            return
-        data = self.get_json()
-        name = data.get("name")
-        description = data.get("description", "")
-        email = self.session.session.get("email")
-        user_id = graph_accessor.exec_sql("SELECT user_id FROM users WHERE email = %s;", (email,))[0][0]
-        project_id = graph_accessor.create_project(name, description, user_id)
-        self.write({"project_id": project_id})
-
+            self.set_status(401); self.write({"error": "Session expired or not authenticated"}); return
+        try:
+            data = self.get_json()
+            name = data.get("name")
+            description = data.get("description", "")
+            email = self.session.session.get("email")
+            user_id = graph_accessor.exec_sql("SELECT user_id FROM users WHERE email = %s;", (email,))[0][0]
+            project_id = graph_accessor.create_project(name, description, user_id)
+            # Persist new selection in profile
+            graph_accessor.set_selected_project_for_user(user_id, project_id)
+            # Update session cached handler project if exists
+            session_id = self.get_cookie("msid")
+            if session_id in question_handlers:
+                question_handlers[session_id].set_project_id(project_id)
+            # Reflect selection in session
+            self.session.session["project_id"] = project_id
+            state[session_id] = self.session.session; state.sync()
+            self.write({"project_id": project_id})
+        except Exception as e:
+            self.set_status(500)
+            self.write({"error": f"An error occurred: {e}"})
 
 class ProjectTaskHandler(BaseHandler, SessionMixin):
     def post(self, project_id):
@@ -960,6 +1026,7 @@ def make_app():
         (r"/api/account/update", UpdateAccountHandler),
         (r"/api/projects/list", ListProjectsHandler),
         (r"/api/projects/create", CreateProjectHandler),
+        (r"/api/projects/select", SelectProjectHandler),  # NEW: persist selected project
         (r"/api/project/(\d+)/tasks", ProjectTaskHandler), # GET for list/find, POST for create
         (r"/api/task/(\d+)/entities", TaskEntityHandler),   # GET for list, POST for link
         (r"/api/task/(\d+)/dependencies", TaskDependencyHandler), # GET for list, POST for create

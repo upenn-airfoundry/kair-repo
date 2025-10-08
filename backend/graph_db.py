@@ -1794,46 +1794,123 @@ class GraphAccessor:
             raise
                 
                 
-    def get_user_and_project_ids(self, email: str, project_name: Optional[str] = None) -> Optional[Tuple[int, int]]:
-        """_summary_
-        Retrieve the user ID and project ID associated with the given email and project name.
-
-        Args:
-            email (str): The email of the user.
-            project_name (Optional[str]): The name of the project.
-
-        Returns:
-            Optional[Tuple[int, int]]: A tuple containing the user ID and project ID, or None if not found.
+    def set_selected_project_for_user(self, user_id: int, project_id: int) -> None:
         """
-        
+        Set the selected project id into user_profiles.profile_data.descriptor.selected_project_id
+        for the latest profile row for this user, creating a new row if none exists.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                # Ensure the latest row exists; if not, create one with empty descriptor
+                cur.execute("SELECT profile_id, profile_data FROM user_profiles WHERE user_id = %s ORDER BY profile_id DESC LIMIT 1;", (user_id,))
+                row = cur.fetchone()
+
+                if row:
+                    # Update JSON using jsonb_set, keeping other data intact
+                    cur.execute(
+                        """
+                        UPDATE user_profiles
+                        SET profile_data = jsonb_set(profile_data::jsonb, '{descriptor,selected_project_id}', to_jsonb(%s::int), true)::json
+                        WHERE profile_id = %s;
+                        """,
+                        (project_id, row[0])
+                    )
+                else:
+                    # Insert minimal descriptor with selected_project_id
+                    cur.execute(
+                        """
+                        INSERT INTO user_profiles (user_id, profile_data)
+                        VALUES (%s, %s)
+                        """,
+                        (user_id, json.dumps({"descriptor": {"selected_project_id": project_id}}))
+                    )
+            self.conn.commit()
+        except Exception as e:
+            logging.error(f"Error setting selected project: {e}")
+            self.conn.rollback()
+            raise
+
+    def get_selected_project_for_user(self, user_id: int) -> Optional[int]:
+        """
+        Read selected_project_id from the latest profile_data.descriptor.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT profile_data FROM user_profiles WHERE user_id = %s ORDER BY profile_id DESC LIMIT 1;",
+                    (user_id,)
+                )
+                row = cur.fetchone()
+                if not row or not row[0]:
+                    return None
+                data = row[0]
+                # data is JSON with {"descriptor": {...}}
+                descriptor = data.get("descriptor") if isinstance(data, dict) else None
+                if descriptor and isinstance(descriptor, dict):
+                    sel = descriptor.get("selected_project_id")
+                    if isinstance(sel, int):
+                        return sel
+            return None
+        except Exception as e:
+            logging.error(f"Error reading selected project: {e}")
+            self.conn.rollback()
+            return None
+
+    def get_user_and_project_ids(self, email: str, project_name: Optional[str] = None) -> Optional[Tuple[int, int]]:
+        """Retrieve the user ID and project ID; prefer the selected project in profile_data if present,
+        otherwise choose the latest (highest project_id)."""
         user_id = self.exec_sql("SELECT user_id FROM users WHERE email = %s;", (email,))[0][0]
-        
         if user_id is None or user_id == 0:
             raise ValueError("User not found")
 
+        # If caller names a project, try to find it for this user
         if project_name is not None and project_name.strip() != '':
-            project_id = self.exec_sql("SELECT p.project_id FROM projects p JOIN user_projects up ON p.project_id = up.project_id WHERE up.user_id = %s AND p.project_name = %s ORDER BY p.project_id ASC LIMIT 1;", (user_id, project_name))
+            project_id_rows = self.exec_sql(
+                "SELECT p.project_id FROM projects p JOIN user_projects up ON p.project_id = up.project_id "
+                "WHERE up.user_id = %s AND p.project_name = %s ORDER BY p.project_id DESC LIMIT 1;",
+                (user_id, project_name)
+            )
         else:
-            project_id = self.exec_sql("SELECT project_id FROM user_projects WHERE user_id = %s ORDER BY project_id ASC LIMIT 1;", (user_id,))
-            
-        if project_id is None or len(project_id) == 0:
+            # First try the selected project from profile
+            selected = self.get_selected_project_for_user(user_id)
+            if selected:
+                # Verify the user has access to that project
+                rows = self.exec_sql(
+                    "SELECT 1 FROM user_projects WHERE user_id = %s AND project_id = %s;",
+                    (user_id, selected)
+                )
+                if rows:
+                    return (user_id, selected)
+            # Fallback: latest project by id for this user
+            project_id_rows = self.exec_sql(
+                "SELECT project_id FROM user_projects WHERE user_id = %s ORDER BY project_id DESC LIMIT 1;",
+                (user_id,)
+            )
+
+        if not project_id_rows:
             # Create a new project and associate it with the user
-            new_project_id = self.exec_sql(
+            new_project_id_rows = self.exec_sql(
                 "INSERT INTO projects (project_name, project_description, created_at) VALUES (%s, %s, %s) RETURNING project_id;",
-                (project_name, "New project created", datetime.now())
+                (project_name or "New Project", "New project created", datetime.now())
             )
             self.commit()
-            if new_project_id is None or len(new_project_id) == 0:
-                raise ValueError("Failed to create new project")
-            new_project_id = new_project_id[0][0]
+            new_project_id = new_project_id_rows[0][0]
             self.execute(
                 "INSERT INTO user_projects (user_id, project_id) VALUES (%s, %s);",
                 (user_id, new_project_id)
             )
             self.commit()
-            project_id = new_project_id
-        else:
-            project_id = project_id[0][0]
+            # Persist selection in profile
+            self.set_selected_project_for_user(user_id, new_project_id)
+            return (user_id, new_project_id)
+
+        project_id = project_id_rows[0][0]
+        # Persist selection if not already set
+        try:
+            if not self.get_selected_project_for_user(user_id):
+                self.set_selected_project_for_user(user_id, project_id)
+        except Exception:
+            pass
         return (user_id, project_id)
 
 
