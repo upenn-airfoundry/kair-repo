@@ -182,10 +182,14 @@ export function AppSidebar({ className, ...props }: React.ComponentProps<typeof 
               asChild
               className="data-[slot=sidebar-menu-button]:!p-1.5"
             >
-              <a href="#">
-                <IconBrain className="!size-5" />
-                <span className="text-base font-semibold">KAIR Research</span>
-              </a>
+                <a href="#">
+                <img
+                  src="/images/airfoundry-badge.png"
+                  alt="AIRFoundry logo"
+                  className="!size-8"
+                />
+                <span className="text-base font-semibold">KAIR Assistant</span>
+                </a>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>

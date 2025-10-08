@@ -32,18 +32,19 @@ export default function ChatPage() {
   const projectId = user?.project_id;
   const projectName = user?.project_name;
 
+            // <SidebarTrigger className="-ml-1" />
+            // <Separator orientation="vertical" className="mr-2 h-4" />
+          // <header className="flex h-16 shrink-0 items-center gap-2 border-b px-4">
+          //   <div className="text-sm font-semibold">
+          //     {projectName || 'New KAIR Project'}
+          //   </div>
+          // </header>
+
   return (
     <ProtectedRoute>
       <SidebarProvider>
         <AppSidebar />
         <SidebarInset>
-          <header className="flex h-16 shrink-0 items-center gap-2 border-b px-4">
-            <SidebarTrigger className="-ml-1" />
-            <Separator orientation="vertical" className="mr-2 h-4" />
-            <div className="text-sm font-semibold">
-              {projectName || 'KAIR Platform'}
-            </div>
-          </header>
           <PanelGroup direction="vertical" className="h-[calc(100vh-4rem)] w-full">
             <Panel defaultSize={25} minSize={15}>
               <div className="h-full w-full">
