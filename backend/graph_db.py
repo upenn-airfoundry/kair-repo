@@ -14,17 +14,11 @@ from typing import List, Tuple, Optional, Any
 import pandas as pd
 import uuid
 
-try:
-    from langchain_openai.embeddings import OpenAIEmbeddings
-except ImportError:
-    OpenAIEmbeddings = None
-
 import logging
 
 from dotenv import load_dotenv, find_dotenv
 import hashlib
 from datetime import datetime
-from enrichment.llms import gemini_doc_embedding
 import time
 
 # Load environment variables from .env file
@@ -567,20 +561,8 @@ class GraphAccessor:
             return []
 
     def generate_embedding(self, content: str) -> List[float]:
-        """Generate an embedding for the given content using LangChain and OpenAI."""
-        try:
-            if OpenAIEmbeddings is None:
-                logging.error("OpenAIEmbeddings not available, using fallback")
-                return [0.0] * 1536  # Return a zero vector as a fallback
-            # Initialize OpenAI embeddings
-            embeddings = OpenAIEmbeddings()
-            #embeddings = get_embedding()
-            # Generate the embedding for the content
-            embedding = embeddings.embed_query(content)
-            return embedding
-        except Exception as e:
-            logging.error(f"Error generating embedding: {e}")
-            return [0.0] * 1536  # Return a zero vector as a fallback
+        from enrichment.llms import generate_openai_embedding
+        return generate_openai_embedding(content)
         
     def add_to_crawl_queue(self, url: str):
         """Add a paper URL to the crawl queue."""
@@ -1534,6 +1516,7 @@ class GraphAccessor:
         This updates the gem_embed field based on the entity_detail using gemini_doc_embedding from llms.py.
         Processes papers in batches of 250 for efficiency.
         """
+        from enrichment.llms import gemini_doc_embedding
         try:
             with self.conn.cursor() as cur:
                 cur.execute(f"SELECT entity_id, entity_detail FROM {self.schema}.entities WHERE entity_type = 'paper' AND gem_embed IS NULL;")
@@ -1567,6 +1550,7 @@ class GraphAccessor:
         This updates the gem_embed field based on the tag_value using gemini_doc_embedding from llms.py.
         Processes tags in batches of 250 for efficiency.
         """
+        from enrichment.llms import gemini_doc_embedding
         try:
             with self.conn.cursor() as cur:
                 cur.execute(f"SELECT entity_id, tag_name, tag_value FROM {self.schema}.entity_tags WHERE gem_embed IS NULL;")
@@ -1962,7 +1946,7 @@ class GraphAccessor:
                     profile.get("biosketch"),
                     profile.get("expertise"),
                     profile.get("projects"),
-                    profile.get("publications"),
+                    json.dumps(profile.get("publications")) if profile.get("publications") else None,
                     profile,
                     user_id
                 ))

@@ -36,4 +36,5 @@ langchain-google-genai
 biopython>=1.80
 mcp
 cloud-sql-python-connector
+fastmcp
 

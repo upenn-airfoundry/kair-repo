@@ -16,16 +16,28 @@ from langchain_core.tools import tool
 from langchain import hub
 from langchain_core.exceptions import OutputParserException
 
+try:
+    from langchain_openai.embeddings import OpenAIEmbeddings
+except ImportError:
+    OpenAIEmbeddings = None
+
+
 _ = load_dotenv(find_dotenv())
 
 
 mcp_client = MultiServerMCPClient(
     {
         "SemanticScholarSearch": {
-            # Make sure you start your weather server on port 8000
+            # Make sure you start your server on port 8000
             "url": "http://localhost:8000/mcp",
             "transport": "streamable_http",
-        }   
+        },
+        "PDFAnalyzer": {
+            # Make sure you start your server on port 8001
+            "url": "http://localhost:8001/mcp",
+            "transport": "streamable_http",
+            
+        }
     })
 
 # Define the argument schema for the Semantic Scholar tool
@@ -313,3 +325,19 @@ async def get_agentic_llm(prompt: ChatPromptTemplate | None = None):
 #     )
 
 #     return final_response.content
+
+def generate_openai_embedding(content: str) -> List[float]:
+    """Generate an embedding for the given content using LangChain and OpenAI."""
+    try:
+        if OpenAIEmbeddings is None:
+            logging.error("OpenAIEmbeddings not available, using fallback")
+            return [0.0] * 1536  # Return a zero vector as a fallback
+        # Initialize OpenAI embeddings
+        embeddings = OpenAIEmbeddings()
+        #embeddings = get_embedding()
+        # Generate the embedding for the content
+        embedding = embeddings.embed_query(content)
+        return embedding
+    except Exception as e:
+        logging.error(f"Error generating embedding: {e}")
+        return [0.0] * 1536  # Return a zero vector as a fallback
