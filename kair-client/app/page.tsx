@@ -434,12 +434,6 @@ export default function Home() {
                   Develop RNA solutions!
                   <ArrowRight className="ml-2 -mr-1 h-4 w-4 inline group-hover:translate-x-1 transition-transform" />
                 </Link>
-                <Link 
-                  href="/chat" 
-                  className="text-sm font-semibold leading-6 text-gray-900 hover:text-blue-600 transition-colors duration-300"
-                >
-                  Explore Platform <span aria-hidden="true" className="inline-block group-hover:translate-x-1 transition-transform">→</span>
-                </Link>
               </motion.div>
             </motion.div>
           </div>

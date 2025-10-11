@@ -20,9 +20,9 @@ from aryn_sdk.partition import partition_file
 
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
-from graph_db import GraphAccessor
+from backend.graph_db import GraphAccessor
 
-from enrichment.llms import analysis_llm
+from enrichment.llms import get_analysis_llm
 
 from dotenv import load_dotenv, find_dotenv
 
@@ -54,7 +54,7 @@ def index_split_paragraphs(split_docs: list, path: str, url: str, the_date) -> i
     concatenated_text = " ".join(doc.page_content for doc in split_docs[:n])
 
     # Use GPT-4o-mini to extract summary and authors
-    llm = analysis_llm
+    llm = get_analysis_llm()
     prompt_template = ChatPromptTemplate.from_template(
         """Extract the title, research field, summary and authors from the following text. 
         If available, include authors' email addresses and affiliations in JSON format. 

@@ -1,11 +1,10 @@
 import { AppSidebar } from '@/components/app-sidebar';
 import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar';
 import { ChatHeader } from '@/components/chat-header';
-import { ProtectedRoute } from "@/components/protected-route"
+// import { ProtectedRoute } from "@/components/protected-route"
 
 export default function ProjectsPage() {
   return (
-    <ProtectedRoute>
     <SidebarProvider
       style={
         {
@@ -27,6 +26,5 @@ export default function ProjectsPage() {
         </div>
       </SidebarInset>
     </SidebarProvider>
-    </ProtectedRoute>
   );
 } 

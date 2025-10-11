@@ -12,7 +12,7 @@ The **Graph DB Store** provides an API over a vector+graph database (currently T
 
 * An *entity_tag*  is a named annotation on an entity, normally produced via *enrichment*.
 
-The `graph_db.py` file defines the `GraphAccessor` class, which provides a comprehensive interface for interacting with a PostgreSQL (TimescaleDB) database that stores a hybrid graph/relational representation of research entities, documents, and their relationships. Here’s a summary of its main components and functionality:
+The `backend.graph_db.py` file defines the `GraphAccessor` class, which provides a comprehensive interface for interacting with a PostgreSQL (TimescaleDB) database that stores a hybrid graph/relational representation of research entities, documents, and their relationships. Here’s a summary of its main components and functionality:
 
 ### Database Connection and Utilities
 

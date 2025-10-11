@@ -38,7 +38,7 @@ DOWNLOAD_DIR = os.getenv("PDF_PATH", os.path.expanduser("~/Downloads"))
 # parser = GrobidParser(segment_sentences=False, grobid_server=GROBID_SERVER)
 # grobid = GrobidClient(grobid_server=GROBID_SERVER)
 
-def get_pdf_splits(pdf_path: str, method: int, dir) -> list:
+def get_pdf_splits(pdf_path: str, method: int) -> list:
     """
     Load a PDF file and split it into smaller chunks.
     :param pdf_path: The path to the PDF file.

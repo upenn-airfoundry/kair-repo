@@ -1,11 +1,14 @@
 tornado
+torndsession
 python-dotenv
 psycopg2-binary
 numpy
 pandas
 langchain
-langchain-openai
+langchain_openai
 langchain-community
+langchain-mcp-adapters
+langgraph
 openai
 python-magic
 PyPDF2
@@ -30,3 +33,8 @@ grobid-client-python
 langchain-google-vertexai
 google-generativeai
 langchain-google-genai
+biopython>=1.80
+mcp
+cloud-sql-python-connector
+fastmcp
+

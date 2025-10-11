@@ -2,9 +2,14 @@ import os
 import sys
 import bcrypt
 import logging
+import uuid
+import time
+
+import shelve
 
 # Feature flags
-SKIP_ENRICHMENT = os.getenv("SKIP_ENRICHMENT", "").lower() in ("1", "true", "yes")
+SKIP_ENRICHMENT = os.getenv("SKIP_ENRICHMENT", "true").lower() in ("1", "true", "yes")
+ALLOWED_ORIGIN = os.environ.get("ALLOWED_ORIGIN", "http://localhost:3000")
 
 # Add parent directory to Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -12,57 +17,45 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 import tornado.ioloop
 import tornado.web
 import tornado.options
+from torndsession.session import SessionManager
+from torndsession.session import SessionMixin
 import json
 from datetime import datetime
 from dotenv import load_dotenv, find_dotenv
 
-from apscheduler.schedulers.tornado import TornadoScheduler
+from prompts.llm_prompts import QueryClassification, QueryPrompts
+# from torndsession.sessionhandler import SessionBaseHandler
 
 # Load environment variables from .env file
 _ = load_dotenv(find_dotenv())
 
-from graph_db import GraphAccessor
-if not SKIP_ENRICHMENT:
-    try:
-        from enrichment.iterative_enrichment import process_next_task, iterative_enrichment
-    except Exception as e:
-        process_next_task = None
-        iterative_enrichment = None
-        logging.error(f"Iterative enrichment disabled at startup: {e}")
-    try:
-        from enrichment.seed_lists import consult_person_seeds
-    except Exception as e:
-        consult_person_seeds = None
-        logging.error(f"Seed lists import failed: {e}")
-    try:
-        from entities.generate_doc_info import parse_files_and_index
-    except Exception:
-        parse_files_and_index = None
-    try:
-        from enrichment.langchain_ops import AssessmentOps
-    except Exception:
-        AssessmentOps = None
-else:
-    consult_person_seeds = None
-    parse_files_and_index = None
-    AssessmentOps = None
+from backend.graph_db import GraphAccessor
+from backend.enrichment_daemon import EnrichmentDaemon
+from prompts.llm_prompts import PeoplePrompts
+from qa.answer_question import AnswerQuestionHandler
+# from enrichment.langchain_ops import AssessmentOps
+
+
+state = shelve.open("server_state.db", writeback=True)
+
 # Defer importing search until runtime to avoid DB init at import time
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 
+
 class BaseHandler(tornado.web.RequestHandler):
     def set_default_headers(self):
-        self.set_header("Access-Control-Allow-Origin", "*")
+        self.set_header("Access-Control-Allow-Origin", ALLOWED_ORIGIN)
         self.set_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.set_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+        self.set_header("Access-Control-Allow-Credentials", "true")
     
     def options(self, *args, **kwargs):
         self.set_status(204)
         self.finish()
 
     def prepare(self):
-        # If DB isn't available, only allow health endpoint
         global graph_accessor
         if os.getenv("SKIP_ENRICHMENT", "").lower() in ("1", "true", "yes"):
             return
@@ -76,23 +69,52 @@ class BaseHandler(tornado.web.RequestHandler):
             return json.loads(self.request.body)
         except json.JSONDecodeError:
             return None
+        
+    def is_session_expired(self):
+        session = getattr(self, "session", None)
+        if not session:
+            return True
+        # expires_at = session.get("expires_at")
+        # if not expires_at or time.time() > expires_at:
+        #     return True
+        return False
+
+    def is_authenticated(self):
+        # Checks if session exists and is not expired
+        session_id = self.get_cookie("msid")
+        if session_id:
+            session_data = state.get(session_id)
+            if session_data and "username" in session_data:
+                self.session.session = session_data
+                # Ensure user_id is available for other handlers
+                if "user_id" not in self.session.session:
+                     (user_id, _) = graph_accessor.get_user_and_project_ids(self.session.session.get("email"))
+                     self.session.session["user_id"] = user_id
+                return True
+        return False
+
+    def renew_session(self):
+        pass
+
+    def redirect_to_login(self):
+        #self.redirect("/login")  # Adjust path as needed
+        pass
+
+########### Main ###########
 
 # Initialize the GraphAccessor, but don't crash if DB is unavailable (or skip)
 graph_accessor = None
+question_handlers = {}
 try:
     graph_accessor = GraphAccessor()
+    
+    if not SKIP_ENRICHMENT:
+        EnrichmentDaemon.initialize_enrichment(graph_accessor)
+
 except Exception as e:
     logging.error(f"Failed to initialize database connection: {e}")
 
-# Initialize and start the TornadoScheduler only if DB is available
-if not SKIP_ENRICHMENT and graph_accessor is not None and 'process_next_task' in globals() and process_next_task is not None and 'consult_person_seeds' in globals() and consult_person_seeds is not None:
-    scheduler = TornadoScheduler()
-    scheduler.configure(timezone="US/Eastern")
-    scheduler.add_job(lambda: consult_person_seeds(graph_accessor))
-    scheduler.add_job(lambda: process_next_task(graph_accessor), 'interval', seconds=30, max_instances=1)
-    scheduler.start()
-
-class LoginHandler(BaseHandler):
+class LoginHandler(BaseHandler, SessionMixin):
     def post(self):
         try:
             data = self.get_json()
@@ -103,7 +125,6 @@ class LoginHandler(BaseHandler):
                 self.write({"error": "'email' and 'password' are required"})
                 return
 
-            # Ensure database is available
             if graph_accessor is None:
                 logging.error("Login attempted but database is not configured (graph_accessor is None)")
                 self.set_status(503)
@@ -113,7 +134,6 @@ class LoginHandler(BaseHandler):
                 })
                 return
 
-            # Fetch user from DB and check password
             user = graph_accessor.exec_sql(
                 "SELECT name, organization, avatar, password_hash FROM users WHERE email = %s;", (email,)
             )
@@ -124,14 +144,66 @@ class LoginHandler(BaseHandler):
 
             password_hash = user[0][3].encode("utf-8")
             if bcrypt.checkpw(password.encode("utf-8"), password_hash):
+                # Create a unique session
+                session_id = str(uuid.uuid4())
+                session = {}
+                
+                session["session_id"] = session_id
+                session["username"] = user[0][0]
+                session["email"] = email
+
+                # Set session ID as a cookie for the client
+                self.set_cookie("msid", session_id, expires_days=None, max_age=600, httponly=True, secure=False)
+                
+                profile = graph_accessor.get_user_profile(email)  # Load user profile if needed
+                session["profile"] = profile
+                if profile is not None and 'publications' not in profile:
+                    scholar_id = profile.get("scholar_id") if profile else None
+
+                    if scholar_id:
+                        pubs = PeoplePrompts.get_person_publications(graph_accessor, user[0][0], user[0][1], scholar_id)
+
+                        if session and "profile" in session and pubs:
+                            session['profile']["publications"] = pubs
+                        
+                results = graph_accessor.get_user_and_project_ids(email)
+                
+                if results is None:
+                    self.set_status(500)
+                    self.write({"error": "Failed to retrieve user and project IDs"})
+                    return
+                (user_id, project_id) = results
+
+                # Get project details
+                project_details = graph_accessor.exec_sql(
+                    "SELECT project_name, project_description FROM projects WHERE project_id = %s;", (project_id,)
+                )
+                project_name = ""
+                project_description = ""
+                if project_details:
+                    project_name = project_details[0][0]
+                    project_description = project_details[0][1]
+
+                state[session_id] = session
+                state.sync()  # Force the session data to be written to disk immediately
+                self.session.session = session
+
+                question_handlers[session_id] = AnswerQuestionHandler(graph_accessor, user[0][0], session['profile'], user_id, project_id)
+
                 self.write({
                     "success": True, 
                     "user": {
                         "name": user[0][0],
                         "organization": user[0][1],
-                        "avatar": user[0][2]
+                        "avatar": user[0][2],
+                        "profile": self.session.get("profile", {}),
+                        "project_id": project_id,
+                        "project_name": project_name,
+                        "project_description": project_description,
                     },
-                    "message": "Login successful"})
+                    "session_id": session_id,
+                    "message": "Login successful"
+                })
             else:
                 self.set_status(401)
                 self.write({"success": False, "message": "Invalid credentials"})
@@ -178,6 +250,9 @@ class CreateAccountHandler(BaseHandler):
                 "INSERT INTO users (email, password_hash, name, organization, avatar) VALUES (%s, %s, %s, %s, %s);",
                 (email, password_hash, name, organization, avatar)
             )
+
+            # Create an initial user profile
+            graph_accessor.save_user_profile(email, PeoplePrompts.get_person_profile(name, organization))
             graph_accessor.commit()
             self.write({"success": True, "message": "Account created"})
         except Exception as e:
@@ -201,8 +276,16 @@ class DbPingHandler(BaseHandler):
             self.set_status(500)
             self.write({"ok": False, "error": f"{e}"})
 
-class FindRelatedEntitiesByTagHandler(BaseHandler):
+class FindRelatedEntitiesByTagHandler(BaseHandler, SessionMixin):
     def get(self):
+        # Guard: only allow if session is valid and not expired
+        if self.is_session_expired() or not self.is_authenticated():
+            self.set_status(401)
+            self.write({"error": "Session expired or not authenticated"})
+            self.redirect_to_login()
+            return
+        self.renew_session()  # Renew expiration on access
+
         tag_name = self.get_argument('tag_name', None)
         query = self.get_argument('query', None)
         k = int(self.get_argument('k', 10))
@@ -216,8 +299,15 @@ class FindRelatedEntitiesByTagHandler(BaseHandler):
         results = graph_accessor.find_entities_by_tag_embedding(query_embedding, tag_name, k)
         self.write({"results": results})
 
-class FindRelatedEntitiesHandler(BaseHandler):
+class FindRelatedEntitiesHandler(BaseHandler, SessionMixin):
     def get(self):
+        # Guard: only allow if session is valid and not expired
+        if self.is_session_expired() or not self.is_authenticated():
+            self.set_status(401)
+            self.write({"error": "Session expired or not authenticated"})
+            self.redirect_to_login()
+            return
+        self.renew_session()  # Renew expiration on access
         query = self.get_argument('query', None)
         k = int(self.get_argument('k', 10))
         entity_type = self.get_argument('entity_type', None)
@@ -237,8 +327,16 @@ class FindRelatedEntitiesHandler(BaseHandler):
         results = graph_accessor.find_related_entities(query, k, entity_type, keywords)
         self.write({"results": results})
 
-class AddToCrawlQueueHandler(BaseHandler):
+class AddToCrawlQueueHandler(BaseHandler, SessionMixin):
     def post(self):
+        # Guard: only allow if session is valid and not expired
+        if self.is_session_expired() or not self.is_authenticated():
+            self.set_status(401)
+            self.write({"error": "Session expired or not authenticated"})
+            self.redirect_to_login()
+            return
+        self.renew_session()  # Renew expiration on access
+
         data = self.get_json()
         if not data or 'url' not in data:
             self.set_status(400)
@@ -262,8 +360,15 @@ class AddToCrawlQueueHandler(BaseHandler):
         graph_accessor.commit()
         self.write({"message": "URL added to crawl queue"})
 
-class CrawlFilesHandler(BaseHandler):
+class CrawlFilesHandler(BaseHandler, SessionMixin):
     def post(self):
+        # Guard: only allow if session is valid and not expired
+        if self.is_session_expired() or not self.is_authenticated():
+            self.set_status(401)
+            self.write({"error": "Session expired or not authenticated"})
+            self.redirect_to_login()
+            return
+        self.renew_session()  # Renew expiration on access
         try:
             # Lazy import to avoid prompts dependency at startup
             from crawl.web_fetch import fetch_and_crawl_frontier
@@ -273,14 +378,21 @@ class CrawlFilesHandler(BaseHandler):
             self.set_status(500)
             self.write({"error": f"An error occurred during crawling: {e}"})
 
-class ParsePDFsAndIndexHandler(BaseHandler):
+class ParsePDFsAndIndexHandler(BaseHandler, SessionMixin):
     def post(self):
+        # Guard: only allow if session is valid and not expired
+        if self.is_session_expired() or not self.is_authenticated():
+            self.set_status(401)
+            self.write({"error": "Session expired or not authenticated"})
+            self.redirect_to_login()
+            return
+        self.renew_session()  # Renew expiration on access
         try:
-            if parse_files_and_index is None or SKIP_ENRICHMENT:
-                self.set_status(503)
-                self.write({"error": "Parsing not available at startup"})
-                return
-            parse_files_and_index(use_aryn=False)
+            # if parse_files_and_index is None or SKIP_ENRICHMENT:
+            #     self.set_status(503)
+            #     self.write({"error": "Parsing not available at startup"})
+            #     return
+            EnrichmentDaemon.parse_files_and_index(use_aryn=False)
             self.write({"message": "PDF parsing and indexing completed successfully"})
         except Exception as e:
             self.set_status(500)
@@ -305,8 +417,15 @@ class UncrowledEntriesHandler(BaseHandler):
             self.set_status(500)
             self.write({"error": f"An error occurred while fetching uncrawled entries: {e}"})
 
-class GetAssessmentCriteriaHandler(BaseHandler):
+class GetAssessmentCriteriaHandler(BaseHandler, SessionMixin):
     def get(self):
+        # Guard: only allow if session is valid and not expired
+        if self.is_session_expired() or not self.is_authenticated():
+            self.set_status(401)
+            self.write({"error": "Session expired or not authenticated"})
+            self.redirect_to_login()
+            return
+        self.renew_session()  # Renew expiration on access
         try:
             name = self.get_argument('name', None)
             criteria = graph_accessor.get_assessment_criteria(name)
@@ -323,8 +442,15 @@ class GetAssessmentCriteriaHandler(BaseHandler):
             self.set_status(500)
             self.write({"error": f"An error occurred: {e}"})
 
-class AddAssessmentCriterionHandler(BaseHandler):
+class AddAssessmentCriterionHandler(BaseHandler, SessionMixin):
     def post(self):
+        # Guard: only allow if session is valid and not expired
+        if self.is_session_expired() or not self.is_authenticated():
+            self.set_status(401)
+            self.write({"error": "Session expired or not authenticated"})
+            self.redirect_to_login()
+            return
+        self.renew_session()  # Renew expiration on access
         try:
             data = self.get_json()
             name = data.get('name')
@@ -341,8 +467,7 @@ class AddAssessmentCriterionHandler(BaseHandler):
             logging.debug("Scope: " + scope)
             logging.debug("Prompt: " + prompt)
 
-            criterion_id = graph_accessor.add_assessment_criterion(name, prompt, scope, promise)
-            iterative_enrichment(graph_accessor, name)
+            criterion_id = EnrichmentDaemon.add_enrichment_task(name, prompt, scope, promise)
 
             self.write({
                 "message": "New assessment criterion added successfully",
@@ -352,29 +477,34 @@ class AddAssessmentCriterionHandler(BaseHandler):
             self.set_status(500)
             self.write({"error": f"An error occurred: {e}"})
 
-class AddEnrichmentHandler(BaseHandler):
+class AddEnrichmentHandler(BaseHandler, SessionMixin):
     def post(self):
+        # Guard: only allow if session is valid and not expired
+        if self.is_session_expired() or not self.is_authenticated():
+            self.set_status(401)
+            self.write({"error": "Session expired or not authenticated"})
+            self.redirect_to_login()
+            return
+        self.renew_session()  # Renew expiration on access
         try:
             data = self.get_json()
             name = data.get('name')
-            iterative_enrichment(graph_accessor, name)
+            EnrichmentDaemon.run_enrichment_task(name)
             self.write({"message": "All enrichment tasks queued"})
         except Exception as e:
             self.set_status(500)
             self.write({"error": f"An error occurred: {e}"})
 
-class ExpandSearchHandler(BaseHandler):
-    def post(self):
+class ExpandSearchHandler(BaseHandler, SessionMixin):
+    async def post(self):
+        # Guard: only allow if session is valid and not expired
+        if self.is_session_expired() or not self.is_authenticated():
+            self.set_status(401)
+            self.write({"error": "Session expired or not authenticated"})
+            self.redirect_to_login()
+            return
+        self.renew_session()  # Renew expiration on access
         try:
-            # Lazy import to avoid startup failures if LLM/DB not ready
-            from search import (
-                search_over_criteria,
-                search_multiple_criteria,
-                generate_rag_answer,
-                is_search_over_papers,
-                search_basic,
-                is_relevant_answer_with_data,
-            )
             # Ensure search module can access the same graph accessor
             try:
                 import search as search_module
@@ -390,83 +520,179 @@ class ExpandSearchHandler(BaseHandler):
                 self.write({"error": "'prompt' parameter is required"})
                 return
 
-            if not is_search_over_papers(user_prompt):
-                answer = search_basic(user_prompt)
-                self.write({
-                    "data": {
-                        "message": answer
-                    }})
+            session = self.session.session
+            
+            # user_profile = session.get("profile", {})
+            email = session.get("email")
+            
+            (user_id, project_id) = graph_accessor.get_user_and_project_ids(email)
+
+            session_id = self.get_cookie("msid")
+            
+            if session_id not in question_handlers:
+                self.set_status(500)
+                self.write({"error": "Session expired, please log in again"})
                 return
-            
-            if graph_accessor is None:
-                # Fall back to basic LLM answer when DB isn't available
-                answer = search_basic(user_prompt)
-                self.write({
-                    "data": {
-                        "message": answer
-                    }
-                })
-                return
-            questions = search_over_criteria(user_prompt, graph_accessor.get_assessment_criteria(None))
-            logging.info('Expanded into subquestions: ' + questions)
-            
-            relevant_docs = search_multiple_criteria(questions)
-            main = graph_accessor.find_related_entity_ids_by_tag(user_prompt, "summary", 50)
-            
-            logging.debug("Relevant docs: " + str(relevant_docs))
-            logging.debug("Main papers: " + str(main))
-            
-            docs_in_order = []
-            count = 0
-            for doc in relevant_docs:
-                if doc in set(main):
-                    docs_in_order.append(doc)
-                    count += 1
-                    if count >= 10:
-                        break
-                
-            other_docs = 0    
-            while count < 10 and other_docs < len(main):
-                if main[other_docs] not in set(relevant_docs):
-                    docs_in_order.append(main[other_docs])
-                    count += 1
-                other_docs += 1
-            
-            print("Items matching criteria: " + str(docs_in_order))
-            
-            if len(docs_in_order):
-                paper_info = graph_accessor.get_entities_with_summaries(list(docs_in_order))
-                answer = generate_rag_answer(paper_info, user_prompt)
-                
-                if answer is None or len(answer) == 0 or "i am sorry" in answer.lower() or not is_relevant_answer_with_data(user_prompt, answer):
-                    questions = None
-                    answer = search_basic(user_prompt)
-                
-                if questions:
-                    question_str = ''
-                    question_map = json.loads(questions)
-                    for q in question_map.keys():
-                        question_str += f' * {q}: {question_map[q]}\n'
-                        
-                    self.write({
-                        "data": {
-                            "message": answer + '\n\nWe additionally looked for assessment criteria: \n\n' + question_str
-                        }
-                    })
+
+            question_handlers[session_id].set_project_id(project_id)
+
+            try:
+                (answer, answer_type) = await question_handlers[session_id].answer_question(user_prompt)
+
+                if answer is not None:
+                    if answer_type == 1:
+                        logging.info("Answer created a task")
+                        self.write({
+                            "data": {
+                                "message": answer,
+                                "refresh_project": project_id
+                            }
+                        })
+                    else:
+                        logging.info("Answer returned without criteria")
+                        self.write({
+                            "data": {
+                                "message": answer
+                            }
+                        })
                 else:
-                    self.write({
-                        "data": {
-                            "message": answer
-                        }
-                    })
-            else:
-                self.set_status(404)
-                self.write({"error": "No relevant papers found"})
+                    logging.error("Answer returned was None")
+                    self.write({"error": "No relevant answers were found"})
+                    return
+            except Exception as e:
+                logging.error(f"Error while answering question: {e}")
+                self.set_status(500)
+                self.write({"error": f"An error occurred while processing the question: {e}"})
+                return     
         except Exception as e:
-            logging.error(f"Error during expansion: {e}")
             self.set_status(500)
             self.write({"error": f"An error occurred: {e}"})
+            return       
 
+        #     user_history = graph_accessor.get_user_history(user_id, project_id, limit=20)
+
+        #     # 1. Classify query and get task summary
+        #     classification = QueryPrompts.classify_query_and_summarize(user_prompt)
+        #     query_class = classification.query_class
+        #     task_summary = classification.task_summary
+            
+        #     # 2. Build expanded prompt
+        #     expanded_prompt = QueryPrompts.build_expanded_prompt(user_profile, user_history, task_summary, user_prompt)
+
+        #     print("Expanded prompt: " + expanded_prompt)
+            
+        #     original_prompt = user_prompt
+        #     user_prompt = expanded_prompt
+
+        #     # query_class: Literal["general_knowledge", "technical_training", "papers_reports_or_prior_work", "solutions_sources_and_justifications"]
+
+        #     if query_class == "general_knowledge":
+        #         answer = search_basic(user_prompt, "You are an expert assistant. Please answer the following general knowledge question concisely and accurately.\n\nIf you don't know the answer, just say you don't know. Do not make up an answer.")
+        #         graph_accessor.add_user_history(user_id, project_id, original_prompt, answer)
+        #         self.write({
+        #             "data": {
+        #                 "message": answer
+        #             }
+        #         })
+        #         return
+        #     elif classification.query_class == "technical_training":
+        #         answer = search_basic(user_prompt, "You are an expert technical trainer. Please provide a clear and concise explanation, or a list of resources for further learning.\n\nIf you don't know the answer, just say you don't know. Do not make up an answer.")
+        #         graph_accessor.add_user_history(user_id, project_id, original_prompt, answer)
+        #         self.write({
+        #             "data": {
+        #                 "message": answer
+        #             }
+        #         })
+        #         return
+        #     elif classification.query_class == "papers_reports_or_prior_work":
+        #         # answer = search_basic(user_prompt, "You are an expert research assistant in answering questions about science, targeting educational or scientific users. Please provide a summary of relevant papers, reports, or prior work.\n\nIf you don't know the answer, just say you don't know. Do not make up an answer.")
+        #         # self.write({
+        #         #     "data": {
+        #         #         "message": answer
+        #         #     }})
+        #         # return                
+        #         pass
+        #     elif classification.query_class == "molecules_algorithms_solutions_sources_and_justifications":
+        #         # user_prompt = f"You are an expert consultant. Please provide potential solutions, sources, and justifications for the following problem or question:\n\n{user_prompt}\n\nIf you don't know the answer, just say you don't know. Do not make up an answer."
+        #         answer = search_basic(user_prompt, "You are an expert data engineer who understands data resources, data modeling, schemas and types, MCP servers, and related elements. Please suggest a complete set of fields (i.e., a schema) for possible solutions to the question, including citations to sources, evidence, expected properties and features with their expected modalities or datatypes, factors useful for decision-making, and justifications.\n\nIf you don't know the answer, just say you don't know. Do not make up an answer.")
+        #         graph_accessor.add_user_history(user_id, project_id, original_prompt, answer)
+        #         self.write({
+        #             "data": {
+        #                 "message": answer
+        #             }
+        #         })
+        #         return
+
+            
+        #     # if not is_search_over_papers(user_prompt):
+        #     #     answer = search_basic(user_prompt)
+        #     #     self.write({
+        #     #         "data": {
+        #     #             "message": answer
+        #     #         }})
+        #     #     return
+            
+        #     questions = search_over_criteria(user_prompt, graph_accessor.get_assessment_criteria(None))
+        #     logging.info('Expanded into subquestions: ' + questions)
+            
+        #     relevant_docs = search_multiple_criteria(questions)
+        #     main = graph_accessor.find_related_entity_ids_by_tag(user_prompt, "summary", 50)
+            
+        #     logging.debug("Relevant docs: " + str(relevant_docs))
+        #     logging.debug("Main papers: " + str(main))
+            
+        #     docs_in_order = []
+        #     count = 0
+        #     for doc in relevant_docs:
+        #         if doc in set(main):
+        #             docs_in_order.append(doc)
+        #             count += 1
+        #             if count >= 10:
+        #                 break
+                
+        #     other_docs = 0    
+        #     while count < 10 and other_docs < len(main):
+        #         if main[other_docs] not in set(relevant_docs):
+        #             docs_in_order.append(main[other_docs])
+        #             count += 1
+        #         other_docs += 1
+            
+        #     print("Items matching criteria: " + str(docs_in_order))
+            
+        #     if len(docs_in_order):
+        #         paper_info = graph_accessor.get_entities_with_summaries(list(docs_in_order))
+        #         answer = generate_rag_answer(paper_info, user_prompt)
+                
+        #         graph_accessor.add_user_history(user_id, project_id, questions, answer)
+        #         if answer is None or len(answer) == 0 or "i am sorry" in answer.lower() or not is_relevant_answer_with_data(user_prompt, answer):
+        #             questions = None
+        #             answer = search_basic(user_prompt)
+                
+        #         if questions:
+        #             question_str = ''
+        #             question_map = json.loads(questions)
+        #             for q in question_map.keys():
+        #                 question_str += f' * {q}: {question_map[q]}\n'
+                        
+        #             self.write({
+        #                 "data": {
+        #                     "message": answer + '\n\nWe additionally looked for assessment criteria: \n\n' + question_str
+        #                 }
+        #             })
+        #         else:
+        #             self.write({
+        #                 "data": {
+        #                     "message": answer
+        #                 }
+        #             })
+        #     else:
+        #         self.set_status(404)
+        #         self.write({"error": "No relevant papers found"})
+        # except Exception as e:
+        #     logging.error(f"Error during expansion: {e}")
+        #     self.set_status(500)
+        #     self.write({"error": f"An error occurred: {e}"})
+            
 class StartSchedulerHandler(BaseHandler):
     def post(self):
         try:
@@ -485,8 +711,299 @@ class StopSchedulerHandler(BaseHandler):
             self.set_status(500)
             self.write({"error": f"Failed to stop scheduler: {e}"})
 
+class AccountInfoHandler(BaseHandler, SessionMixin):
+    def get(self):
+        if self.is_session_expired() or not self.is_authenticated():
+            self.set_status(401)
+            self.write({"error": "Session expired or not authenticated"})
+            return
+        email = self.session.session.get("email")
+        user_id = graph_accessor.exec_sql("SELECT user_id FROM users WHERE email = %s;", (email,))[0][0]
+        profile = graph_accessor.get_user_profile(email)
+        projects = graph_accessor.get_user_projects(user_id)
+        self.write({
+            "user": {
+                "name": self.session.session.get("username"),
+                "email": email,
+                "profile": profile,
+                "projects": projects
+            }
+        })
+
+class UpdateAccountHandler(BaseHandler, SessionMixin):
+    def post(self):
+        if self.is_session_expired() or not self.is_authenticated():
+            self.set_status(401)
+            self.write({"error": "Session expired or not authenticated"})
+            return
+        data = self.get_json()
+        email = self.session.session.get("email")
+        graph_accessor.update_user_profile(email, data.get("profile", {}))
+        self.write({"success": True})
+
+class SelectProjectHandler(BaseHandler, SessionMixin):
+    def post(self):
+        """Select an existing project for the current user and persist it in the profile."""
+        if self.is_session_expired() or not self.is_authenticated():
+            self.set_status(401); self.write({"error": "Session expired or not authenticated"}); return
+        try:
+            data = self.get_json()
+            project_id = int(data.get("project_id", 0))
+            if not project_id:
+                self.set_status(400); self.write({"error": "Missing project_id"}); return
+
+            email = self.session.session.get("email")
+            user_id = graph_accessor.exec_sql("SELECT user_id FROM users WHERE email = %s;", (email,))[0][0]
+            # Validate membership
+            rows = graph_accessor.exec_sql(
+                "SELECT 1 FROM user_projects WHERE user_id = %s AND project_id = %s;",
+                (user_id, project_id)
+            )
+            if not rows:
+                self.set_status(403); self.write({"error": "Not a member of this project"}); return
+
+            # Persist selection
+            graph_accessor.set_selected_project_for_user(user_id, project_id)
+
+            # Update session + handler
+            self.session.session["project_id"] = project_id
+            session_id = self.get_cookie("msid")
+            if session_id in question_handlers:
+                question_handlers[session_id].set_project_id(project_id)
+            state[session_id] = self.session.session; state.sync()
+
+            proj = graph_accessor.exec_sql(
+                "SELECT project_name, project_description FROM projects WHERE project_id = %s;",
+                (project_id,)
+            )
+            self.write({
+                "success": True,
+                "project": {
+                    "id": project_id,
+                    "name": proj[0][0] if proj else "",
+                    "description": proj[0][1] if proj else ""
+                }
+            })
+        except Exception as e:
+            self.set_status(500)
+            self.write({"error": f"An error occurred: {e}"})
+
+class ListProjectsHandler(BaseHandler, SessionMixin):
+    def get(self):
+        if self.is_session_expired() or not self.is_authenticated():
+            self.set_status(401)
+            self.write({"error": "Session expired or not authenticated"})
+            return
+        # If mine=1, return the full set of this user's projects (no limit)
+        mine = self.get_argument("mine", "").lower() in ("1", "true", "yes")
+        if mine:
+            email = self.session.session.get("email")
+            user_id = graph_accessor.exec_sql("SELECT user_id FROM users WHERE email = %s;", (email,))[0][0]
+            projects = graph_accessor.get_user_projects(user_id)
+            self.write({"projects": projects})
+            return
+
+        search = self.get_argument("search", "")
+        projects = graph_accessor.search_projects(search)
+        self.write({"projects": projects})
+
+class CreateProjectHandler(BaseHandler, SessionMixin):
+    def post(self):
+        if self.is_session_expired() or not self.is_authenticated():
+            self.set_status(401); self.write({"error": "Session expired or not authenticated"}); return
+        try:
+            data = self.get_json()
+            name = data.get("name")
+            description = data.get("description", "")
+            email = self.session.session.get("email")
+            user_id = graph_accessor.exec_sql("SELECT user_id FROM users WHERE email = %s;", (email,))[0][0]
+            project_id = graph_accessor.create_project(name, description, user_id)
+            # Persist new selection in profile
+            graph_accessor.set_selected_project_for_user(user_id, project_id)
+            # Update session cached handler project if exists
+            session_id = self.get_cookie("msid")
+            if session_id in question_handlers:
+                question_handlers[session_id].set_project_id(project_id)
+            # Reflect selection in session
+            self.session.session["project_id"] = project_id
+            state[session_id] = self.session.session; state.sync()
+            self.write({"project_id": project_id})
+        except Exception as e:
+            self.set_status(500)
+            self.write({"error": f"An error occurred: {e}"})
+
+class ProjectTaskHandler(BaseHandler, SessionMixin):
+    def post(self, project_id):
+        """Create a new project task."""
+        if not self.is_authenticated():
+            self.set_status(401); self.write({"error": "Not authenticated"}); return
+        
+        data = self.get_json()
+        name = data.get("name")
+        description = data.get("description")
+        schema = data.get("schema")
+
+        if not all([name, description, schema]):
+            self.set_status(400); self.write({"error": "Missing name, description, or schema"}); return
+
+        task_id = graph_accessor.create_project_task(int(project_id), name, description, schema)
+        self.write({"success": True, "task_id": task_id})
+
+    def get(self, project_id):
+        """Retrieve all tasks for a project or find the most related one."""
+        if not self.is_authenticated():
+            self.set_status(401); self.write({"error": "Not authenticated"}); return
+        
+        description = self.get_argument("description", None)
+        if description:
+            task = graph_accessor.find_most_related_task_in_project(int(project_id), description)
+            self.write({"task": task})
+        else:
+            tasks = graph_accessor.get_tasks_for_project(int(project_id))
+            self.write({"tasks": tasks})
+
+
+class TaskEntityHandler(BaseHandler, SessionMixin):
+    def post(self, task_id):
+        """Add and link an entity to a task."""
+        if not self.is_authenticated():
+            self.set_status(401); self.write({"error": "Not authenticated"}); return
+        
+        data = self.get_json()
+        entity_id = data.get("entity_id")
+        feedback_rating = data.get("feedback_rating")
+
+        if not entity_id or feedback_rating is None:
+            self.set_status(400); self.write({"error": "Missing entity_id or feedback_rating"}); return
+
+        graph_accessor.link_entity_to_task(int(task_id), entity_id, feedback_rating)
+        self.write({"success": True})
+
+    def get(self, task_id):
+        """Retrieve all entities for a task."""
+        if not self.is_authenticated():
+            self.set_status(401); self.write({"error": "Not authenticated"}); return
+        
+        entities = graph_accessor.get_entities_for_task(int(task_id))
+        self.write({"entities": entities})
+
+
+class TaskDependencyHandler(BaseHandler, SessionMixin):
+    def post(self, dependent_task_id):
+        """Create a dependency between two tasks."""
+        if not self.is_authenticated():
+            self.set_status(401); self.write({"error": "Not authenticated"}); return
+
+        data = self.get_json()
+        source_task_id = data.get("source_task_id")
+        relationship_description = data.get("relationship_description")
+        data_schema = data.get("data_schema")
+        data_flow = data.get("data_flow")
+
+        if not all([source_task_id, relationship_description, data_schema, data_flow]):
+            self.set_status(400); self.write({"error": "Missing required fields for dependency"}); return
+
+        graph_accessor.create_task_dependency(
+            int(source_task_id),
+            int(dependent_task_id),
+            relationship_description,
+            data_schema,
+            data_flow
+        )
+        self.write({"success": True, "message": "Task dependency created."})
+
+    def get(self, dependent_task_id):
+        """Retrieve all tasks that a given task depends on."""
+        if not self.is_authenticated():
+            self.set_status(401); self.write({"error": "Not authenticated"}); return
+
+        dependencies = graph_accessor.get_task_dependencies(int(dependent_task_id))
+        self.write({"dependencies": dependencies})
+
+
+class ProjectDependenciesHandler(BaseHandler, SessionMixin):
+    def get(self, project_id):
+        """Retrieve all task dependencies for a project."""
+        if not self.is_authenticated():
+            self.set_status(401); self.write({"error": "Not authenticated"}); return
+
+        dependencies = graph_accessor.get_all_dependencies_for_project(int(project_id))
+        self.write({"dependencies": dependencies})
+
+
+class UserFindTaskHandler(BaseHandler, SessionMixin):
+    def get(self):
+        """Find the most similar task for a user across all projects."""
+        if not self.is_authenticated():
+            self.set_status(401); self.write({"error": "Not authenticated"}); return
+        
+        user_id = self.session.session.get("user_id")
+        description = self.get_argument("description", None)
+
+        if not description:
+            self.set_status(400); self.write({"error": "Missing description parameter"}); return
+
+        task = graph_accessor.find_most_related_task_for_user(user_id, description)
+        self.write({"task": task})
+
+
+class ChatHistoryHandler(BaseHandler, SessionMixin):
+    def get(self):
+        if not self.is_authenticated():
+            self.set_status(401)
+            self.write({"error": "Session expired or not authenticated"})
+            return
+
+        try:
+            project_id = self.get_argument("project_id")
+            user_id = graph_accessor.get_user_and_project_ids(self.session.session.get("email"))[0]
+
+            if not user_id or not project_id:
+                self.set_status(400)
+                self.write({"error": "User ID and Project ID are required."})
+                return
+
+            # Fetch history from the database
+            history_tuples = graph_accessor.get_user_history(user_id, int(project_id))
+            
+            # Was in desc order by age, but we want chronological
+            history_tuples.reverse()
+
+            # Format for the client
+            messages = []
+            for i, (prompt, response, desc) in enumerate(history_tuples):
+                messages.append({"id": f"hist_{i}_user", "sender": "user", "content": prompt})
+                messages.append({"id": f"hist_{i}_bot", "sender": "bot", "content": response})
+
+            self.write({"history": messages})
+
+        except Exception as e:
+            logging.error(f"Error fetching chat history: {e}")
+            self.set_status(500)
+            self.write({"error": "An error occurred while fetching chat history."})
+
+class Application(tornado.web.Application):
+    def __init__(self, handlers):
+        settings = dict(
+            #debug=True,
+        )
+        session_settings = dict(
+            driver="memory",
+            driver_settings=dict(
+                host=self,
+            ),
+            sid_name='msid',  # default is msid.
+            session_lifetime=1800,  # default is 1200 seconds.
+            force_persistence=True,
+        )
+        settings.update(session=session_settings)
+        tornado.web.Application.__init__(self, handlers=handlers, **settings)
+
+
+
+
 def make_app():
-    return tornado.web.Application([
+    return Application([
         (r"/health", HealthCheckHandler),
         (r"/db_ping", DbPingHandler),
         (r"/find_related_entities_by_tag", FindRelatedEntitiesByTagHandler),
@@ -503,7 +1020,18 @@ def make_app():
         (r"/stop_scheduler", StopSchedulerHandler),
         (r"/api/login", LoginHandler),
         (r"/api/create", CreateAccountHandler),        
-        (r"/api/chat", ExpandSearchHandler),        
+        (r"/api/chat/history", ChatHistoryHandler),
+        (r"/api/chat", ExpandSearchHandler),
+        (r"/api/account", AccountInfoHandler),
+        (r"/api/account/update", UpdateAccountHandler),
+        (r"/api/projects/list", ListProjectsHandler),
+        (r"/api/projects/create", CreateProjectHandler),
+        (r"/api/projects/select", SelectProjectHandler),  # NEW: persist selected project
+        (r"/api/project/(\d+)/tasks", ProjectTaskHandler), # GET for list/find, POST for create
+        (r"/api/task/(\d+)/entities", TaskEntityHandler),   # GET for list, POST for link
+        (r"/api/task/(\d+)/dependencies", TaskDependencyHandler), # GET for list, POST for create
+        (r"/api/project/(\d+)/dependencies", ProjectDependenciesHandler), # Add this line
+        (r"/api/user/find_task", UserFindTaskHandler),      # GET to find task for user
     ])
 
 if __name__ == "__main__":
@@ -511,7 +1039,7 @@ if __name__ == "__main__":
         tornado.options.parse_command_line()
         print("Initializing Tornado app...")
         app = make_app()
-        port = int(os.getenv("PORT", os.getenv("BACKEND_PORT", 8080)))
+        port = int(os.getenv("BACKEND_PORT", os.getenv("BACKEND_PORT", 8080)))
         print(f"About to listen on 0.0.0.0:{port}")
         app.listen(port, address="0.0.0.0")
         print(f"Server running on 0.0.0.0:{port}")

@@ -35,8 +35,9 @@ export function LoginForm({
     setError(null);
 
     try {
-        const response = await fetch(`${config.apiBaseUrl}/api/login`, {
+      const response = await fetch(`${config.apiBaseUrl}/api/login`, {
         method: 'POST',
+        credentials: 'include', // Include cookies in the request
         headers: {
           'Content-Type': 'application/json',
         },
@@ -46,14 +47,22 @@ export function LoginForm({
       const data = await response.json();
 
       if (response.ok && data.success) {
-        login({ "name": data.user.name, "email": email, "organization": data.user.organization, "avatar": data.user.avatar }); // Call login function from context
+        login({
+          name: data.user.name,
+          email: email,
+          organization: data.user.organization,
+          avatar: data.user.avatar,
+          profile: data.user.profile ?? null, // <-- include profile from server
+          project_id: data.user.project_id, // <-- include project_id from server
+          project_name: data.user.project_name // <-- include project_name from server
+        });
         router.push('/chat'); // Redirect to /dashboard
       } else {
         setError(data.message || "Login failed. Please try again.");
       }
     } catch (err) {
       console.error("Login request failed:", err);
-      setError("An unexpected error occurred. Please try again.");
+      setError("Unable to reach the KAIR backend server. Please try again.");
     } finally {
       setIsLoading(false);
     }
@@ -129,7 +138,7 @@ export function LoginForm({
               </div>
             </div>
             {/* <div className="mt-4 text-center text-sm">
-              Don&apos;t have an account?{\" \"}
+              Don&apos;t have an account?{" "}
               <a href="#" className="underline underline-offset-4">
                 Sign up
               </a>

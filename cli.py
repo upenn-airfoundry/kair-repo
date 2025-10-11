@@ -7,16 +7,15 @@
 
 import argparse
 import os
+import json
+import importlib.util
 from datetime import datetime
-from graph_db import GraphAccessor
+from backend.graph_db import GraphAccessor
 from dblp_parser.dblp_parser import DBLP
 from dotenv import load_dotenv, find_dotenv
 
-from crawl.crawler_queue import add_to_crawled
+from crawl.crawler_queue import CrawlQueue
 from crawl.web_fetch import fetch_and_crawl_frontier
-
-from crawl.crawler_queue import add_local_downloads_to_crawl_queue
-from crawl.crawler_queue import add_urls_to_crawl_queue
 
 from entities.generate_doc_info import parse_files_and_index
 
@@ -49,7 +48,7 @@ def add_urls_to_frontier_from_file(file_path: str = "starting_points/papers.yaml
     print(f"Added {count} URLs from {file_path} to the crawl queue.")
     
 def crawl_local_files(directory: str = PDFS_DIR):
-    count = add_local_downloads_to_crawl_queue(directory)
+    count = CrawlQueue.add_local_downloads_to_crawl_queue(directory)
     print(f"Added {count} local files to the crawl queue.")
     
 def split_dblp():
@@ -68,13 +67,55 @@ def main():
     args = parser.parse_args()
 
     if args.command == "add_crawl_list":
+        print("Adding URLs to the crawl queue...")
         add_urls_to_frontier_from_file()
+        print("Starting crawl...")
         fetch_and_crawl_frontier()
+    elif args.command == "test_crawl":
+        # Dynamically load the MCP server module and call index_papers
+        mcp_path = os.path.join(os.path.dirname(__file__), "server", "mcp", "papers_mcp_server.py")
+        if not os.path.exists(mcp_path):
+            print(f"MCP server not found at {mcp_path}")
+            return
+        spec = importlib.util.spec_from_file_location("papers_mcp_server", mcp_path)
+        assert spec and spec.loader
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)  # type: ignore
+
+        # Build request: one URL, one output definition
+        output_def = m.OutputDef(
+            name="experiments",
+            goal="a list of all of the experiments run",
+            type="string",
+        )
+        req = m.IndexRequest(
+            urls=["http://www.vldb.org/pvldb/vol6/p205-ives.pdf"],
+            outputs=[output_def],
+        )
+        print("Invoking MCP index_papers...")
+        try:
+            # Prefer a plain callable if exposed
+            runner = getattr(m, "run_index_papers", getattr(m, "index_papers_impl", None))
+            if runner is None:
+                raise RuntimeError("No callable entrypoint found (run_index_papers or index_papers_impl)")
+            res = runner(req)
+            # Pydantic v2-friendly printing
+            if hasattr(res, "model_dump_json"):
+                print(res.model_dump_json(indent=2))  # type: ignore[attr-defined]
+            elif hasattr(res, "model_dump"):
+                print(json.dumps(res.model_dump(), indent=2))  # type: ignore[attr-defined]
+            elif hasattr(res, "dict"):
+                print(json.dumps(res.dict(), indent=2))  # type: ignore[call-arg]
+            else:
+                print(json.dumps(res, indent=2, default=str))
+        except Exception as e:
+            print(f"index_papers failed: {e}")
     elif args.command == "re_embed":
         print("Re-embedding all documents...")
         graph_db.re_embed_all_documents()
         graph_db.re_embed_all_tags()
     elif args.command == "arxiv":
+        print("Starting arxiv load...")
         load_arxiv_abstracts()
     elif args.command == "arxiv_categories":
         classify_arxiv_categories()

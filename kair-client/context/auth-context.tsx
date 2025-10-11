@@ -2,14 +2,30 @@
 
 import React, { createContext, useState, useContext, ReactNode, useEffect } from "react";
 
+interface UserProfile {
+  biosketch?: string;
+  expertise?: string;
+  projects?: string;
+  publications?: any[];
+  [key: string]: any;
+}
+
 interface AuthContextType {
-  user: { name: string, email: string, avatar: string, organization: string } | null;
+  user: { 
+    name: string, 
+    email: string, 
+    avatar: string, 
+    organization: string,
+    profile?: UserProfile | null,
+    project_id?: number,
+    project_name?: string
+  } | null;
   isLoading: boolean;
-  login: (user: { name: string, email: string, avatar: string, organization: string }) => void;
+  login: (user: { name: string, email: string, avatar: string, organization: string, profile?: UserProfile | null, project_id: number, project_name: string }) => void;
   logout: () => void;
 }
 
-const AuthContext = createContext<AuthContextType>({
+export const AuthContext = createContext<AuthContextType>({
   user: null,
   isLoading: true,
   login: () => {},
@@ -17,8 +33,16 @@ const AuthContext = createContext<AuthContextType>({
 });
 const AUTH_STORAGE_KEY = "kair-auth-status";
 
-export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
-  const [user, setUser] = useState<{ name: string, email: string, avatar: string, organization: string } | null>(null);
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const [user, setUser] = useState<{
+    name: string,
+    email: string,
+    avatar: string,
+    organization: string,
+    profile?: UserProfile | null,
+    project_id?: number,
+    project_name?: string
+  } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -28,22 +52,33 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       setUser(JSON.parse(storedUser));
     }
     setIsLoading(false);
-  }, []);  
+  }, []);
 
-  const login = (user: { name: string, email: string, avatar: string, organization: string }) => {
+  const login = (user: {
+    name: string,
+    email: string,
+    avatar: string,
+    organization: string,
+    profile?: UserProfile | null,
+    project_id: number,
+    project_name?: string
+  }) => {
     setUser(user);
     localStorage.setItem("user", JSON.stringify(user));
-  }
+  };
+
   const logout = () => {
     setUser(null);
     localStorage.removeItem("user");
-  }
+  };
 
   return (
     <AuthContext.Provider value={{ user, isLoading, login, logout }}>
       {children}
     </AuthContext.Provider>
   );
-};
+}
 
-export const useAuth = () => useContext(AuthContext);
+export function useAuth() {
+  return useContext(AuthContext);
+}

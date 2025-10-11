@@ -75,6 +75,12 @@ CREATE TYPE entity_types AS ENUM ('synopsis',
                                   'result');
 
 ALTER TYPE entity_types ADD VALUE IF NOT EXISTS 'google_scholar_profile';
+
+ALTER TYPE entity_types ADD VALUE IF NOT EXISTS 'learning_resource';
+ALTER TYPE entity_types ADD VALUE IF NOT EXISTS 'url';
+
+ALTER TYPE entity_types ADD VALUE IF NOT EXISTS 'accession_number';
+
 -- Data is "chunked" into hierarchies of entities.
 -- An entity can be a synopsis, fact, new concept, claim, author, organization,
 -- tag, paper, section, paragraph, table, hypothesis, source, method, event,
@@ -287,6 +293,78 @@ CREATE TABLE users (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE user_profiles (
+    profile_id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(user_id) ON DELETE CASCADE,
+    profile_data JSON,
+    profile_context TEXT,
+    scholar_id VARCHAR,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE projects (
+    project_id SERIAL PRIMARY KEY,
+    project_name TEXT NOT NULL,
+    project_description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    parent_project_id INTEGER REFERENCES projects(project_id) ON DELETE SET NULL
+);
+
+CREATE TABLE user_projects (
+    user_id INTEGER REFERENCES users(user_id) ON DELETE CASCADE,
+    project_id INTEGER REFERENCES projects(project_id) ON DELETE CASCADE,
+    role TEXT,
+    context TEXT,
+    PRIMARY KEY (user_id, project_id)
+);
+
+CREATE TABLE project_tasks (
+    task_id SERIAL PRIMARY KEY,
+    project_id INTEGER REFERENCES projects(project_id) ON DELETE CASCADE,
+    task_name TEXT NOT NULL,
+    task_description TEXT,
+    task_context TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Add columns for biosketch, research areas, projects to user_profiles if not present
+ALTER TABLE user_profiles
+    ADD COLUMN IF NOT EXISTS biosketch TEXT,
+    ADD COLUMN IF NOT EXISTS research_areas TEXT,
+    ADD COLUMN IF NOT EXISTS projects TEXT,
+    ADD COLUMN IF NOT EXISTS publications JSON;
+
+ALTER TABLE project_tasks 
+  ADD COLUMN task_schema text;
+COMMENT ON COLUMN project_tasks.task_schema IS 'For capturing a string list of attributes:types;descriptions';
+
+ALTER TABLE project_tasks 
+  ADD COLUMN task_description_embed vector(1536);
+
+CREATE INDEX task_description_embed_idx ON project_tasks
+USING hnsw (task_description_embed vector_cosine_ops);
+
+CREATE TABLE task_entities (
+    task_entity_id SERIAL PRIMARY KEY,
+    task_id INTEGER REFERENCES project_tasks(task_id) ON DELETE CASCADE,
+    entity_id INTEGER REFERENCES entities(entity_id) ON DELETE CASCADE,
+    user_feedback TEXT,
+    feedback_rating INTEGER,
+    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (task_id, entity_id)
+);
+
+CREATE TYPE data_flow_type AS ENUM ('automatic', 'gated by user feedback', 'rethinking the previous task');
+
+CREATE TABLE task_dependencies (
+    source_task_id INTEGER REFERENCES project_tasks(task_id) ON DELETE CASCADE,
+    dependent_task_id INTEGER REFERENCES project_tasks(task_id) ON DELETE CASCADE,
+    relationship_description TEXT,
+    data_schema TEXT,
+    data_flow data_flow_type,
+    PRIMARY KEY (source_task_id, dependent_task_id)
+);
+
 CREATE TABLE crawl_cache (
     cache_id SERIAL PRIMARY KEY,
     url TEXT NOT NULL UNIQUE,
@@ -368,8 +446,32 @@ GRANT USAGE ON SEQUENCE indexed_figures_figure_id_seq TO kair;
 GRANT USAGE ON SEQUENCE crawl_cache_cache_id_seq TO kair;
 GRANT USAGE ON SEQUENCE indexed_tables_table_id_seq TO kair;
 
+GRANT USAGE ON SEQUENCE user_profiles_profile_id_seq TO kair;
+
+GRANT USAGE ON SEQUENCE projects_project_id_seq TO kair;
+
+GRANT USAGE ON SEQUENCE project_tasks_task_id_seq TO kair;
+
+GRANT USAGE ON SEQUENCE user_history_history_id_seq TO kair;
+
+GRANT USAGE ON SEQUENCE user_history_history_id_seq TO kair;
+
+GRANT USAGE ON SEQUENCE task_entities_task_entity_id_seq TO kair;
 
 create view papers_summaries_fields_authors_view AS
   SELECT e.entity_id, e.entity_name, e.entity_detail, f.tag_value as "field", s.tag_value as summary, a.tag_value as author
   FROM entities e join entity_tags a on e.entity_id = a.entity_id JOIN entity_tags s on e.entity_id = s.entity_id JOIN entity_tags f on e.entity_id = f.entity_id
   WHERE a.tag_name = 'author' and s.tag_name = 'summary' and f.tag_name = 'field' and e.entity_type = 'paper';
+
+CREATE TABLE IF NOT EXISTS user_history (
+    history_id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(user_id) ON DELETE CASCADE,
+    project_id INTEGER REFERENCES projects(project_id) ON DELETE CASCADE,
+    task_id INTEGER REFERENCES project_tasks(task_id) ON DELETE CASCADE,
+    prompt TEXT,
+    response TEXT,
+    predicted_task_description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+ALTER SEQUENCE crawl_cache_cache_id_seq RESTART WITH 960;

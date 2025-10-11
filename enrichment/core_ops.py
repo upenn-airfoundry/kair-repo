@@ -1,7 +1,7 @@
 import logging
 from typing import List, Dict, Any
 import json
-from graph_db import GraphAccessor
+from backend.graph_db import GraphAccessor
 from typing import TypeVar, List, Generic, Callable as Fun
 
 T = TypeVar('T')

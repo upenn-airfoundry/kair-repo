@@ -1,5 +1,5 @@
 from enrichment.llms import get_analysis_llm
-from graph_db import GraphAccessor
+from backend.graph_db import GraphAccessor
 
 from langchain.prompts import ChatPromptTemplate
 from langchain.schema.output_parser import StrOutputParser
@@ -8,7 +8,7 @@ from langchain.output_parsers import PydanticOutputParser
 from typing import List, Dict, Any, Callable as Fun, Optional
 
 from enrichment.core_ops import EnrichmentCoreOps
-from prompts.prompt_for_documents import answer_from_summary
+from prompts.llm_prompts import DocumentPrompts
 
 def entity_retriever(entity_id: str, graph_db: GraphAccessor) -> list[str]:
     """
@@ -19,7 +19,7 @@ def entity_retriever(entity_id: str, graph_db: GraphAccessor) -> list[str]:
     
     if result:
         return [r[0] for r in result[0]]
-    return None
+    return []
 
 class AssessmentOps(EnrichmentCoreOps):
     """
@@ -45,7 +45,7 @@ class AssessmentOps(EnrichmentCoreOps):
         Returns:
             dict: _description_
         """
-        result = answer_from_summary(aux_data_providers[0], self.prompt)
+        result = DocumentPrompts.answer_from_summary(aux_data_providers[0], self.prompt)
         
         if (result is None or result.lower().strip() == 'none'):
             return {}

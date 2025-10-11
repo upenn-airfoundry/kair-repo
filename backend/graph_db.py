@@ -14,17 +14,11 @@ from typing import List, Tuple, Optional, Any
 import pandas as pd
 import uuid
 
-try:
-    from langchain_openai.embeddings import OpenAIEmbeddings
-except ImportError:
-    OpenAIEmbeddings = None
-
 import logging
 
 from dotenv import load_dotenv, find_dotenv
 import hashlib
 from datetime import datetime
-from enrichment.llms import gemini_doc_embedding
 import time
 
 # Load environment variables from .env file
@@ -238,11 +232,14 @@ class GraphAccessor:
             # throw the exception again
             raise e
         
-    def add_source(self, url: str) -> int:
+    def add_source(self, url: str, source_type: str='source', description: Optional[str] = None) -> int:
         """Add a source by URL and return its source ID."""
         try:
             with self.conn.cursor() as cur:
-                cur.execute(f"INSERT INTO {self.schema}.entities (entity_type, entity_url) VALUES (%s,%s) RETURNING entity_id;", ('source', url,))
+                if description is None:
+                    cur.execute(f"INSERT INTO {self.schema}.entities (entity_type, entity_url) VALUES (%s,%s) RETURNING entity_id;", (source_type, url,))
+                else:
+                    cur.execute(f"INSERT INTO {self.schema}.entities (entity_type, entity_url, entity_name) VALUES (%s,%s,%s) RETURNING entity_id;", (source_type, url, description,))
                 source_id = cur.fetchone()[0] # type: ignore
             self.conn.commit()
             return source_id
@@ -333,7 +330,7 @@ class GraphAccessor:
                             ON CONFLICT (entity_type, entity_name, entity_url)
                             DO UPDATE SET
                                 entity_detail = EXCLUDED.entity_detail,
-                                entity_contact = EXCLUDED.entity_contact 
+                                entity_contact = EXCLUDED.entity_contact, 
                                 entity_json = EXCLUDED.entity_json,
                                 entity_embed = EXCLUDED.entity_embed
                         RETURNING entity_id;
@@ -564,20 +561,8 @@ class GraphAccessor:
             return []
 
     def generate_embedding(self, content: str) -> List[float]:
-        """Generate an embedding for the given content using LangChain and OpenAI."""
-        try:
-            if OpenAIEmbeddings is None:
-                logging.error("OpenAIEmbeddings not available, using fallback")
-                return [0.0] * 1536  # Return a zero vector as a fallback
-            # Initialize OpenAI embeddings
-            embeddings = OpenAIEmbeddings()
-            #embeddings = get_embedding()
-            # Generate the embedding for the content
-            embedding = embeddings.embed_query(content)
-            return embedding
-        except Exception as e:
-            logging.error(f"Error generating embedding: {e}")
-            return [0.0] * 1536  # Return a zero vector as a fallback
+        from enrichment.llms import generate_openai_embedding
+        return generate_openai_embedding(content)
         
     def add_to_crawl_queue(self, url: str):
         """Add a paper URL to the crawl queue."""
@@ -992,6 +977,28 @@ class GraphAccessor:
             raise e
              
         return results
+    
+    def get_entity_by_url(self, url: str) -> Optional[int]:
+        """
+        Return the entity ID for which the entity_url matches the given URL.
+
+        Args:
+            url (str): The URL to search for.
+
+        Returns:
+            Optional[int]: The matching entity ID, or None if not found.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(f"SELECT entity_id FROM {self.schema}.entities WHERE entity_url = %s LIMIT 1;", (url,))
+                result = cur.fetchone()
+                if result:
+                    return result[0]
+                return None
+        except Exception as e:
+            logging.error(f"Error fetching entity by URL: {e}")
+            self.conn.rollback()
+            return None
     
     def get_papers_by_field(self, field: str, k: int = 1):
         """
@@ -1509,6 +1516,7 @@ class GraphAccessor:
         This updates the gem_embed field based on the entity_detail using gemini_doc_embedding from llms.py.
         Processes papers in batches of 250 for efficiency.
         """
+        from enrichment.llms import gemini_doc_embedding
         try:
             with self.conn.cursor() as cur:
                 cur.execute(f"SELECT entity_id, entity_detail FROM {self.schema}.entities WHERE entity_type = 'paper' AND gem_embed IS NULL;")
@@ -1542,6 +1550,7 @@ class GraphAccessor:
         This updates the gem_embed field based on the tag_value using gemini_doc_embedding from llms.py.
         Processes tags in batches of 250 for efficiency.
         """
+        from enrichment.llms import gemini_doc_embedding
         try:
             with self.conn.cursor() as cur:
                 cur.execute(f"SELECT entity_id, tag_name, tag_value FROM {self.schema}.entity_tags WHERE gem_embed IS NULL;")
@@ -1610,3 +1619,653 @@ class GraphAccessor:
             logging.error(f"Error recomputing entity embeddings: {e}")
             self.conn.rollback()
             raise e
+
+    def save_user_profile(self, email: str, profile_data: dict, profile_context: Optional[str] = None) -> int:
+        """
+        Save a textual user profile for the user identified by email into user_profiles.
+        The text is stored in profile_data as JSON: { "descriptor": "<profile_data>" }.
+        
+        Args:
+            email: User's email (must exist in users table).
+            profile_text: The textual profile to store.
+            profile_context: Optional context string.
+
+        Returns:
+            int: The newly created profile_id.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                # Lookup user_id by email
+                cur.execute("SELECT user_id FROM users WHERE email = %s;", (email,))
+                row = cur.fetchone()
+                if not row:
+                    raise ValueError(f"User with email {email} not found")
+                user_id = row[0]
+
+                # Insert profile row
+                cur.execute(
+                    """
+                    INSERT INTO user_profiles (user_id, profile_data, profile_context)
+                    VALUES (%s, %s, %s)
+                    RETURNING profile_id;
+                    """,
+                    (user_id, json.dumps({"descriptor": profile_data}), profile_context)
+                )
+                profile_id = cur.fetchone()[0]  # type: ignore
+
+            self.conn.commit()
+            return profile_id
+        except Exception as e:
+            logging.error(f"Error saving user profile text: {e}")
+            self.conn.rollback()
+            raise
+
+    def get_user_profile(self, email: str) -> Optional[dict]:
+        """
+        Retrieve the user's profile descriptor from user_profiles by email.
+
+        Args:
+            email: User's email.
+
+        Returns:
+            Optional[dict]: The profile descriptor dictionary, or None if not found.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("SELECT user_id FROM users WHERE email = %s;", (email,))
+                row = cur.fetchone()
+                if not row:
+                    return None
+                user_id = row[0]
+                cur.execute("SELECT profile_data, scholar_id FROM user_profiles WHERE user_id = %s ORDER BY profile_id DESC LIMIT 1;", (user_id,))
+                profile_row = cur.fetchone()
+                if profile_row and profile_row[0]:
+                    data = profile_row[0]
+                    ret = data.get("descriptor")
+                    ret['scholar_id'] = profile_row[1]
+                    
+                    return ret
+        except Exception as e:
+            logging.error(f"Error fetching user profile: {e}")
+            self.conn.rollback()
+            return None
+        
+    def get_author_by_scholar_id(self, scholar_id: str) -> Optional[dict]:
+        """
+        Find the author entity matching a Google Scholar ID and return the person's Scholar JSON record.
+
+        Args:
+            scholar_id (str): The Google Scholar ID to search for.
+            name (Optional[str]): Optionally filter by name.
+            organization (Optional[str]): Optionally filter by organization.
+
+        Returns:
+            Optional[dict]: The author's Scholar JSON record, or None if not found.
+        """
+        try:
+            # Build the Scholar profile URL
+            scholar_url = f"https://scholar.google.com/citations?user={scholar_id}"
+            query = f"SELECT entity_json FROM {self.schema}.entities WHERE entity_type = 'google_scholar_profile' AND entity_url = %s"
+            params = [scholar_url]
+
+            with self.conn.cursor() as cur:
+                cur.execute(query, tuple(params))
+                row = cur.fetchone()
+                if row and row[0]:
+                    # entity_json is stored as JSON string
+                    try:
+                        return row[0]
+                    except Exception:
+                        return row[0]
+            return None
+        except Exception as e:
+            logging.error(f"Error fetching author by Scholar ID: {e}")
+            self.conn.rollback()
+            return None
+
+    def get_system_profile(self) -> Optional[dict]:
+        """
+        Retrieve the system profile from user_profiles where user_id is NULL.
+
+        Returns:
+            Optional[dict]: The system profile descriptor dictionary, or None if not found.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("SELECT profile_data, profile_context FROM user_profiles WHERE user_id IS NULL ORDER BY profile_id DESC LIMIT 1;")
+                profile_row = cur.fetchone()
+                if profile_row and profile_row[1]:
+                    data = profile_row[0]
+                    ret = data.get("descriptor") if isinstance(data, dict) else data
+                    # Optionally add context if present
+                    if isinstance(ret, dict):
+                        ret['profile_context'] = profile_row[1]
+                    elif ret is None:
+                        ret = {'profile_context': profile_row[1]}
+                    return ret
+        except Exception as e:
+            logging.error(f"Error fetching system profile: {e}")
+            self.conn.rollback()
+            return None
+
+    def set_system_profile(self, profile_data: dict, profile_context: Optional[str] = None) -> int:
+        """
+        Save the system profile into user_profiles with user_id as NULL.
+
+        Args:
+            profile_data: The profile descriptor dictionary.
+            profile_context: Optional context string.
+
+        Returns:
+            int: The newly created profile_id.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO user_profiles (user_id, profile_data, profile_context)
+                    VALUES (NULL, %s, %s)
+                    RETURNING profile_id;
+                    """,
+                    (json.dumps({"descriptor": profile_data}), profile_context)
+                )
+                profile_id = cur.fetchone()[0]  # type: ignore
+            self.conn.commit()
+            return profile_id
+        except Exception as e:
+            logging.error(f"Error saving system profile: {e}")
+            self.conn.rollback()
+            raise
+                
+                
+    def set_selected_project_for_user(self, user_id: int, project_id: int) -> None:
+        """
+        Set the selected project id into user_profiles.profile_data.descriptor.selected_project_id
+        for the latest profile row for this user, creating a new row if none exists.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                # Ensure the latest row exists; if not, create one with empty descriptor
+                cur.execute("SELECT profile_id, profile_data FROM user_profiles WHERE user_id = %s ORDER BY profile_id DESC LIMIT 1;", (user_id,))
+                row = cur.fetchone()
+
+                if row:
+                    # Update JSON using jsonb_set, keeping other data intact
+                    cur.execute(
+                        """
+                        UPDATE user_profiles
+                        SET profile_data = jsonb_set(profile_data::jsonb, '{descriptor,selected_project_id}', to_jsonb(%s::int), true)::json
+                        WHERE profile_id = %s;
+                        """,
+                        (project_id, row[0])
+                    )
+                else:
+                    # Insert minimal descriptor with selected_project_id
+                    cur.execute(
+                        """
+                        INSERT INTO user_profiles (user_id, profile_data)
+                        VALUES (%s, %s)
+                        """,
+                        (user_id, json.dumps({"descriptor": {"selected_project_id": project_id}}))
+                    )
+            self.conn.commit()
+        except Exception as e:
+            logging.error(f"Error setting selected project: {e}")
+            self.conn.rollback()
+            raise
+
+    def get_selected_project_for_user(self, user_id: int) -> Optional[int]:
+        """
+        Read selected_project_id from the latest profile_data.descriptor.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT profile_data FROM user_profiles WHERE user_id = %s ORDER BY profile_id DESC LIMIT 1;",
+                    (user_id,)
+                )
+                row = cur.fetchone()
+                if not row or not row[0]:
+                    return None
+                data = row[0]
+                # data is JSON with {"descriptor": {...}}
+                descriptor = data.get("descriptor") if isinstance(data, dict) else None
+                if descriptor and isinstance(descriptor, dict):
+                    sel = descriptor.get("selected_project_id")
+                    if isinstance(sel, int):
+                        return sel
+            return None
+        except Exception as e:
+            logging.error(f"Error reading selected project: {e}")
+            self.conn.rollback()
+            return None
+
+    def get_user_and_project_ids(self, email: str, project_name: Optional[str] = None) -> Optional[Tuple[int, int]]:
+        """Retrieve the user ID and project ID; prefer the selected project in profile_data if present,
+        otherwise choose the latest (highest project_id)."""
+        user_id = self.exec_sql("SELECT user_id FROM users WHERE email = %s;", (email,))[0][0]
+        if user_id is None or user_id == 0:
+            raise ValueError("User not found")
+
+        # If caller names a project, try to find it for this user
+        if project_name is not None and project_name.strip() != '':
+            project_id_rows = self.exec_sql(
+                "SELECT p.project_id FROM projects p JOIN user_projects up ON p.project_id = up.project_id "
+                "WHERE up.user_id = %s AND p.project_name = %s ORDER BY p.project_id DESC LIMIT 1;",
+                (user_id, project_name)
+            )
+        else:
+            # First try the selected project from profile
+            selected = self.get_selected_project_for_user(user_id)
+            if selected:
+                # Verify the user has access to that project
+                rows = self.exec_sql(
+                    "SELECT 1 FROM user_projects WHERE user_id = %s AND project_id = %s;",
+                    (user_id, selected)
+                )
+                if rows:
+                    return (user_id, selected)
+            # Fallback: latest project by id for this user
+            project_id_rows = self.exec_sql(
+                "SELECT project_id FROM user_projects WHERE user_id = %s ORDER BY project_id DESC LIMIT 1;",
+                (user_id,)
+            )
+
+        if not project_id_rows:
+            # Create a new project and associate it with the user
+            new_project_id_rows = self.exec_sql(
+                "INSERT INTO projects (project_name, project_description, created_at) VALUES (%s, %s, %s) RETURNING project_id;",
+                (project_name or "New Project", "New project created", datetime.now())
+            )
+            self.commit()
+            new_project_id = new_project_id_rows[0][0]
+            self.execute(
+                "INSERT INTO user_projects (user_id, project_id) VALUES (%s, %s);",
+                (user_id, new_project_id)
+            )
+            self.commit()
+            # Persist selection in profile
+            self.set_selected_project_for_user(user_id, new_project_id)
+            return (user_id, new_project_id)
+
+        project_id = project_id_rows[0][0]
+        # Persist selection if not already set
+        try:
+            if not self.get_selected_project_for_user(user_id):
+                self.set_selected_project_for_user(user_id, project_id)
+        except Exception:
+            pass
+        return (user_id, project_id)
+
+
+    def add_user_history(self, user_id: int, project_id: int, prompt: str, response: str, description: Optional[str] = None, task_id: Optional[int] = None):
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO user_history (user_id, project_id, task_id, predicted_task_description, prompt, response) VALUES (%s, %s, %s, %s, %s, %s);",
+                    (user_id, project_id, task_id, description, prompt, response)
+                )
+            self.conn.commit()
+        except Exception as e:
+            logging.error(f"Error saving user history: {e}")
+            self.conn.rollback()
+            raise
+
+    def get_user_history(self, user_id: int, project_id: int,task_id: Optional[int] = None, limit: int = 20) -> list:
+        try:
+            with self.conn.cursor() as cur:
+                if task_id:
+                    cur.execute(
+                        "SELECT prompt, response, predicted_task_description FROM user_history WHERE user_id = %s AND project_id = %s AND task_id = %s ORDER BY created_at DESC LIMIT %s;",
+                        (user_id, project_id, task_id, limit)
+                    )
+                else:
+                    cur.execute(
+                        "SELECT prompt, response, predicted_task_description FROM user_history WHERE user_id = %s AND project_id = %s ORDER BY created_at DESC LIMIT %s;",
+                        (user_id, project_id, limit)
+                    )
+                return cur.fetchall()
+        except Exception as e:
+            logging.error(f"Error fetching user history: {e}")
+            self.conn.rollback()
+            return []        
+        
+    def update_user_profile(self, email: str, profile: dict):
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("SELECT user_id FROM users WHERE email = %s;", (email,))
+                row = cur.fetchone()
+                if not row:
+                    raise ValueError("User not found")
+                user_id = row[0]
+                cur.execute("""
+                    UPDATE user_profiles
+                    SET biosketch = %s, research_areas = %s, projects = %s, publications = %s, profile = %s 
+                    WHERE user_id = %s;
+                """, (
+                    profile.get("biosketch"),
+                    profile.get("expertise"),
+                    profile.get("projects"),
+                    json.dumps(profile.get("publications")) if profile.get("publications") else None,
+                    profile,
+                    user_id
+                ))
+            self.conn.commit()
+        except Exception as e:
+            logging.error(f"Error updating user profile: {e}")
+            self.conn.rollback()
+            raise
+
+    def get_user_projects(self, user_id: int):
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    SELECT p.project_id, p.project_name, p.project_description
+                    FROM user_projects up
+                    JOIN projects p ON up.project_id = p.project_id
+                    WHERE up.user_id = %s;
+                """, (user_id,))
+                return [{"id": r[0], "name": r[1], "description": r[2]} for r in cur.fetchall()]
+        except Exception as e:
+            logging.error(f"Error fetching user projects: {e}")
+            self.conn.rollback()
+            return []
+
+    def search_projects(self, search: str):
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    SELECT project_id, project_name, project_description
+                    FROM projects
+                    WHERE project_name ILIKE %s OR project_description ILIKE %s
+                    LIMIT 20;
+                """, (f"%{search}%", f"%{search}%"))
+                return [{"id": r[0], "name": r[1], "description": r[2]} for r in cur.fetchall()]
+        except Exception as e:
+            logging.error(f"Error searching projects: {e}")
+            self.conn.rollback()
+            return []
+
+    def create_project(self, name: str, description: str, user_id: int):
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO projects (project_name, project_description, created_at)
+                    VALUES (%s, %s, NOW()) RETURNING project_id;
+                """, (name, description))
+                project_id = cur.fetchone()[0]
+                cur.execute("""
+                    INSERT INTO user_projects (user_id, project_id) VALUES (%s, %s);
+                """, (user_id, project_id))
+            self.conn.commit()
+            return project_id
+        except Exception as e:
+            logging.error(f"Error creating project: {e}")
+            self.conn.rollback()
+            raise
+
+    def create_project_task(self, project_id: int, name: str, description: str, schema: str, task_context: Optional[dict] = None) -> int:
+        """
+        Create a new task for a given project.
+
+        Args:
+            project_id (int): The ID of the project.
+            name (str): The name of the task.
+            description (str): A description of the task.
+            schema (str): The schema description for the task.
+            task_context (Optional[dict]): Optional JSON-serializable context for the task.
+
+        Returns:
+            int: The ID of the newly created task.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                embedding = self.generate_embedding(description)
+                cur.execute(
+                    """
+                    INSERT INTO project_tasks (project_id, task_name, task_description, task_schema, task_description_embed, task_context)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    RETURNING task_id;
+                    """,
+                    (project_id, name, description, schema, embedding, json.dumps(task_context) if task_context else None)
+                )
+                task_id = cur.fetchone()[0]
+            self.conn.commit()
+            return task_id
+        except Exception as e:
+            logging.error(f"Error creating project task: {e}")
+            self.conn.rollback()
+            raise
+
+    def link_entity_to_task(self, task_id: int, entity_id: int, feedback_rating: float):
+        """
+        Link an entity to a task with a feedback rating.
+
+        Args:
+            task_id (int): The ID of the task.
+            entity_id (int): The ID of the entity.
+            feedback_rating (float): The rating for the entity's relevance to the task.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO task_entities (task_id, entity_id, feedback_rating)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (task_id, entity_id) DO UPDATE SET feedback_rating = EXCLUDED.feedback_rating;
+                    """,
+                    (task_id, entity_id, feedback_rating)
+                )
+            self.conn.commit()
+        except Exception as e:
+            logging.error(f"Error linking entity to task: {e}")
+            self.conn.rollback()
+            raise
+
+    def get_tasks_for_project(self, project_id: int) -> List[dict]:
+        """
+        Retrieve all tasks for a given project.
+
+        Args:
+            project_id (int): The ID of the project.
+
+        Returns:
+            List[dict]: A list of tasks.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT task_id, task_name, task_description, task_schema FROM project_tasks WHERE project_id = %s ORDER BY task_id;",
+                    (project_id,)
+                )
+                return [{"id": r[0], "name": r[1], "description": r[2], "schema": r[3]} for r in cur.fetchall()]
+        except Exception as e:
+            logging.error(f"Error fetching tasks for project: {e}")
+            return []
+
+    def find_most_related_task_in_project(self, project_id: int, description: str) -> Optional[dict]:
+        """
+        Find the most related task in a project based on a description.
+
+        Args:
+            project_id (int): The ID of the project.
+            description (str): The description to match against.
+
+        Returns:
+            Optional[dict]: The most related task, or None if not found.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                embedding = self.generate_embedding(description)
+                cur.execute(
+                    """
+                    SELECT task_id, task_name, task_description, task_schema
+                    FROM project_tasks
+                    WHERE project_id = %s
+                    ORDER BY task_description_embed <-> %s::vector
+                    LIMIT 1;
+                    """,
+                    (project_id, embedding)
+                )
+                task = cur.fetchone()
+                if task:
+                    return {"id": task[0], "name": task[1], "description": task[2], "schema": task[3]}
+            return None
+        except Exception as e:
+            logging.error(f"Error finding related task in project: {e}")
+            return None
+
+    def get_entities_for_task(self, task_id: int) -> List[dict]:
+        """
+        Retrieve all entities for a task, ordered by feedback rating.
+
+        Args:
+            task_id (int): The ID of the task.
+
+        Returns:
+            List[dict]: A list of entities with their details and ratings.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT e.entity_id, e.entity_type, e.entity_name, e.entity_detail, e.entity_url, te.feedback_rating
+                    FROM entities e
+                    JOIN task_entities te ON e.entity_id = te.entity_id
+                    WHERE te.task_id = %s
+                    ORDER BY te.feedback_rating DESC;
+                    """,
+                    (task_id,)
+                )
+                return [{"id": r[0], "type": r[1], "name": r[2], "detail": r[3], "url": r[4], "rating": r[5]} for r in cur.fetchall()]
+                
+        except Exception as e:
+            logging.error(f"Error fetching entities for task: {e}")
+            return []
+
+    def find_most_related_task_for_user(self, user_id: int, description: str) -> Optional[dict]:
+        """
+        Find the most similar task for a user across all their projects.
+
+        Args:
+            user_id (int): The ID of the user.
+            description (str): The description to match against.
+
+        Returns:
+            Optional[dict]: The most related task, or None if not found.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                embedding = self.generate_embedding(description)
+                cur.execute(
+                    """
+                    SELECT pt.task_id, pt.task_name, pt.task_description, pt.task_schema
+                    FROM project_tasks pt
+                    JOIN user_projects up ON pt.project_id = up.project_id
+                    WHERE up.user_id = %s
+                    ORDER BY pt.task_description_embed <-> %s::vector
+                    LIMIT 1;
+                    """,
+                    (user_id, embedding)
+                )
+                task = cur.fetchone()
+                if task:
+                    return {"id": task[0], "name": task[1], "description": task[2], "schema": task[3]}
+            return None
+        except Exception as e:
+            logging.error(f"Error finding related task for user: {e}")
+            return None
+
+    def create_task_dependency(self, source_task_id: int, dependent_task_id: int, relationship_description: str, data_schema: str, data_flow: str):
+        """
+        Create a dependency between two tasks.
+
+        Args:
+            source_task_id (int): The ID of the source task (the one that must be completed first).
+            dependent_task_id (int): The ID of the dependent task.
+            relationship_description (str): A description of the dependency.
+            data_schema (str): The schema of the data passed between tasks.
+            data_flow (str): The type of data flow (e.g., 'automatic').
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO task_dependencies (source_task_id, dependent_task_id, relationship_description, data_schema, data_flow)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (source_task_id, dependent_task_id) DO UPDATE SET
+                        relationship_description = EXCLUDED.relationship_description,
+                        data_schema = EXCLUDED.data_schema,
+                        data_flow = EXCLUDED.data_flow;
+                    """,
+                    (source_task_id, dependent_task_id, relationship_description, data_schema, data_flow)
+                )
+            self.conn.commit()
+        except Exception as e:
+            logging.error(f"Error creating task dependency: {e}")
+            self.conn.rollback()
+            raise
+
+    def get_task_dependencies(self, task_id: int) -> List[dict]:
+        """
+        Retrieve all tasks that a given task depends on.
+
+        Args:
+            task_id (int): The ID of the dependent task.
+
+        Returns:
+            List[dict]: A list of source tasks.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT pt.task_id, pt.task_name, pt.task_description, pt.task_schema, td.data_flow
+                    FROM project_tasks pt
+                    JOIN task_dependencies td ON pt.task_id = td.source_task_id
+                    WHERE td.dependent_task_id = %s;
+                    """,
+                    (task_id,)
+                )
+                return [{"id": r[0], "name": r[1], "description": r[2], "schema": r[3], "dataflow": r[4]} for r in cur.fetchall()]
+                
+        except Exception as e:
+            logging.error(f"Error fetching task dependencies: {e}")
+            self.conn.rollback()
+            return []
+
+    def get_all_dependencies_for_project(self, project_id: int) -> List[dict]:
+        """
+        Retrieve all task dependencies within a given project.
+
+        Args:
+            project_id (int): The ID of the project.
+
+        Returns:
+            List[dict]: A list of dependency relationships.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT td.source_task_id, td.dependent_task_id, td.relationship_description, td.data_schema, td.data_flow
+                    FROM task_dependencies td
+                    JOIN project_tasks pt_source ON td.source_task_id = pt_source.task_id
+                    JOIN project_tasks pt_dependent ON td.dependent_task_id = pt_dependent.task_id
+                    WHERE pt_source.project_id = %s AND pt_dependent.project_id = %s;
+                    """,
+                    (project_id, project_id)
+                )
+                return [
+                    {
+                        "source": r[0],
+                        "target": r[1],
+                        "relationship_description": r[2],
+                        "data_schema": r[3],
+                        "data_flow": r[4]
+                    } for r in cur.fetchall()
+                ]
+        except Exception as e:
+            logging.error(f"Error fetching all project dependencies: {e}")
+            return []
+
