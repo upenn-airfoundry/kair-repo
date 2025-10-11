@@ -379,8 +379,36 @@ export default function ProjectGraphPane({ projectId, projectName, refreshKey, o
     return () => window.removeEventListener("project-changed", handler as any);
   }, []);
 
+  // Handle selection changes from React Flow (syncs details pane and supports clearing)
+  const onSelectionChange = useCallback((params: { nodes: Node[]; edges: Edge[] }) => {
+    if (params?.nodes?.length) {
+      setSelectedElement(params.nodes[0]);
+      return;
+    }
+    if (params?.edges?.length) {
+      setSelectedElement(params.edges[0]);
+      return;
+    }
+    setSelectedElement(null);
+  }, []);
+
+  // Clicking the background (pane) clears selection and details
+  const onPaneClick = useCallback(() => {
+    setSelectedElement(null);
+  }, []);
+
   return (
     <div className="h-full w-full border rounded-lg flex flex-col">
+      {/* Selection highlight styles */}
+      <style jsx global>{`
+        /* Make selected task nodes stand out */
+        .react-flow__node.selected {
+          border: 2px solid #0b5fff !important;
+          background-color: #e6f0ff !important;
+          box-shadow: 0 0 0 2px rgba(11, 95, 255, 0.12);
+        }
+      `}</style>
+
       <div className="flex items-center justify-between gap-3 p-2 border-b">
         <div className="flex items-center gap-2">
           <Select value={selectedId?.toString() ?? ""} onValueChange={onSelectChange}>
@@ -427,6 +455,8 @@ export default function ProjectGraphPane({ projectId, projectName, refreshKey, o
               onEdgesChange={onEdgesChange}
               onNodeClick={onNodeClick}
               onEdgeClick={onEdgeClick}
+              onSelectionChange={onSelectionChange}  // NEW: keep details in sync with selection
+              onPaneClick={onPaneClick}              // NEW: click background to unselect and clear details
               edgeTypes={edgeTypes}
               fitView
               minZoom={0.2}
