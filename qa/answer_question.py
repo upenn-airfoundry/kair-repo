@@ -138,7 +138,7 @@ class AnswerQuestionHandler():
                 for i, task in enumerate(solution_plan.tasks):
                     # Create a concise task name from the description
                     task_name = f"Task {i+1}: {task.description_and_goals.split('.')[0]}"
-
+                    
                     # Create a schema string from the task outputs
                     schema_parts = [f"{output.name}:{output.datatype}" for output in task.outputs]
                     schema_string = f"({', '.join(schema_parts)})"
@@ -186,6 +186,8 @@ class AnswerQuestionHandler():
 
 
                 self.graph_accessor.add_user_history(self.user_id, self.project_id, original_prompt, markdown_response)
+                
+                
                 
                 # Return 1 to indicate that the project was modified and should be refreshed
                 return (markdown_response, 1)

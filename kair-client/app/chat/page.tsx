@@ -5,7 +5,7 @@ import { AppSidebar } from '@/components/app-sidebar';
 import { SidebarProvider, SidebarInset, SidebarTrigger } from '@/components/ui/sidebar';
 import { ProtectedRoute } from "@/components/protected-route"
 import { useAuth } from '@/context/auth-context';
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from "react";
 import ProjectGraphPane from '@/components/project-graph-pane';
 import {
   Panel,
@@ -30,9 +30,23 @@ export default function ChatPage() {
   const [activeProjectName, setActiveProjectName] = useState<string>("");
 
   useEffect(() => {
+    // Initialize from user context if available
     if (user?.project_id) setActiveProjectId(user.project_id);
     if (user?.project_name) setActiveProjectName(user.project_name);
   }, [user?.project_id, user?.project_name]);
+
+  // Listen to global project changes (from sidebar and graph pane)
+  useEffect(() => {
+    const handler = (e: any) => {
+      const pid = Number(e?.detail?.projectId);
+      if (Number.isFinite(pid)) {
+        setActiveProjectId(pid);
+        setRefreshKey(prev => prev + 1);
+      }
+    };
+    window.addEventListener("project-changed", handler as any);
+    return () => window.removeEventListener("project-changed", handler as any);
+  }, []);
 
   const handleRefreshRequest = () => setRefreshKey(prevKey => prevKey + 1);
 

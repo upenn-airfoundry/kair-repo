@@ -360,6 +360,25 @@ export default function ProjectGraphPane({ projectId, projectName, refreshKey, o
   // Memoize edgeTypes so identity stays stable across renders/HMR
   const edgeTypes = useMemo(() => ({ simplebezier: SimpleBezierEdge }), []);
 
+  // Clear details pane on project change
+  React.useEffect(() => {
+    // This effect runs whenever the active project changes (selectedId preferred, fallback projectId)
+    // Clear any node/edge selection to avoid stale details
+    setSelectedElement(null);
+  }, [selectedId, projectId]);
+
+  // Also listen to external changes (sidebar) and sync selection
+  React.useEffect(() => {
+    const handler = (e: any) => {
+      const pid = Number(e?.detail?.projectId);
+      if (Number.isFinite(pid)) {
+        setSelectedId(pid);
+      }
+    };
+    window.addEventListener("project-changed", handler as any);
+    return () => window.removeEventListener("project-changed", handler as any);
+  }, []);
+
   return (
     <div className="h-full w-full border rounded-lg flex flex-col">
       <div className="flex items-center justify-between gap-3 p-2 border-b">

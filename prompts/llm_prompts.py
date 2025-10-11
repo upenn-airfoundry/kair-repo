@@ -52,6 +52,8 @@ class SolutionTask(BaseModel):
     evaluation_evidence: str = Field(..., description="The evidence and methods that will be used to evaluate or assess the success of this task.")
     revisiting_criteria: str = Field(..., description="Criteria that would trigger a return to a prior decision or task.")
     needs_user_clarification: bool = Field(..., description="Whether this task requires clarification from the user before proceeding.")
+    can_be_single_sourced: bool = Field(..., description="Whether the fields can all be sourced from a single location (trying multiple alternate locations).")
+    potential_sources: List[PotentialSource] = Field(..., description="A list of potential sources to obtain all the data for this task.")
 
 class SolutionPlan(BaseModel):
     """A structured plan composed of a list of tasks to solve a user's request."""
@@ -79,7 +81,13 @@ from backend.graph_db import GraphAccessor
 import pandas as pd
 import json
 
-from enrichment.llms import get_analysis_llm, get_better_llm, get_structured_analysis_llm, get_agentic_llm
+from enrichment.llms import (
+    get_analysis_llm,
+    get_better_llm,
+    get_structured_analysis_llm,
+    get_agentic_llm,
+    mcp_client,  # use MCP client to call SemanticScholarSearch and PDFAnalyzer
+)
 from files.tables import sample_rows_to_string
 
 
@@ -863,4 +871,119 @@ class PlanningPrompts:
 
         result = chain.invoke({"solution_plan_str": plan_str})
         return result
+
+    @classmethod
+    async def execute_single_source_paper_tasks(cls, solution_plan: SolutionPlan) -> dict:
+        import logging
+        results: dict = {}
+
+        # Discover tools
+        try:
+            tools = await mcp_client.get_tools()  # already awaited (good)
+        except Exception as e:
+            logging.error(f"Failed to list MCP tools: {e}")
+            tools = []
+
+        def find_search_tool_name() -> str | None:
+            for t in tools:
+                name = getattr(t, "name", None) or (t.get("name") if isinstance(t, dict) else None)
+                if not name:
+                    continue
+                lname = name.lower()
+                if "semantic" in lname or "scholar" in lname or "paper" in lname or "search" in lname:
+                    return name
+            return None
+
+        search_tool_name = find_search_tool_name()
+
+        for idx, task in enumerate(solution_plan.tasks):
+            if task.needs_user_clarification or not task.can_be_single_sourced:
+                continue
+
+            has_paper_source = any(_is_paper_source(ps.source_description) for ps in (task.potential_sources or []))
+            if not has_paper_source:
+                logging.info(f"[Plan] Task {idx} single-source is not a paper; cannot take action.")
+                continue
+
+            outputs_names = ", ".join(o.name for o in task.outputs) if task.outputs else ""
+            query = task.description_and_goals.strip()
+            if outputs_names:
+                query = f"{query} {outputs_names}".strip()
+
+            paper_url: str | None = None
+            if search_tool_name:
+                try:
+                    search_args = {"query": query, "limit": 5}
+                    # FIX: await invoke
+                    search_results = await mcp_client.invoke(search_tool_name, search_args)
+                    items = []
+                    if isinstance(search_results, dict) and "results" in search_results:
+                        items = search_results["results"]
+                    elif isinstance(search_results, list):
+                        items = search_results
+                    for item in items:
+                        url = None
+                        if isinstance(item, dict):
+                            url = item.get("url") or item.get("pdfUrl") or item.get("paperUrl")
+                        elif hasattr(item, "get"):
+                            url = item.get("url", None)
+                        if url:
+                            paper_url = url
+                            if url.lower().endswith(".pdf") or "pdf" in url.lower():
+                                break
+                except Exception as e:
+                    logging.error(f"[Plan] Search tool '{search_tool_name}' failed: {e}")
+
+            if not paper_url:
+                logging.info(f"[Plan] No paper URL found for task {idx}")
+                continue
+
+            outputs_spec = []
+            for o in (task.outputs or []):
+                outputs_spec.append({
+                    "name": o.name,
+                    "goal": o.description or f"Extract {o.name}",
+                    "type": _normalize_type(o.datatype),
+                })
+
+            try:
+                analyzer_args = {"urls": [paper_url], "outputs": outputs_spec}
+                # FIX: await invoke
+                analyzer_res = await mcp_client.invoke("index_papers", analyzer_args)
+                url_map = analyzer_res.get("results", analyzer_res) if isinstance(analyzer_res, dict) else analyzer_res
+                task_key = f"task_{idx}"
+                if isinstance(url_map, dict) and paper_url in url_map:
+                    results[task_key] = url_map[paper_url]
+                else:
+                    if isinstance(url_map, dict) and url_map:
+                        first_val = next(iter(url_map.values()))
+                        results[task_key] = first_val if isinstance(first_val, dict) else {}
+                    else:
+                        results[task_key] = {}
+            except Exception as e:
+                logging.error(f"[Plan] PDFAnalyzer index_papers failed for task {idx}: {e}")
+
+        return results
+
+def _is_paper_source(desc: str | None) -> bool:
+    """Heuristic: does a potential source description refer to a paper/PDF?"""
+    if not desc:
+        return False
+    s = desc.lower()
+    return any(k in s for k in ("paper", "pdf", "arxiv", "doi", "journal", "conference"))
+
+def _normalize_type(t: str | None) -> str:
+    """Map arbitrary datatype strings to a small set supported by the PDF analyzer."""
+    if not t:
+        return "string"
+    tl = t.lower()
+    if "bool" in tl:
+        return "boolean"
+    if any(k in tl for k in ("int", "number", "float", "double")):
+        return "number"
+    if any(k in tl for k in ("json", "object", "array", "list", "dict")):
+        return "json"
+    if "date" in tl:
+        return "date"
+    return "string"
 

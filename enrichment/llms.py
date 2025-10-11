@@ -1,19 +1,12 @@
 from dotenv import load_dotenv, find_dotenv
 import os
 import logging
-from typing import Any, List, Type
-from langchain_google_vertexai import ChatVertexAI
-from pydantic import BaseModel, Field
-import requests
-import json
+from typing import Any, List
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from langchain_mcp_adapters.tools import load_mcp_tools
-import asyncio
+
 # Replace create_react_agent with create_tool_calling_agent
 from langchain.agents import create_tool_calling_agent, AgentExecutor
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.tools import tool
-from langchain import hub
 from langchain_core.exceptions import OutputParserException
 
 try:

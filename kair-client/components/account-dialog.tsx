@@ -20,6 +20,7 @@ type Project = {
 };
 
 export default function AccountDialog({ open, onClose }: AccountDialogProps) {
+  const secureFetch = useSecureFetch();
   const { user } = useAuth();
   const [profile, setProfile] = useState({
     fullName: user?.name || "",
@@ -28,53 +29,15 @@ export default function AccountDialog({ open, onClose }: AccountDialogProps) {
     projects: user?.profile?.projects || "",
     publications: user?.profile?.publications || [],
   });
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [search, setSearch] = useState("");
-  const [selectedProject, setSelectedProject] = useState<string | null>(null);
-  const [newProjectName, setNewProjectName] = useState("");
-  const [newProjectDesc, setNewProjectDesc] = useState("");
-
-  useEffect(() => {
-    if (open) {
-      const fetchProjects = async () => {
-        try {
-          const response = await secureFetch(`${config.apiBaseUrl}/api/projects/list?search=${search}`);
-          if (response.ok) {
-            const data = await response.json();
-            setProjects(data.projects || []);
-          }    
-        } catch (error) {
-          console.error("Error fetching projects:", error);
-        }
-      };
-      fetchProjects();
-    }
-  }, [open, search]);
 
   const handleSave = async () => {
-    await fetch(`${config.apiBaseUrl}/api/account/update`, {
+    await secureFetch(`${config.apiBaseUrl}/api/account/update`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: 'include',
       body: JSON.stringify({ profile }),
     });
     onClose();
-  };
-
-  const handleCreateProject = async () => {
-    const res = await fetch(`${config.apiBaseUrl}/api/projects/create`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: 'include',
-      body: JSON.stringify({ name: newProjectName, description: newProjectDesc }),
-    });
-    const data = await res.json();
-    if (data.project_id) {
-      setSelectedProject(data.project_id);
-      setNewProjectName("");
-      setNewProjectDesc("");
-      setSearch("");
-          }
   };
 
   // Publication fields: title, authors, venue, year, url, doi, abstract
@@ -228,7 +191,7 @@ export default function AccountDialog({ open, onClose }: AccountDialogProps) {
           </table>
           <Button onClick={handleAddPublication}>Add Publication</Button>
         </div>
-        <div style={{ marginBottom: 16 }}>
+        {/* <div style={{ marginBottom: 16 }}>
           <label htmlFor="searchProjects" style={{ fontWeight: "bold", display: "block", marginBottom: 4 }}>
             Search Projects
           </label>
@@ -268,7 +231,7 @@ export default function AccountDialog({ open, onClose }: AccountDialogProps) {
             onChange={e => setNewProjectDesc(e.target.value)}
           />
           <Button onClick={handleCreateProject}>Create Project</Button>
-        </div>
+        </div> */}
       </DialogContent>
       <DialogActions>
         <Button onClick={handleSave}>Save</Button>
