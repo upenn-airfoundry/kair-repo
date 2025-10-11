@@ -1,12 +1,8 @@
 "use client";
 
-import React, { useEffect, useMemo, useState, useCallback } from "react"; // include useCallback here
+import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useSecureFetch } from "@/hooks/useSecureFetch";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import ReactFlow, {
   Controls,
   Background,
@@ -19,6 +15,7 @@ import ReactFlow, {
   MarkerType,
   Position,
   SimpleBezierEdge,
+  ReactFlowInstance,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { config } from "@/config";
@@ -48,11 +45,7 @@ interface Dependency {
   data_schema: string;
 }
 
-// Add missing Project type
-type Project = { id: number; name: string; description?: string };
-
-// Sentinel for create-new option
-const CREATE_SENTINEL = "__create__";
+// Removed local project picker; selection is driven by Project Tree
 
 // Extend props to include onProjectChanged (used below)
 interface ProjectGraphPaneProps {
@@ -120,6 +113,7 @@ export default function ProjectGraphPane({ projectId, projectName, refreshKey, o
   const secureFetch = useSecureFetch();
   const router = useRouter();
   const pathname = usePathname();
+  const rfInstance = useRef<ReactFlowInstance | null>(null);
 
   // MOVE THESE STATE HOOKS ABOVE ANY EFFECTS THAT USE selectedId
   const [userName, setUserName] = useState<string>("");
@@ -133,16 +127,32 @@ export default function ProjectGraphPane({ projectId, projectName, refreshKey, o
   const onNodesChange: OnNodesChange = useCallback((changes) => setNodes((nds) => applyNodeChanges(changes, nds)), [setNodes]);
   const onEdgesChange: OnEdgesChange = useCallback((changes) => setEdges((eds) => applyEdgeChanges(changes, eds)), [setEdges]);
 
+  // Keep resetViewport simple; don't depend on nodes.length so it doesn't capture stale values
+  const resetViewport = useCallback(() => {
+    const inst = rfInstance.current;
+    if (!inst) return;
+    try {
+      inst.setViewport({ x: 0, y: 0, zoom: 1 }, { duration: 120 });
+      inst.fitView({
+        padding: 0.2,
+        includeHiddenNodes: true,
+        maxZoom: 1.25,
+        duration: 300,
+      });
+    } catch {
+      /* no-op */
+    }
+  }, []);
+
   // Use selectedId (fallback to prop) to drive graph fetching
   useEffect(() => {
     const pid = selectedId ?? projectId;
     if (!pid) return;
-
-    const fetchData = async () => {
+    (async () => {
       try {
         const [tasksRes, depsRes] = await Promise.all([
-          secureFetch(`${config.apiBaseUrl}/api/project/${pid}/tasks`),
-          secureFetch(`${config.apiBaseUrl}/api/project/${pid}/dependencies`)
+          secureFetch(`${config.apiBaseUrl}/api/project/${pid}/tasks`, { cache: "no-store" as any }),
+          secureFetch(`${config.apiBaseUrl}/api/project/${pid}/dependencies`, { cache: "no-store" as any }),
         ]);
         const tasksData = await tasksRes.json();
         const depsData = await depsRes.json();
@@ -151,15 +161,10 @@ export default function ProjectGraphPane({ projectId, projectName, refreshKey, o
           id: task.id.toString(),
           position: { x: 0, y: 0 },
           data: { label: task.name, schema: task.schema },
-          style: {
-            backgroundColor: '#F0F4FA',
-            border: '1px solid #011F5B',
-            borderRadius: 8,
-            padding: '10px 15px',
-            fontSize: '12px',
-            width: nodeWidth,
-            color: '#011F5B',
-          },
+          // Use a shared class to allow consistent styling via CSS (and selected state)
+          className: "task-node",
+          // Keep only width inline; the rest is handled by CSS class
+          style: { width: nodeWidth },
         }));
 
         const initialEdges: Edge[] = depsData.dependencies.map((dep: Dependency) => {
@@ -185,28 +190,26 @@ export default function ProjectGraphPane({ projectId, projectName, refreshKey, o
         const { layoutedNodes, layoutedEdges } = getLayoutedElements(initialNodes, initialEdges);
         setNodes(layoutedNodes);
         setEdges(layoutedEdges);
+        // remove immediate fit here; we'll fit after nodes commit
+        // requestAnimationFrame(() => resetViewport());
       } catch (error) {
         console.error("Failed to fetch project graph data:", error);
       }
-    };
-
-    fetchData();
+    })();
   }, [selectedId, projectId, refreshKey, secureFetch]);
+
+  // Fit/center after nodes/edges actually update or project changes
+  useEffect(() => {
+    if (!rfInstance.current) return;
+    // wait a tick so ReactFlow has measured nodes
+    const id = requestAnimationFrame(() => resetViewport());
+    return () => cancelAnimationFrame(id);
+  }, [selectedId, projectId, nodes.length, edges.length, resetViewport]);
 
   const onNodeClick = (_: React.MouseEvent, node: Node) => setSelectedElement(node);
   const onEdgeClick = (_: React.MouseEvent, edge: Edge) => setSelectedElement(edge);
 
-  // Ensure the combo box has an entry for the current project from props
-  useEffect(() => {
-    if (!projectId || !projectName) return;
-    setProjects(prev => {
-      const merged = [{ id: projectId, name: projectName }, ...prev];
-      return dedupeById(merged);
-    });
-    setSelectedId(projectId);
-  }, [projectId, projectName]);
-
-  // Select the current project immediately (don’t wait for list fetch)
+  // Ensure the component tracks the prop-driven project selection
   useEffect(() => {
     if (projectId) setSelectedId(projectId);
   }, [projectId]);
@@ -264,10 +267,7 @@ export default function ProjectGraphPane({ projectId, projectName, refreshKey, o
     }
   }, [accountSelectedId, projects]);
 
-  const displayRight = useMemo(() => {
-    const right = [userName, org].filter(Boolean).join(" at ");
-    return right ? ` - ${right}` : "";
-  }, [userName, org]);
+  // Removed header subtitle
 
   // After selecting a project, persist and refetch full list
   const onSelectChange = async (val: string) => {
@@ -326,25 +326,12 @@ export default function ProjectGraphPane({ projectId, projectName, refreshKey, o
       const j = await res.json();
       const newId = j?.project_id as number | undefined;
       if (newId) {
-        // Merge into list
-        const projectsRes = await secureFetch(`${config.apiBaseUrl}/api/projects/list?mine=1`);
-        if (projectsRes.ok) {
-          const projJson = await projectsRes.json();
-          setProjects(dedupeById([{ id: newId, name: newProjName.trim() }, ...(projJson?.projects || [])]));
-        } else {
-          setProjects(prev => dedupeById([{ id: newId, name: newProjName.trim() }, ...prev]));
-        }
-
-        // Select new project
+        // Update URL and notify, close dialog
         setSelectedId(newId);
-        setAccountSelectedId(newId);
-
-        // Update URL and notify
         const params = new URLSearchParams(window.location.search);
         params.set('projectId', String(newId));
         router.replace(`${pathname}?${params.toString()}`);
         window.dispatchEvent(new CustomEvent('project-changed', { detail: { projectId: newId } }));
-
         setCreateOpen(false);
         setNewProjName("");
         onProjectChanged?.(newId);
@@ -352,18 +339,12 @@ export default function ProjectGraphPane({ projectId, projectName, refreshKey, o
       }
     } catch { /* ignore */ }
   };
-  // Rename this derived variable to avoid clashing with prop `projectName`
-  const selectedProjectName = useMemo(() => {
-    return projects.find(p => p.id === selectedId)?.name || "Select project";
-  }, [projects, selectedId]);
 
   // Memoize edgeTypes so identity stays stable across renders/HMR
   const edgeTypes = useMemo(() => ({ simplebezier: SimpleBezierEdge }), []);
 
   // Clear details pane on project change
   React.useEffect(() => {
-    // This effect runs whenever the active project changes (selectedId preferred, fallback projectId)
-    // Clear any node/edge selection to avoid stale details
     setSelectedElement(null);
   }, [selectedId, projectId]);
 
@@ -399,64 +380,44 @@ export default function ProjectGraphPane({ projectId, projectName, refreshKey, o
 
   return (
     <div className="h-full w-full border rounded-lg flex flex-col">
-      {/* Selection highlight styles */}
       <style jsx global>{`
-        /* Make selected task nodes stand out */
-        .react-flow__node.selected {
-          border: 2px solid #0b5fff !important;
-          background-color: #e6f0ff !important;
-          box-shadow: 0 0 0 2px rgba(11, 95, 255, 0.12);
+        /* Base task node: bold black curved outline with translucent light gray bg */
+        .react-flow__node.task-node {
+          background-color: hsl(var(--muted) / 0.35); /* translucent light gray */
+          border: 2px solid #000;
+          border-radius: 0.75rem; /* curved rectangle */
+          color: hsl(var(--foreground));
+          font-size: 12px;
+          padding: 10px 12px;
+          transition: box-shadow 120ms ease, background-color 120ms ease, border-color 120ms ease;
+        }
+        .react-flow__node.task-node:hover {
+          border-color: #000; /* keep bold black on hover */
+          background-color: hsl(var(--muted) / 0.5); /* slightly stronger tint */
+        }
+        /* Selected: light gray bg + bolder dark outline (matches tree) */
+        .react-flow__node.task-node.selected {
+          background-color: hsl(var(--muted)) !important; /* light gray */
+          border-color: #000 !important;                  /* bold dark outline */
+          border-width: 3px !important;                   /* thicker when selected */
+          box-shadow: 0 0 0 2px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06) !important;
         }
       `}</style>
-
-      <div className="flex items-center justify-between gap-3 p-2 border-b">
-        <div className="flex items-center gap-2">
-          <Select value={selectedId?.toString() ?? ""} onValueChange={onSelectChange}>
-            <SelectTrigger className="w-[280px]">
-              <SelectValue placeholder="Select project" />
-            </SelectTrigger>
-            <SelectContent>
-              {projects.map(p => (
-                <SelectItem key={p.id} value={p.id.toString()}>{p.name}</SelectItem>
-              ))}
-              <div className="border-t my-1" />
-              <SelectItem value={CREATE_SENTINEL}>+ Create new project</SelectItem>
-            </SelectContent>
-          </Select>
-          <span className="text-sm text-muted-foreground">{` ${displayRight}`}</span>
-        </div>
-
-        <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Create new project</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-3">
-              <Input
-                placeholder="Project name"
-                value={newProjName}
-                onChange={e => setNewProjName(e.target.value)}
-              />
-            </div>
-            <DialogFooter>
-              <Button variant="secondary" onClick={() => setCreateOpen(false)}>Cancel</Button>
-              <Button onClick={onCreateConfirm}>Create</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      </div>
       <PanelGroup direction="horizontal" className="flex-1 min-h-0">
         <Panel defaultSize={66} minSize={30}>
           <div className="h-full w-full">
             <ReactFlow
+              onInit={(instance) => {
+                rfInstance.current = instance;
+              }}
               nodes={nodes}
               edges={edges}
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
               onNodeClick={onNodeClick}
               onEdgeClick={onEdgeClick}
-              onSelectionChange={onSelectionChange}  // NEW: keep details in sync with selection
-              onPaneClick={onPaneClick}              // NEW: click background to unselect and clear details
+              onSelectionChange={onSelectionChange}
+              onPaneClick={onPaneClick}
               edgeTypes={edgeTypes}
               fitView
               minZoom={0.2}
