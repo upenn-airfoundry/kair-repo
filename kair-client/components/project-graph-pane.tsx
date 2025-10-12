@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import type { CSSProperties } from "react";
 import { useSecureFetch } from "@/hooks/useSecureFetch";
 import ReactFlow, {
   Controls,
@@ -16,6 +16,7 @@ import ReactFlow, {
   Position,
   SimpleBezierEdge,
   ReactFlowInstance,
+  type EdgeMarker,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { config } from "@/config";
@@ -26,9 +27,6 @@ import {
   PanelGroup,
   PanelResizeHandle,
 } from "react-resizable-panels";
-
-// Remove the duplicate hooks import
-// import { useState, useEffect, useCallback } from 'react';
 
 // Define specific types for the data being fetched
 interface Task {
@@ -45,14 +43,13 @@ interface Dependency {
   data_schema: string;
 }
 
-// Removed local project picker; selection is driven by Project Tree
-
 // Extend props to include onProjectChanged (used below)
-interface ProjectGraphPaneProps {
+export interface ProjectGraphPaneProps {
   projectId: number;
   projectName: string;
   refreshKey: number;
   onProjectChanged?: (projectId: number) => void;
+  onTaskSelected?: (taskId: number | null) => void;
 }
 
 const nodeWidth = 180;
@@ -74,11 +71,11 @@ const getLayoutedElements = (nodes: Node[], edges: Edge[], direction = 'LR') => 
   dagre.layout(dagreGraph);
 
   nodes.forEach((node) => {
-    const nodeWithPosition = dagreGraph.node(node.id);
+    // Read computed position from Dagre
+    const nodeWithPosition = dagreGraph.node(node.id) as { x: number; y: number };
     node.targetPosition = Position.Left;
     node.sourcePosition = Position.Right;
-    // We are shifting the dagre node position (anchor=center) to the top left
-    // so it matches the React Flow node anchor point (top left).
+    // Shift Dagre center anchor to top-left
     node.position = {
       x: nodeWithPosition.x - nodeWidth / 2,
       y: nodeWithPosition.y - nodeHeight / 2,
@@ -88,41 +85,13 @@ const getLayoutedElements = (nodes: Node[], edges: Edge[], direction = 'LR') => 
   return { layoutedNodes: nodes, layoutedEdges: edges };
 };
 
-// add small helpers at top-level inside the module
-const dedupeById = (arr: Project[]) => {
-  const seen = new Set<number>();
-  return arr.filter(p => (seen.has(p.id) ? false : (seen.add(p.id), true)));
-};
-
-// Extract selected project id from account payload (checks descriptor, then profile, then top-level)
-const extractSelectedProjectId = (acct: any): number | null => {
-  const v =
-    acct?.user?.profile?.descriptor?.selected_project_id ??
-    acct?.user?.profile?.selected_project_id ??
-    acct?.user?.selected_project_id ??
-    acct?.user?.project_id ??
-    null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-};
-
-export default function ProjectGraphPane({ projectId, projectName, refreshKey, onProjectChanged }: ProjectGraphPaneProps) {
+export default function ProjectGraphPane({ projectId, projectName, refreshKey, onTaskSelected }: ProjectGraphPaneProps) {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [selectedElement, setSelectedElement] = useState<Node | Edge | null>(null);
   const secureFetch = useSecureFetch();
-  const router = useRouter();
-  const pathname = usePathname();
   const rfInstance = useRef<ReactFlowInstance | null>(null);
-
-  // MOVE THESE STATE HOOKS ABOVE ANY EFFECTS THAT USE selectedId
-  const [userName, setUserName] = useState<string>("");
-  const [org, setOrg] = useState<string>("");
-  const [projects, setProjects] = useState<Project[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [accountSelectedId, setAccountSelectedId] = useState<number | null>(null);
-  const [createOpen, setCreateOpen] = useState(false);
-  const [newProjName, setNewProjName] = useState("");
 
   const onNodesChange: OnNodesChange = useCallback((changes) => setNodes((nds) => applyNodeChanges(changes, nds)), [setNodes]);
   const onEdgesChange: OnEdgesChange = useCallback((changes) => setEdges((eds) => applyEdgeChanges(changes, eds)), [setEdges]);
@@ -151,8 +120,8 @@ export default function ProjectGraphPane({ projectId, projectName, refreshKey, o
     (async () => {
       try {
         const [tasksRes, depsRes] = await Promise.all([
-          secureFetch(`${config.apiBaseUrl}/api/project/${pid}/tasks`, { cache: "no-store" as any }),
-          secureFetch(`${config.apiBaseUrl}/api/project/${pid}/dependencies`, { cache: "no-store" as any }),
+          secureFetch(`${config.apiBaseUrl}/api/project/${pid}/tasks`, { cache: "no-store" }),
+          secureFetch(`${config.apiBaseUrl}/api/project/${pid}/dependencies`, { cache: "no-store" }),
         ]);
         const tasksData = await tasksRes.json();
         const depsData = await depsRes.json();
@@ -161,18 +130,18 @@ export default function ProjectGraphPane({ projectId, projectName, refreshKey, o
           id: task.id.toString(),
           position: { x: 0, y: 0 },
           data: { label: task.name, schema: task.schema },
-          // Use a shared class to allow consistent styling via CSS (and selected state)
           className: "task-node",
-          // Keep only width inline; the rest is handled by CSS class
           style: { width: nodeWidth },
         }));
 
         const initialEdges: Edge[] = depsData.dependencies.map((dep: Dependency) => {
-          const baseStyle = { stroke: '#333', strokeWidth: 1.5 };
-          let edgeStyle = { ...baseStyle };
-          let markerStart;
+          const baseStyle: CSSProperties = { stroke: '#333', strokeWidth: 1.5 };
+          const edgeStyle: CSSProperties = { ...baseStyle };
+          let markerStart: EdgeMarker | undefined;
 
-          if (dep.data_flow === 'rethinking the previous task') edgeStyle = { ...edgeStyle, strokeDasharray: '5,5' };
+          if (dep.data_flow === 'rethinking the previous task') {
+            edgeStyle.strokeDasharray = '5,5';
+          }
           if (dep.data_flow === 'gated by user feedback') markerStart = { type: MarkerType.ArrowClosed, color: '#333', width: 15, height: 15 };
 
           return {
@@ -190,8 +159,6 @@ export default function ProjectGraphPane({ projectId, projectName, refreshKey, o
         const { layoutedNodes, layoutedEdges } = getLayoutedElements(initialNodes, initialEdges);
         setNodes(layoutedNodes);
         setEdges(layoutedEdges);
-        // remove immediate fit here; we'll fit after nodes commit
-        // requestAnimationFrame(() => resetViewport());
       } catch (error) {
         console.error("Failed to fetch project graph data:", error);
       }
@@ -206,139 +173,24 @@ export default function ProjectGraphPane({ projectId, projectName, refreshKey, o
     return () => cancelAnimationFrame(id);
   }, [selectedId, projectId, nodes.length, edges.length, resetViewport]);
 
-  const onNodeClick = (_: React.MouseEvent, node: Node) => setSelectedElement(node);
-  const onEdgeClick = (_: React.MouseEvent, edge: Edge) => setSelectedElement(edge);
+  const notifyTaskSelected = React.useCallback((id: number | null) => {
+    if (onTaskSelected) onTaskSelected(id);
+  }, [onTaskSelected]);
+
+  const onNodeClick = (_: React.MouseEvent, node: Node) => {
+    setSelectedElement(node);
+    const n = Number(node.id);
+    notifyTaskSelected(Number.isFinite(n) ? n : null);
+  };
+  const onEdgeClick = (_: React.MouseEvent, edge: Edge) => {
+    setSelectedElement(edge);
+    notifyTaskSelected(null);
+  };
 
   // Ensure the component tracks the prop-driven project selection
   useEffect(() => {
     if (projectId) setSelectedId(projectId);
   }, [projectId]);
-
-  // Load account info and projects (use API base + credentials)
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        const acctRes = await secureFetch(`${config.apiBaseUrl}/api/account`);
-        if (!acctRes.ok) throw new Error(`account ${acctRes.status}`);
-        const acct = await acctRes.json();
-        if (!mounted) return;
-
-        setUserName(acct?.user?.name || "");
-        setOrg(acct?.user?.profile?.organization || acct?.user?.organization || "");
-
-        // Capture selected from account and keep in state for syncing
-        const acctSel = extractSelectedProjectId(acct);
-        setAccountSelectedId(acctSel);
-
-        // Prefer projects from account; fallback to full list for this user
-        let projList: Project[] = Array.isArray(acct?.user?.projects) ? acct.user.projects : [];
-
-        const projectsRes = await secureFetch(`${config.apiBaseUrl}/api/projects/list?mine=1`);
-        if (projectsRes.ok) {
-          const projJson = await projectsRes.json();
-          projList = projJson?.projects || projList;
-        }
-
-        // Merge with the current prop project
-        const merged = dedupeById(
-          (projectId && projectName && !projList.some(p => p.id === projectId))
-            ? [{ id: projectId, name: projectName }, ...projList]
-            : projList
-        );
-        setProjects(merged);
-
-        // Prefer prop projectId, then account selection, then first project
-        const preferProp = projectId && merged.some(p => p.id === projectId) ? projectId : null;
-        const preferAcct = acctSel && merged.some(p => p.id === acctSel) ? acctSel : null;
-        const pref = preferProp ?? preferAcct ?? (merged[0]?.id ?? null);
-        setSelectedId(pref ?? null);
-      } catch {
-        // Leave seeded project as-is on error
-      }
-    })();
-    return () => { mounted = false; };
-  }, [secureFetch, projectId, projectName]);
-
-  // Keep selectedId synced to account-selected id when it changes (and exists in list)
-  useEffect(() => {
-    if (accountSelectedId && projects.some(p => p.id === accountSelectedId)) {
-      setSelectedId(prev => (prev === accountSelectedId ? prev : accountSelectedId));
-    }
-  }, [accountSelectedId, projects]);
-
-  // Removed header subtitle
-
-  // After selecting a project, persist and refetch full list
-  const onSelectChange = async (val: string) => {
-    if (val === CREATE_SENTINEL) { setCreateOpen(true); return; }
-    const id = parseInt(val, 10);
-    if (!Number.isFinite(id)) return;
-    try {
-      const res = await secureFetch(`${config.apiBaseUrl}/api/projects/select`, {
-        method: "POST",
-        body: JSON.stringify({ project_id: id })
-      });
-      const j = await res.json();
-      if (j?.success) {
-        // Update local selection immediately
-        setSelectedId(id);
-
-        // Update URL query so server components/pages can react (eg. chat)
-        const params = new URLSearchParams(window.location.search);
-        params.set('projectId', String(id));
-        router.replace(`${pathname}?${params.toString()}`);
-
-        // Notify other client components (optional)
-        window.dispatchEvent(new CustomEvent('project-changed', { detail: { projectId: id } }));
-
-        // Refetch account to sync selected project id
-        try {
-          const acctRes = await secureFetch(`${config.apiBaseUrl}/api/account`);
-          if (acctRes.ok) {
-            const acct = await acctRes.json();
-            const sid = extractSelectedProjectId(acct);
-            setAccountSelectedId(sid);
-          }
-        } catch {}
-
-        // Refetch full project list
-        const projectsRes = await secureFetch(`${config.apiBaseUrl}/api/projects/list?mine=1`);
-        if (projectsRes.ok) {
-          const projJson = await projectsRes.json();
-          setProjects(prev => dedupeById([...(projJson?.projects || []), ...prev]));
-        }
-
-        onProjectChanged?.(id);
-        router.refresh();
-      }
-    } catch { /* ignore */ }
-  };
-
-  // After creating a project, refetch and select it
-  const onCreateConfirm = async () => {
-    if (!newProjName.trim()) return;
-    try {
-      const res = await secureFetch(`${config.apiBaseUrl}/api/projects/create`, {
-        method: "POST",
-        body: JSON.stringify({ name: newProjName.trim(), description: "" })
-      });
-      const j = await res.json();
-      const newId = j?.project_id as number | undefined;
-      if (newId) {
-        // Update URL and notify, close dialog
-        setSelectedId(newId);
-        const params = new URLSearchParams(window.location.search);
-        params.set('projectId', String(newId));
-        router.replace(`${pathname}?${params.toString()}`);
-        window.dispatchEvent(new CustomEvent('project-changed', { detail: { projectId: newId } }));
-        setCreateOpen(false);
-        setNewProjName("");
-        onProjectChanged?.(newId);
-        router.refresh();
-      }
-    } catch { /* ignore */ }
-  };
 
   // Memoize edgeTypes so identity stays stable across renders/HMR
   const edgeTypes = useMemo(() => ({ simplebezier: SimpleBezierEdge }), []);
@@ -350,36 +202,51 @@ export default function ProjectGraphPane({ projectId, projectName, refreshKey, o
 
   // Also listen to external changes (sidebar) and sync selection
   React.useEffect(() => {
-    const handler = (e: any) => {
-      const pid = Number(e?.detail?.projectId);
-      if (Number.isFinite(pid)) {
+    const handler = (e: CustomEvent<{ projectId: number | null }>) => {
+      const pid = e.detail?.projectId;
+      if (pid !== undefined) {
         setSelectedId(pid);
       }
     };
-    window.addEventListener("project-changed", handler as any);
-    return () => window.removeEventListener("project-changed", handler as any);
+    window.addEventListener("project-changed", handler as EventListener);
+    return () => window.removeEventListener("project-changed", handler as EventListener);
   }, []);
 
   // Handle selection changes from React Flow (syncs details pane and supports clearing)
   const onSelectionChange = useCallback((params: { nodes: Node[]; edges: Edge[] }) => {
     if (params?.nodes?.length) {
       setSelectedElement(params.nodes[0]);
+      const n = Number(params.nodes[0].id);
+      notifyTaskSelected(Number.isFinite(n) ? n : null);
       return;
     }
     if (params?.edges?.length) {
       setSelectedElement(params.edges[0]);
+      notifyTaskSelected(null);
       return;
     }
     setSelectedElement(null);
-  }, []);
+    notifyTaskSelected(null);
+  }, [notifyTaskSelected]);
 
   // Clicking the background (pane) clears selection and details
   const onPaneClick = useCallback(() => {
     setSelectedElement(null);
-  }, []);
+    notifyTaskSelected(null);
+  }, [notifyTaskSelected]);
+
+  // Clear task selection when project changes
+  useEffect(() => {
+    notifyTaskSelected(null);
+  }, [projectId, notifyTaskSelected]);
 
   return (
     <div className="h-full w-full border rounded-lg flex flex-col">
+      <div className="flex items-center justify-between gap-3 p-2 border-b">
+        <div className="text-sm font-medium text-foreground">
+          Project: <span className="text-muted-foreground">{projectName}</span>
+        </div>
+      </div>
       <style jsx global>{`
         /* Base task node: bold black curved outline with translucent light gray bg */
         .react-flow__node.task-node {

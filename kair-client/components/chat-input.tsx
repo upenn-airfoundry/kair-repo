@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import { Send } from 'lucide-react';
 import { config } from "@/config";
 import ReactMarkdown from 'react-markdown';
-import { useAuth } from '@/context/auth-context';
 import { useSecureFetch } from '@/hooks/useSecureFetch';
 import remarkGfm from 'remark-gfm';
 
@@ -20,13 +19,13 @@ interface ChatInputProps {
   addMessage: (message: Message) => void;
   projectId: number;
   onRefreshRequest: () => void; // Add the new prop to the interface
+  selectedTaskId?: number | null;
 }
 
-export default function ChatInput({ addMessage, projectId, onRefreshRequest }: ChatInputProps) {
+export default function ChatInput({ addMessage, projectId, onRefreshRequest, selectedTaskId }: ChatInputProps) {
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const { user } = useAuth();
   const secureFetch = useSecureFetch(); // Get the secure fetch function
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -112,21 +111,16 @@ export default function ChatInput({ addMessage, projectId, onRefreshRequest }: C
     setIsLoading(true);
 
     try {
-      // Expand prompt with user profile context
       const expandedPrompt = trimmedMessage;
-      // if (user?.profile) {
-      //     expandedPrompt =
-      //         `User profile:\n` +
-      //         `Biosketch: ${user.profile.biosketch}\n` +
-      //         `Expertise: ${user.profile.expertise}\n` +
-      //         `Projects: ${user.profile.projects}\n\n` +
-      //         `User query: ${trimmedMessage}`;
-      // }
-
+      const payload: { prompt: string; project_id: number; selected_task_id?: number } = {
+        prompt: expandedPrompt,
+        project_id: projectId,
+      };
+      if (selectedTaskId != null) payload.selected_task_id = Number(selectedTaskId);
       const response = await secureFetch(`${config.apiBaseUrl}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: expandedPrompt, project_id: projectId }),
+        body: JSON.stringify(payload),
         credentials: 'include',
       });
 

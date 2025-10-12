@@ -1,18 +1,12 @@
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
+from langchain_core.prompts import MessagesPlaceholder  # needed for agent prompt placeholders
 from langchain.schema.output_parser import StrOutputParser
 import requests
 
 from pydantic import BaseModel, Field
-from typing import Union, Literal, Any
-
-from typing import List, Optional
+from typing import List, Optional, Literal, Union, Any
 from enrichment.llms import get_agentic_llm
-import logging
-import asyncio
-from langchain_core.prompts import MessagesPlaceholder
-from langchain import hub
-from langchain.agents import AgentExecutor
 
 # Add the new Pydantic models for learning resources
 class LearningResource(BaseModel):
@@ -986,4 +980,124 @@ def _normalize_type(t: str | None) -> str:
     if "date" in tl:
         return "date"
     return "string"
+
+from pydantic import BaseModel, Field
+from typing import List, Optional, Literal, Union
+from enrichment.llms import get_agentic_llm
+
+# NEW: Decision model for "requires human?" checks
+class RequiresHumanDecision(BaseModel):
+    requires_human: bool = Field(..., description="True if human input or feedback is needed; False if the task can proceed fully by LLM/tools.")
+    rationale: str = Field(..., description="Brief rationale explaining the decision.")
+    missing_inputs: Optional[List[str]] = Field(default=None, description="If human is required, list any missing or ambiguous inputs the human should provide.")
+
+class DecisionPrompts:
+    @classmethod
+    async def requires_human(cls, *,
+                             task_name: str,
+                             task_description: str,
+                             outputs_schema: str,
+                             upstream_text: str,
+                             downstream_needs_text: str) -> RequiresHumanDecision:
+        """
+        Ask a tool-capable LLM agent to determine if a task requires human input.
+        Returns a structured RequiresHumanDecision object.
+        """
+        # Build JSON schema string for the agent to follow
+        schema_dict = RequiresHumanDecision.model_json_schema()
+        from prompts.llm_prompts import _patch_pydantic_schema_v1  # reuse helper
+        _patch_pydantic_schema_v1(schema_dict)
+        import json as _json
+        schema_str = _json.dumps(schema_dict, indent=2).replace("{", "{{").replace("}", "}}")
+
+        instruction = (
+            "You are a planning/coordination assistant with tool access. "
+            "Decide whether the current task requires human intervention or can be performed by the LLM (with tools). "
+            "Use tools if needed to verify feasibility. "
+            "Return a single JSON object that strictly conforms to the provided schema."
+        )
+        content = (
+            f"{instruction}\n\n"
+            f"Task:\n- Name: {task_name}\n- Description/Goals: {task_description}\n"
+            f"- Desired Outputs Schema: {outputs_schema}\n\n"
+            f"Available Upstream Information (summarized):\n{upstream_text or '(none)'}\n\n"
+            f"Downstream Needs (dependent tasks expectations):\n{downstream_needs_text or '(none)'}\n\n"
+            f"Schema:\n```json\n{schema_str}\n```"
+        )
+
+        agent = await get_agentic_llm()  # tool-capable agent
+        if agent is None:
+            return RequiresHumanDecision(requires_human=True, rationale="Tool agent unavailable", missing_inputs=None)  # conservative default
+
+        try:
+            resp = await agent.ainvoke({"input": content, "chat_history": []})
+            out = resp.get("output", "").strip() if isinstance(resp, dict) else ""
+            if out.startswith("```json"):
+                out = out[7:]
+            if out.endswith("```"):
+                out = out[:-3]
+            parsed = _json.loads(out) if out else {"requires_human": True, "rationale": "Empty agent output"}
+            return RequiresHumanDecision(**parsed)
+        except Exception as e:
+            import logging as _lg
+            _lg.error(f"requires_human agent error: {e}")
+            return RequiresHumanDecision(requires_human=True, rationale=f"Agent error: {e}", missing_inputs=None)
+
+# Structured evaluation of answer responsiveness
+class AnswerResponsiveness(BaseModel):
+    """Determines if an answer is fully responsive to the original request."""
+    fully_responsive: bool = Field(
+        ..., description="True if the answer fully addresses the original request."
+    )
+    revised_prompt: Optional[str] = Field(
+        default=None,
+        description="If not fully responsive, a paraphrased prompt that clarifies expectations, output form, and resolves ambiguity."
+    )
+    rationale: Optional[str] = Field(
+        default=None,
+        description="Brief rationale explaining gaps or mismatches."
+    )
+
+class ReviewPrompts:
+    @classmethod
+    def assess_responsiveness(cls, request: str, answer: str) -> AnswerResponsiveness:
+        """
+        Returns whether the answer is fully responsive to the original request.
+        If not, provides a revised prompt that better specifies the expected answer form and removes ambiguity.
+        """
+        try:
+            llm = get_analysis_llm()
+            if llm is None:
+                # Conservative fallback
+                return AnswerResponsiveness(
+                    fully_responsive=False,
+                    revised_prompt=f"Revise and fully answer the following request. Provide a complete, unambiguous response with clear structure and all required details.\n\nRequest: {request}",
+                    rationale="LLM unavailable; cannot assess."
+                )
+
+            prompt = ChatPromptTemplate.from_messages([
+                ("system",
+                 "You are a strict evaluator. Determine if the provided answer fully and directly addresses the user's original request. "
+                 "If not, draft a revised prompt that clarifies ambiguities, specifies the expected output format, and ensures completeness. "
+                 "Return a JSON object matching the AnswerResponsiveness schema."),
+                ("user",
+                 "Original request:\n{request}\n\n"
+                 "Provided answer:\n{answer}\n\n"
+                 "Evaluate responsiveness. If not fully responsive, rewrite the prompt to elicit a complete, unambiguous answer "
+                 "(include desired structure, key elements, and any constraints).")
+            ])
+
+            structured_llm = llm.with_structured_output(AnswerResponsiveness)  # type: ignore
+            result: AnswerResponsiveness = (prompt | structured_llm).invoke({
+                "request": request,
+                "answer": answer
+            })
+            return result
+        except Exception as e:
+            # Safe fallback on any error
+            return AnswerResponsiveness(
+                fully_responsive=False,
+                revised_prompt=f"Improve this prompt to obtain a complete and unambiguous answer:\n\nRequest: {request}",
+                rationale=f"Assessment error: {e}"
+            )
 

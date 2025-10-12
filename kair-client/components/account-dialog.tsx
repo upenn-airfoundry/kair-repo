@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { Dialog, DialogTitle, DialogContent, DialogActions } from "@mui/material";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -12,12 +12,6 @@ interface AccountDialogProps {
   open: boolean;
   onClose: () => void;
 }
-
-type Project = {
-  id: string;
-  name: string;
-  // add other fields if needed
-};
 
 export default function AccountDialog({ open, onClose }: AccountDialogProps) {
   const secureFetch = useSecureFetch();

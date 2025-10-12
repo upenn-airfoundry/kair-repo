@@ -81,6 +81,8 @@ ALTER TYPE entity_types ADD VALUE IF NOT EXISTS 'url';
 
 ALTER TYPE entity_types ADD VALUE IF NOT EXISTS 'accession_number';
 
+ALTER TYPE entity_types ADD VALUE IF NOT EXISTS 'json_data';
+
 -- Data is "chunked" into hierarchies of entities.
 -- An entity can be a synopsis, fact, new concept, claim, author, organization,
 -- tag, paper, section, paragraph, table, hypothesis, source, method, event,

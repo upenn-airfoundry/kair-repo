@@ -142,6 +142,59 @@ class GraphAccessor:
             raise e
         return paper_id
     
+    def add_json(self, name: str, description: str, json_content: Any, url: Optional[str] = None) -> int:
+        """
+        Create a new entity of type 'json' and store the provided JSON content.
+
+        Args:
+            name (str): The name of the entity.
+            description (str): A description for the entity.
+            json_content (Any): The JSON-serializable content to store.
+            url (Optional[str]): An optional URL for the entity.
+
+        Returns:
+            int: The ID of the newly created entity.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    INSERT INTO {self.schema}.entities (entity_type, entity_name, entity_detail, entity_json, entity_url)
+                    VALUES ('json_data', %s, %s, %s, %s)
+                    RETURNING entity_id;
+                    """,
+                    (name, description, json.dumps(json_content), url)
+                )
+                entity_id = cur.fetchone()[0]  # type: ignore
+            self.conn.commit()
+            return entity_id
+        except Exception as e:
+            logging.error(f"Error adding JSON entity: {e}")
+            self.conn.rollback()
+            raise e
+
+    def get_json(self, entity_id: int) -> Optional[Any]:
+        """
+        Retrieve the JSON content for a given entity ID.
+
+        Args:
+            entity_id (int): The ID of the entity.
+
+        Returns:
+            Optional[Any]: The deserialized JSON content, or None if not found.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(f"SELECT entity_json FROM {self.schema}.entities WHERE entity_id = %s;", (entity_id,))
+                result = cur.fetchone()
+                if result and result[0]:
+                    return json.loads(result[0])
+                return None
+        except Exception as e:
+            logging.error(f"Error getting JSON entity: {e}")
+            self.conn.rollback()
+            return None
+    
     def update_paper_description(self, paper_id: int):
         """Update the description of a paper, given both the summary and author info."""
         try:

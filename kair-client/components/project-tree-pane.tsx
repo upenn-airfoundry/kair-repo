@@ -1,13 +1,13 @@
 'use client';
 
 import * as React from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { IconChevronRight, IconChevronDown, IconFolder, IconFolderOpen, IconPlus } from '@tabler/icons-react';
 import { cn } from '@/lib/utils';
 import { useSecureFetch } from '@/hooks/useSecureFetch';
 import { useAuth } from '@/context/auth-context';
 import { config } from "@/config";
-// NEW: UI components for dialog + form
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -61,14 +61,17 @@ function buildTree(projects: Project[], groupLabel = "My Projects"): TreeNode[] 
   const rootMap = new Map<string, TreeNode>();
   const ROOT_KEY = "__ROOT_GROUP__";
   for (const p of projects) {
-    const path = (p.path || '').trim();
-    if (path && path.includes('/')) {
-      const parts = path.split('/').map(s => s.trim()).filter(Boolean);
-      let level = rootMap;
-      let parentNode: TreeNode | null = null;
+    const path = (p.path || "").trim();
+    if (path && path.includes("/")) {
+      const parts = path.split("/").filter(Boolean);
+      const level = rootMap;
+      let parentNode: TreeNode | undefined;
       for (let i = 0; i < parts.length; i++) {
-        const key = parts.slice(0, i + 1).join('/');
-        let node = (i === 0 ? level.get(parts[i]) : (parentNode!.children || []).find(n => n.label === parts[i]));
+        const key = parts.slice(0, i + 1).join("/");
+        let node: TreeNode | undefined =
+          i === 0
+            ? level.get(parts[i])
+            : (parentNode?.children || []).find((n: TreeNode) => n.label === parts[i]);
         if (!node) {
           node = {
             id: `g-${key}`,
@@ -121,6 +124,26 @@ export function ProjectTreePane() {
   const [createName, setCreateName] = React.useState('');
   const [creating, setCreating] = React.useState(false);
   const [createError, setCreateError] = React.useState<string | null>(null);
+
+  // Context menu state
+  const [ctxOpen, setCtxOpen] = React.useState(false);
+  const [ctxPos, setCtxPos] = React.useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [ctxProject, setCtxProject] = React.useState<{ id: number; name: string } | null>(null);
+
+  // Rename dialog
+  const [renameOpen, setRenameOpen] = React.useState(false);
+  const [renameValue, setRenameValue] = React.useState('');
+  const [renaming, setRenaming] = React.useState(false);
+  const [renameError, setRenameError] = React.useState<string | null>(null);
+  const [projectToRename, setProjectToRename] = React.useState<{ id: number; name: string } | null>(null);
+
+  // Delete confirm
+  const [deleteOpen, setDeleteOpen] = React.useState(false);
+  const [deleting, setDeleting] = React.useState(false);
+  const [deleteError, setDeleteError] = React.useState<string | null>(null);
+  const [projectToDelete, setProjectToDelete] = React.useState<{ id: number; name: string } | null>(null);
+
+  const [isMounted, setIsMounted] = React.useState(false);
 
   const toggle = (id: string) => {
     setExpanded(prev => {
@@ -194,6 +217,11 @@ export function ProjectTreePane() {
     }
   }, [secureFetch, groupLabel, isLogin]);
 
+  // Ensure component is mounted before trying to use portals
+  React.useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
   // Initial load
   React.useEffect(() => {
     loadProjects();
@@ -204,7 +232,7 @@ export function ProjectTreePane() {
     if (user) {
       loadProjects();
     }
-  }, [user?.id, user?.email, loadProjects]);
+  }, [user, loadProjects]);
 
   // When on /login, clear the tree immediately
   React.useEffect(() => {
@@ -217,12 +245,15 @@ export function ProjectTreePane() {
   }, [isLogin]);
 
   React.useEffect(() => {
-    const handler = (e: any) => {
-      const pid = Number(e?.detail?.projectId);
-      if (Number.isFinite(pid)) setSelectedId(pid);
+    const handler = (e: CustomEvent<{ projectId: number | null }>) => {
+      const pid = e.detail?.projectId;
+      // Handle both selection and deselection (null)
+      if (pid !== undefined) {
+        setSelectedId(pid);
+      }
     };
-    window.addEventListener('project-changed', handler as any);
-    return () => window.removeEventListener('project-changed', handler as any);
+    window.addEventListener('project-changed', handler as EventListener);
+    return () => window.removeEventListener('project-changed', handler as EventListener);
   }, []);
 
   // NEW: create project submit
@@ -258,10 +289,91 @@ export function ProjectTreePane() {
       if (Number.isFinite(newId)) {
         await handleSelectProject(newId);
       }
-    } catch (err: any) {
-      setCreateError(err?.message || 'Error creating project');
+    } catch (err) {
+      const error = err as Error;
+      setCreateError(error.message || 'Error creating project');
     } finally {
       setCreating(false);
+    }
+  };
+
+  const closeContext = () => {
+    setCtxOpen(false);
+    setCtxProject(null);
+  };
+
+  React.useEffect(() => {
+    const onDocClick = () => closeContext();
+    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') closeContext(); };
+    document.addEventListener('click', onDocClick);
+    document.addEventListener('keydown', onEsc);
+    return () => {
+      document.removeEventListener('click', onDocClick);
+      document.removeEventListener('keydown', onEsc);
+    };
+  }, []);
+
+  const openContextFor = (e: React.MouseEvent, id: number, name: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setCtxProject({ id, name });
+    setCtxPos({ x: e.clientX, y: e.clientY });
+    setCtxOpen(true);
+  };
+
+  const handleRenameSubmit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!projectToRename) return;
+    if (!renameValue.trim()) {
+      setRenameError('Please enter a new name.');
+      return;
+    }
+    setRenaming(true);
+    setRenameError(null);
+    try {
+      const res = await secureFetch(`${config.apiBaseUrl}/api/projects/rename`, {
+        method: 'POST',
+        body: JSON.stringify({ project_id: projectToRename.id, name: renameValue.trim() }),
+      });
+      const j = await res.json();
+      if (!res.ok || !j?.success) throw new Error(j?.error || 'Failed to rename project');
+      setRenameOpen(false);
+      setProjectToRename(null);
+      await loadProjects();
+    } catch (err) {
+      const error = err as Error;
+      setRenameError(error.message || 'Error renaming project');
+    } finally {
+      setRenaming(false);
+    }
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!projectToDelete) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      const res = await secureFetch(`${config.apiBaseUrl}/api/projects/delete`, {
+        method: 'POST',
+        body: JSON.stringify({ project_id: projectToDelete.id }),
+      });
+      const j = await res.json();
+      if (!res.ok || !j?.success) throw new Error(j?.error || 'Failed to delete project');
+      setDeleteOpen(false);
+      setProjectToDelete(null);
+      await loadProjects();
+      const fallback = Number(j?.new_selected_project_id);
+      if (Number.isFinite(fallback) && fallback > 0) {
+        await handleSelectProject(fallback);
+      } else {
+        setSelectedId(null);
+        window.dispatchEvent(new CustomEvent('project-changed', { detail: { projectId: null } }));
+      }
+    } catch (err) {
+      const error = err as Error;
+      setDeleteError(error.message || 'Error deleting project');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -277,7 +389,6 @@ export function ProjectTreePane() {
             "flex items-center gap-1 pr-2 py-1.5 rounded-md cursor-pointer transition-all",
             "text-foreground/90",
             "hover:bg-muted",
-            // Selected: light gray bg + bold dark outline (matches graph)
             isSelected && "bg-muted ring-2 ring-foreground/80 text-foreground font-semibold shadow-sm"
           )}
           style={{ paddingLeft: 8 + depth * 14 }}
@@ -288,6 +399,10 @@ export function ProjectTreePane() {
               toggle(node.id);
             }
           }}
+          onContextMenu={(e) => {
+            if (node.projectId != null) openContextFor(e, node.projectId, node.label);
+          }}
+          title={node.projectId != null ? "Right-click for options" : undefined}
         >
           {!isLeaf ? (
             <>
@@ -349,6 +464,43 @@ export function ProjectTreePane() {
         </div>
       </div>
 
+      {/* Context menu rendered via Portal */}
+      {isMounted && ctxOpen && ctxProject && createPortal(
+        (
+          <div
+            className="fixed z-50 min-w-[160px] rounded-md border bg-popover text-popover-foreground shadow-md"
+            style={{ left: ctxPos.x, top: ctxPos.y }}
+            role="menu"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              className="w-full px-3 py-2 text-left text-sm hover:bg-accent hover:text-accent-foreground"
+              onClick={() => {
+                setProjectToRename(ctxProject);
+                setRenameValue(ctxProject.name);
+                setRenameError(null);
+                setRenameOpen(true);
+                closeContext();
+              }}
+            >
+              Rename
+            </button>
+            <button
+              className="w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-accent hover:text-red-600"
+              onClick={() => {
+                setProjectToDelete(ctxProject);
+                setDeleteError(null);
+                setDeleteOpen(true);
+                closeContext();
+              }}
+            >
+              Delete
+            </button>
+          </div>
+        ),
+        document.body
+      )}
+
       {/* Create Project Dialog */}
       <Dialog open={createOpen && !isLogin} onOpenChange={setCreateOpen}>
         <DialogContent className="sm:max-w-md">
@@ -387,6 +539,69 @@ export function ProjectTreePane() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Rename Project Dialog */}
+      <Dialog open={renameOpen} onOpenChange={(isOpen) => {
+         setRenameOpen(isOpen);
+         if (!isOpen) {
+           setProjectToRename(null);
+           setRenaming(false);
+         }
+       }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Rename project</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleRenameSubmit} className="grid gap-3">
+            <div className="grid gap-1.5">
+              <Label htmlFor="rename-project">New name</Label>
+              <Input
+                id="rename-project"
+                autoFocus
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                disabled={renaming}
+              />
+            </div>
+            {renameError && <div className="text-xs text-red-600">{renameError}</div>}
+            <DialogFooter className="mt-1">
+              <Button type="button" variant="outline" onClick={() => setRenameOpen(false)} disabled={renaming}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={renaming || !renameValue.trim()}>
+                {renaming ? "Renaming..." : "Rename"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Project Confirm */}
+      <Dialog open={deleteOpen} onOpenChange={(isOpen) => {
+         setDeleteOpen(isOpen);
+         if (!isOpen) {
+           setProjectToDelete(null);
+           setDeleting(false); // Ensure state is reset on close
+         }
+       }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete project</DialogTitle>
+          </DialogHeader>
+          <div className="text-sm">
+            This will permanently delete the project and its tasks. This action cannot be undone.
+          </div>
+          {deleteError && <div className="text-xs text-red-600">{deleteError}</div>}
+          <DialogFooter className="mt-1">
+            <Button type="button" variant="outline" onClick={() => setDeleteOpen(false)} disabled={deleting}>
+              Cancel
+            </Button>
+            <Button type="button" variant="destructive" onClick={handleDeleteConfirm} disabled={deleting}>
+              {deleting ? "Deleting..." : "Delete"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

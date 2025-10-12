@@ -20,9 +20,9 @@ interface Entity {
 }
 
 export default function DetailsViewer({ selectedElement }: DetailsViewerProps) {
+  const secureFetch = useSecureFetch();
   const [entities, setEntities] = useState<Entity[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const secureFetch = useSecureFetch();
 
   useEffect(() => {
     if (selectedElement && 'position' in selectedElement) { // It's a Node
@@ -43,7 +43,7 @@ export default function DetailsViewer({ selectedElement }: DetailsViewerProps) {
     } else {
       setEntities([]);
     }
-  }, [selectedElement]);
+  }, [selectedElement, secureFetch]);
 
   if (!selectedElement) {
     return <div className="p-4 text-sm text-muted-foreground">Click a node or an edge to see details.</div>;
@@ -75,7 +75,7 @@ export default function DetailsViewer({ selectedElement }: DetailsViewerProps) {
           ))}
         </ul>
       ) : (
-        <p>We haven't yet retrieved resources related to this task.</p>
+        <p>We haven&#39;t yet retrieved resources related to this task.</p>
       )}
     </div>
   );
