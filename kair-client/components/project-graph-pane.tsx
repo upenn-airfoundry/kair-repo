@@ -25,7 +25,6 @@ import ReactFlow, {
 import 'reactflow/dist/style.css';
 import { config } from "@/config";
 import DetailsViewer from './details-viewer';
-import dagre from 'dagre';
 import {
   Panel,
   PanelGroup,
@@ -33,12 +32,19 @@ import {
 } from "react-resizable-panels";
 import { createPortal } from 'react-dom';
 
+// dagre not used with current layout
+
+type TaskNodeData = {
+  label: string;
+  schema: string;
+  openMenuAt?: (clientX: number, clientY: number) => void;
+};
+
 // Custom node with 4 handles so we can connect dataflow (L/R) and parent-child (T/B) separately
-function TaskNode({ data }: NodeProps) {
+function TaskNode({ data }: NodeProps<TaskNodeData>) {
   return (
     <div
       onContextMenu={(e) => {
-        // Let parent handle menu via function we inject into data
         if (data?.openMenuAt) {
           e.preventDefault();
           e.stopPropagation();
@@ -52,7 +58,7 @@ function TaskNode({ data }: NodeProps) {
       {/* Left/Right for dataflow edges */}
       <Handle id="left" type="target" position={Position.Left} />
       <Handle id="right" type="source" position={Position.Right} />
-      <div>{data?.label}</div>
+     <div>{data?.label}</div>
     </div>
   );
 }
@@ -142,8 +148,8 @@ function computeTopoLevels(nodes: Node[], deps: Dependency[]): { levelOf: Map<st
 }
 
 const getLayoutedElements = (
-  nodes: Node[],
-  allEdges: Edge[],
+  nodes: Node<TaskNodeData>[],
+  allEdges: Edge<Dependency>[],
   deps: Dependency[],
   viewportWidth: number,
   viewportHeight: number
@@ -156,22 +162,21 @@ const getLayoutedElements = (
   const levelCount = Math.max(1, maxLevel + 1);
 
   // Each level gets a horizontal band (slice) of the viewport's vertical space
-  var sliceHeight = Math.max(nodeHeight + rowGap, Math.floor(height / levelCount));
-  if (sliceHeight < 150) sliceHeight = 160; // minimum slice height
+  const sliceHeight = Math.max(nodeHeight + rowGap, Math.floor(height / levelCount));
   const sidePad = 20; // horizontal padding inside each row
   const bandTopPad = 10; // vertical padding inside each band
 
   // Group nodes by level and sort by lexicographical order of labels
-  const levelBuckets = new Map<number, Node[]>();
+  const levelBuckets = new Map<number, Node<TaskNodeData>[]>();
   for (const n of nodes) {
     const lvl = levelOf.get(n.id.toString()) ?? 0;
     if (!levelBuckets.has(lvl)) levelBuckets.set(lvl, []);
     levelBuckets.get(lvl)!.push(n);
   }
-  for (const [lvl, arr] of levelBuckets.entries()) {
+  for (const arr of levelBuckets.values()) {
     arr.sort((a, b) => {
-      const la = String((a.data as any)?.label ?? '');
-      const lb = String((b.data as any)?.label ?? '');
+      const la = String(a.data?.label ?? '');
+      const lb = String(b.data?.label ?? '');
       return la.localeCompare(lb, undefined, { sensitivity: 'base' });
     });
   }
@@ -236,8 +241,8 @@ function backgroundForTask(name: string): string | undefined {
 }
 
 export default function ProjectGraphPane({ projectId, projectName, refreshKey, onTaskSelected }: ProjectGraphPaneProps) {
-  const [nodes, setNodes] = useState<Node[]>([]);
-  const [edges, setEdges] = useState<Edge[]>([]);
+  const [nodes, setNodes] = useState<Node<TaskNodeData>[]>([]);
+  const [edges, setEdges] = useState<Edge<Dependency>[]>([]);
   const [selectedElement, setSelectedElement] = useState<Node | Edge | null>(null);
   const secureFetch = useSecureFetch();
   const rfInstance = useRef<ReactFlowInstance | null>(null);
@@ -281,8 +286,14 @@ export default function ProjectGraphPane({ projectId, projectName, refreshKey, o
   const [baseEdges, setBaseEdges] = useState<Edge[]>([]);
   const [baseDeps, setBaseDeps] = useState<Dependency[]>([]);
 
-  const onNodesChange: OnNodesChange = useCallback((changes) => setNodes((nds) => applyNodeChanges(changes, nds)), [setNodes]);
-  const onEdgesChange: OnEdgesChange = useCallback((changes) => setEdges((eds) => applyEdgeChanges(changes, eds)), [setEdges]);
+  const onNodesChange: OnNodesChange = useCallback(
+    (changes) => setNodes((nds) => applyNodeChanges(changes, nds)),
+    []
+  );
+  const onEdgesChange: OnEdgesChange = useCallback(
+    (changes) => setEdges((eds) => applyEdgeChanges(changes, eds)),
+    []
+  );
 
    // Keep resetViewport simple; don't depend on nodes.length so it doesn't capture stale values
    const resetViewport = useCallback(() => {
@@ -314,7 +325,7 @@ export default function ProjectGraphPane({ projectId, projectName, refreshKey, o
          const tasksData = await tasksRes.json();
          const depsData = await depsRes.json();
 
-         const initialNodes: Node[] = tasksData.tasks.map((task: Task) => {
+         const initialNodes: Node<TaskNodeData>[] = tasksData.tasks.map((task: Task) => {
            const label = stripTaskLabel(task.name);
            const bg = backgroundForTask(task.name);
            return {
@@ -323,7 +334,6 @@ export default function ProjectGraphPane({ projectId, projectName, refreshKey, o
              data: {
                label,
                schema: task.schema,
-               // Provide a per-node opener that carries the node id
                openMenuAt: (clientX: number, clientY: number) => openMenuAt(clientX, clientY, task.id.toString()),
              },
              className: "task-node",
@@ -332,7 +342,7 @@ export default function ProjectGraphPane({ projectId, projectName, refreshKey, o
            };
          });
 
-         const initialEdges: Edge[] = depsData.dependencies.map((dep: Dependency) => {
+         const initialEdges: Edge<Dependency>[] = depsData.dependencies.map((dep: Dependency) => {
            const baseStyle: CSSProperties = { stroke: '#333', strokeWidth: 1.5 };
            const edgeStyle: CSSProperties = { ...baseStyle };
            let markerStart: EdgeMarker | undefined;
@@ -430,7 +440,7 @@ export default function ProjectGraphPane({ projectId, projectName, refreshKey, o
 
    const renameTask = useCallback(async (taskId: string) => {
      const current = nodes.find((n) => n.id.toString() === taskId);
-     const existing = String((current?.data as any)?.label ?? '');
+     const existing = String(current?.data?.label ?? '');
      const name = window.prompt("Rename task to:", existing);
      if (!name || name.trim() === "" || name === existing) return;
      try {

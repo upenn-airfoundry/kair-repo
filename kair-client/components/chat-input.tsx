@@ -5,38 +5,44 @@ import { Button } from "@/components/ui/button";
 import { Send, Upload } from 'lucide-react';
 import { config } from "@/config";
 import ReactMarkdown from 'react-markdown';
+import type { Components } from 'react-markdown';
 import { useSecureFetch } from '@/hooks/useSecureFetch';
 import remarkGfm from 'remark-gfm';
 
 // Lightweight markdown component overrides to avoid horizontal overflow
 const useMarkdownComponents = () => {
-  return useMemo(() => ({
+  return useMemo<Components>(() => ({
     // Allow content to be wider than the pane; the outer message list will scroll horizontally.
-    pre: (props: any) => (
-      <pre {...props} className={`min-w-fit ${props?.className ?? ''}`} />
+    pre: ({ className, ...props }: React.ComponentProps<'pre'>) => (
+      <pre {...props} className={`min-w-fit ${className ?? ''}`} />
     ),
-    table: ({ children, ...rest }: any) => (
+    table: ({ children, ...rest }: React.ComponentProps<'table'>) => (
       <div className="inline-block min-w-fit">
         <table {...rest}>{children}</table>
       </div>
     ),
-    a: (props: any) => (
-      <a {...props} className={`break-all ${props?.className ?? ''}`} />
+    a: ({ className, ...props }: React.ComponentProps<'a'>) => (
+      <a {...props} className={`break-all ${className ?? ''}`} />
     ),
-    code: ({ inline, className, children, ...rest }: any) =>
+    code: (
+      { inline, className, children, ...props }: { inline?: boolean } & React.ComponentProps<'code'>
+    ) =>
       inline ? (
-        <code {...rest} className={`break-all whitespace-pre-wrap ${className ?? ''}`}>{children}</code>
+        <code {...props} className={`break-all whitespace-pre-wrap ${className ?? ''}`}>{children}</code>
       ) : (
-        <code {...rest} className={className}>{children}</code>
+        <code {...props} className={className}>{children}</code>
       ),
-    img: (props: any) => (
-      <img {...props} className={`max-w-full h-auto ${props?.className ?? ''}`} />
+    img: ({ className, alt = '', ...props }: React.ImgHTMLAttributes<HTMLImageElement>) => (
+      <>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img {...props} alt={alt} className={`max-w-full h-auto ${className ?? ''}`} />
+      </>
     ),
-    p: (props: any) => (
-      <p {...props} className={`break-words break-all whitespace-pre-wrap ${props?.className ?? ''}`} />
+    p: ({ className, ...props }: React.ComponentProps<'p'>) => (
+      <p {...props} className={`break-words break-all whitespace-pre-wrap ${className ?? ''}`} />
     ),
-    li: (props: any) => (
-      <li {...props} className={`break-words break-all whitespace-pre-wrap ${props?.className ?? ''}`} />
+    li: ({ className, ...props }: React.ComponentProps<'li'>) => (
+      <li {...props} className={`break-words break-all whitespace-pre-wrap ${className ?? ''}`} />
     ),
   }), []);
 };
