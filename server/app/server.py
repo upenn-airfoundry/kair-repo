@@ -7,9 +7,11 @@ import uuid
 
 import shelve
 
+server = os.getenv("SERVER", "localhost")
+
 # Feature flags
 SKIP_ENRICHMENT = os.getenv("SKIP_ENRICHMENT", "true").lower() in ("1", "true", "yes")
-ALLOWED_ORIGIN = os.environ.get("ALLOWED_ORIGIN", "http://localhost:3000")
+ALLOWED_ORIGIN = os.environ.get("ALLOWED_ORIGIN", "http://" + server + ":3000")
 SESSION_TTL_SECONDS = int(os.environ.get("SESSION_TTL_SECONDS", "1800"))  # 30 min default
 
 # Add parent directory to Python path
