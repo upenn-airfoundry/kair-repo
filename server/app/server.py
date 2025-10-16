@@ -1,15 +1,16 @@
 import os
 import sys
+from typing import Optional
 import bcrypt
 import logging
 import uuid
-import time
 
 import shelve
 
 # Feature flags
 SKIP_ENRICHMENT = os.getenv("SKIP_ENRICHMENT", "true").lower() in ("1", "true", "yes")
 ALLOWED_ORIGIN = os.environ.get("ALLOWED_ORIGIN", "http://localhost:3000")
+SESSION_TTL_SECONDS = int(os.environ.get("SESSION_TTL_SECONDS", "1800"))  # 30 min default
 
 # Add parent directory to Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -17,14 +18,10 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 import tornado.ioloop
 import tornado.web
 import tornado.options
-from torndsession.session import SessionManager
 from torndsession.session import SessionMixin
 import json
 from datetime import datetime
 from dotenv import load_dotenv, find_dotenv
-
-from prompts.llm_prompts import QueryClassification, QueryPrompts
-# from torndsession.sessionhandler import SessionBaseHandler
 
 # Load environment variables from .env file
 _ = load_dotenv(find_dotenv())
@@ -33,8 +30,6 @@ from backend.graph_db import GraphAccessor
 from backend.enrichment_daemon import EnrichmentDaemon
 from prompts.llm_prompts import PeoplePrompts
 from qa.answer_question import AnswerQuestionHandler
-# from enrichment.langchain_ops import AssessmentOps
-
 
 state = shelve.open("server_state.db", writeback=True)
 
@@ -44,7 +39,7 @@ state = shelve.open("server_state.db", writeback=True)
 logging.basicConfig(level=logging.INFO)
 
 
-class BaseHandler(tornado.web.RequestHandler):
+class BaseHandler(tornado.web.RequestHandler, SessionMixin):
     def set_default_headers(self):
         self.set_header("Access-Control-Allow-Origin", ALLOWED_ORIGIN)
         self.set_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
@@ -94,7 +89,33 @@ class BaseHandler(tornado.web.RequestHandler):
         return False
 
     def renew_session(self):
-        pass
+        """Refresh the msid cookie max-age to keep the session alive."""
+        try:
+            session_id = self.get_cookie("msid")
+            if not session_id:
+                return
+            # Ensure the session is still present in our shelve store
+            sess = state.get(session_id)
+            if not sess:
+                return
+            # Refresh cookie expiry
+            self.set_cookie(
+                "msid",
+                session_id,
+                expires_days=None,
+                max_age=SESSION_TTL_SECONDS,
+                httponly=True,
+                secure=False,  # set True if serving over HTTPS
+            )
+            # Optionally track last_seen
+            try:
+                sess["last_seen"] = datetime.utcnow().isoformat()  # noqa: F405 (datetime already imported)
+                state[session_id] = sess
+                state.sync()
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     def redirect_to_login(self):
         #self.redirect("/login")  # Adjust path as needed
@@ -103,7 +124,7 @@ class BaseHandler(tornado.web.RequestHandler):
 ########### Main ###########
 
 # Initialize the GraphAccessor, but don't crash if DB is unavailable (or skip)
-graph_accessor = None
+graph_accessor: Optional[GraphAccessor] = None
 question_handlers = {}
 try:
     graph_accessor = GraphAccessor()
@@ -114,7 +135,7 @@ try:
 except Exception as e:
     logging.error(f"Failed to initialize database connection: {e}")
 
-class LoginHandler(BaseHandler, SessionMixin):
+class LoginHandler(BaseHandler):
     def post(self):
         try:
             data = self.get_json()
@@ -153,7 +174,7 @@ class LoginHandler(BaseHandler, SessionMixin):
                 session["email"] = email
 
                 # Set session ID as a cookie for the client
-                self.set_cookie("msid", session_id, expires_days=None, max_age=600, httponly=True, secure=False)
+                self.set_cookie("msid", session_id, expires_days=None, max_age=SESSION_TTL_SECONDS, httponly=True, secure=False)
                 
                 profile = graph_accessor.get_user_profile(email)  # Load user profile if needed
                 session["profile"] = profile
@@ -276,7 +297,7 @@ class DbPingHandler(BaseHandler):
             self.set_status(500)
             self.write({"ok": False, "error": f"{e}"})
 
-class FindRelatedEntitiesByTagHandler(BaseHandler, SessionMixin):
+class FindRelatedEntitiesByTagHandler(BaseHandler):
     def get(self):
         # Guard: only allow if session is valid and not expired
         if self.is_session_expired() or not self.is_authenticated():
@@ -299,7 +320,7 @@ class FindRelatedEntitiesByTagHandler(BaseHandler, SessionMixin):
         results = graph_accessor.find_entities_by_tag_embedding(query_embedding, tag_name, k)
         self.write({"results": results})
 
-class FindRelatedEntitiesHandler(BaseHandler, SessionMixin):
+class FindRelatedEntitiesHandler(BaseHandler):
     def get(self):
         # Guard: only allow if session is valid and not expired
         if self.is_session_expired() or not self.is_authenticated():
@@ -324,10 +345,12 @@ class FindRelatedEntitiesHandler(BaseHandler, SessionMixin):
             return
             
         logging.debug("Find related entities: " + query)
+        if keywords:
+            logging.debug("Keywords: " + str(keywords))
         results = graph_accessor.find_related_entities(query, k, entity_type, keywords)
         self.write({"results": results})
 
-class AddToCrawlQueueHandler(BaseHandler, SessionMixin):
+class AddToCrawlQueueHandler(BaseHandler):
     def post(self):
         # Guard: only allow if session is valid and not expired
         if self.is_session_expired() or not self.is_authenticated():
@@ -360,7 +383,7 @@ class AddToCrawlQueueHandler(BaseHandler, SessionMixin):
         graph_accessor.commit()
         self.write({"message": "URL added to crawl queue"})
 
-class CrawlFilesHandler(BaseHandler, SessionMixin):
+class CrawlFilesHandler(BaseHandler):
     def post(self):
         # Guard: only allow if session is valid and not expired
         if self.is_session_expired() or not self.is_authenticated():
@@ -378,7 +401,7 @@ class CrawlFilesHandler(BaseHandler, SessionMixin):
             self.set_status(500)
             self.write({"error": f"An error occurred during crawling: {e}"})
 
-class ParsePDFsAndIndexHandler(BaseHandler, SessionMixin):
+class ParsePDFsAndIndexHandler(BaseHandler):
     def post(self):
         # Guard: only allow if session is valid and not expired
         if self.is_session_expired() or not self.is_authenticated():
@@ -417,7 +440,7 @@ class UncrowledEntriesHandler(BaseHandler):
             self.set_status(500)
             self.write({"error": f"An error occurred while fetching uncrawled entries: {e}"})
 
-class GetAssessmentCriteriaHandler(BaseHandler, SessionMixin):
+class GetAssessmentCriteriaHandler(BaseHandler):
     def get(self):
         # Guard: only allow if session is valid and not expired
         if self.is_session_expired() or not self.is_authenticated():
@@ -442,7 +465,7 @@ class GetAssessmentCriteriaHandler(BaseHandler, SessionMixin):
             self.set_status(500)
             self.write({"error": f"An error occurred: {e}"})
 
-class AddAssessmentCriterionHandler(BaseHandler, SessionMixin):
+class AddAssessmentCriterionHandler(BaseHandler):
     def post(self):
         # Guard: only allow if session is valid and not expired
         if self.is_session_expired() or not self.is_authenticated():
@@ -477,7 +500,7 @@ class AddAssessmentCriterionHandler(BaseHandler, SessionMixin):
             self.set_status(500)
             self.write({"error": f"An error occurred: {e}"})
 
-class AddEnrichmentHandler(BaseHandler, SessionMixin):
+class AddEnrichmentHandler(BaseHandler):
     def post(self):
         # Guard: only allow if session is valid and not expired
         if self.is_session_expired() or not self.is_authenticated():
@@ -495,7 +518,7 @@ class AddEnrichmentHandler(BaseHandler, SessionMixin):
             self.set_status(500)
             self.write({"error": f"An error occurred: {e}"})
 
-class ExpandSearchHandler(BaseHandler, SessionMixin):
+class ExpandSearchHandler(BaseHandler):
     async def post(self):
         # Guard: only allow if session is valid and not expired
         if self.is_session_expired() or not self.is_authenticated():
@@ -598,7 +621,7 @@ class StopSchedulerHandler(BaseHandler):
             self.set_status(500)
             self.write({"error": f"Failed to stop scheduler: {e}"})
 
-class AccountInfoHandler(BaseHandler, SessionMixin):
+class AccountInfoHandler(BaseHandler):
     def get(self):
         if self.is_session_expired() or not self.is_authenticated():
             self.set_status(401)
@@ -617,7 +640,7 @@ class AccountInfoHandler(BaseHandler, SessionMixin):
             }
         })
 
-class UpdateAccountHandler(BaseHandler, SessionMixin):
+class UpdateAccountHandler(BaseHandler):
     def post(self):
         if self.is_session_expired() or not self.is_authenticated():
             self.set_status(401)
@@ -628,7 +651,7 @@ class UpdateAccountHandler(BaseHandler, SessionMixin):
         graph_accessor.update_user_profile(email, data.get("profile", {}))
         self.write({"success": True})
 
-class SelectProjectHandler(BaseHandler, SessionMixin):
+class SelectProjectHandler(BaseHandler):
     def post(self):
         """Select an existing project for the current user and persist it in the profile."""
         if self.is_session_expired() or not self.is_authenticated():
@@ -675,7 +698,7 @@ class SelectProjectHandler(BaseHandler, SessionMixin):
             self.set_status(500)
             self.write({"error": f"An error occurred: {e}"})
 
-class ListProjectsHandler(BaseHandler, SessionMixin):
+class ListProjectsHandler(BaseHandler):
     def get(self):
         if self.is_session_expired() or not self.is_authenticated():
             self.set_status(401)
@@ -694,7 +717,7 @@ class ListProjectsHandler(BaseHandler, SessionMixin):
         projects = graph_accessor.search_projects(search)
         self.write({"projects": projects})
 
-class CreateProjectHandler(BaseHandler, SessionMixin):
+class CreateProjectHandler(BaseHandler):
     def post(self):
         if self.is_session_expired() or not self.is_authenticated():
             self.set_status(401); self.write({"error": "Session expired or not authenticated"}); return
@@ -719,7 +742,7 @@ class CreateProjectHandler(BaseHandler, SessionMixin):
             self.set_status(500)
             self.write({"error": f"An error occurred: {e}"})
 
-class ProjectTaskHandler(BaseHandler, SessionMixin):
+class ProjectTaskHandler(BaseHandler):
     def post(self, project_id):
         """Create a new project task."""
         if not self.is_authenticated():
@@ -750,7 +773,7 @@ class ProjectTaskHandler(BaseHandler, SessionMixin):
             self.write({"tasks": tasks})
 
 
-class TaskEntityHandler(BaseHandler, SessionMixin):
+class TaskEntityHandler(BaseHandler):
     def post(self, task_id):
         """Add and link an entity to a task."""
         if not self.is_authenticated():
@@ -775,7 +798,7 @@ class TaskEntityHandler(BaseHandler, SessionMixin):
         self.write({"entities": entities})
 
 
-class TaskDependencyHandler(BaseHandler, SessionMixin):
+class TaskDependencyHandler(BaseHandler):
     def post(self, dependent_task_id):
         """Create a dependency between two tasks."""
         if not self.is_authenticated():
@@ -808,7 +831,7 @@ class TaskDependencyHandler(BaseHandler, SessionMixin):
         self.write({"dependencies": dependencies})
 
 
-class ProjectDependenciesHandler(BaseHandler, SessionMixin):
+class ProjectDependenciesHandler(BaseHandler):
     def get(self, project_id):
         """Retrieve all task dependencies for a project."""
         if not self.is_authenticated():
@@ -818,7 +841,7 @@ class ProjectDependenciesHandler(BaseHandler, SessionMixin):
         self.write({"dependencies": dependencies})
 
 
-class UserFindTaskHandler(BaseHandler, SessionMixin):
+class UserFindTaskHandler(BaseHandler):
     def get(self):
         """Find the most similar task for a user across all projects."""
         if not self.is_authenticated():
@@ -834,7 +857,7 @@ class UserFindTaskHandler(BaseHandler, SessionMixin):
         self.write({"task": task})
 
 
-class ChatHistoryHandler(BaseHandler, SessionMixin):
+class ChatHistoryHandler(BaseHandler):
     def get(self):
         if not self.is_authenticated():
             self.set_status(401)
@@ -869,7 +892,7 @@ class ChatHistoryHandler(BaseHandler, SessionMixin):
             self.set_status(500)
             self.write({"error": "An error occurred while fetching chat history."})
 
-class RenameProjectHandler(BaseHandler, SessionMixin):
+class RenameProjectHandler(BaseHandler):
     def post(self):
         if self.is_session_expired() or not self.is_authenticated():
             self.set_status(401); self.write({"error": "Session expired or not authenticated"}); return
@@ -901,7 +924,7 @@ class RenameProjectHandler(BaseHandler, SessionMixin):
             self.write({"error": f"An error occurred: {e}"})
 
 
-class DeleteProjectHandler(BaseHandler, SessionMixin):
+class DeleteProjectHandler(BaseHandler):
     def post(self):
         if self.is_session_expired() or not self.is_authenticated():
             self.set_status(401); self.write({"error": "Session expired or not authenticated"}); return
@@ -948,6 +971,17 @@ class DeleteProjectHandler(BaseHandler, SessionMixin):
             self.write({"error": f"An error occurred: {e}. Note you must have at least one project!"})
 
 
+class KeepAliveHandler(BaseHandler):
+    def get(self):
+        """Keep the session alive by refreshing the cookie max-age."""
+        if not self.is_authenticated():
+            self.set_status(401)
+            self.write({"ok": False, "error": "Not authenticated"})
+            return
+        self.renew_session()
+        self.write({"ok": True, "ttl": SESSION_TTL_SECONDS})
+
+
 class Application(tornado.web.Application):
     def __init__(self, handlers):
         settings = dict(
@@ -968,10 +1002,115 @@ class Application(tornado.web.Application):
 
 
 
+class FleshOutTaskHandler(BaseHandler):
+    async def post(self, task_id):
+        """Invoke AnswerQuestionHandler.flesh_out_task for a given task."""
+        # Guard: only allow if session is valid and not expired
+        if self.is_session_expired() or not self.is_authenticated():
+            self.set_status(401)
+            self.write({"error": "Session expired or not authenticated"})
+            self.redirect_to_login()
+            return
+        self.renew_session()  # Renew expiration on access
+
+        try:
+            data = self.get_json() or {}
+        except Exception:
+            data = {}
+
+        parent_task_id = data.get("parent_task_id")
+        try:
+            parent_task_id = int(parent_task_id) if parent_task_id is not None else None
+        except Exception:
+            parent_task_id = None
+
+        try:
+            session_id = self.get_cookie("msid")
+            if not session_id or session_id not in question_handlers:
+                self.set_status(500)
+                self.write({"error": "Session expired, please log in again"})
+                return
+
+            email = self.session.session.get("email")
+            (user_id, project_id) = graph_accessor.get_user_and_project_ids(email)
+            # Ensure the handler is on the current project
+            handler = question_handlers[session_id]
+            handler.set_project_id(project_id)
+
+            # Flesh out the task (dependencies not required; method queries DB directly)
+            answer_text, code = await handler.flesh_out_task(int(task_id), dependencies=None, parent_task_id=parent_task_id)
+
+            self.write({
+                "success": True,
+                "task_id": int(task_id),
+                "refresh_project": project_id,
+                "message": answer_text or "",
+                "code": code or 0
+            })
+        except Exception as e:
+            logging.error(f"Error during task flesh-out: {e}")
+            self.set_status(500)
+            self.write({"error": f"An error occurred while fleshing out the task: {e}"})
+
+class RenameTaskHandler(BaseHandler):
+    def post(self, task_id):
+        if self.is_session_expired() or not self.is_authenticated():
+            self.set_status(401); self.write({"error": "Session expired or not authenticated"}); return
+        try:
+            data = self.get_json() or {}
+            new_name = (data.get("name") or data.get("task_name") or "").strip()
+            if not new_name:
+                self.set_status(400); self.write({"error": "Missing new task name"}); return
+
+            # Verify task exists and user membership in the task's project
+            row = graph_accessor.exec_sql("SELECT project_id FROM project_tasks WHERE task_id = %s;", (int(task_id),))
+            if not row:
+                self.set_status(404); self.write({"error": "Task not found"}); return
+            project_id = int(row[0][0])
+
+            email = self.session.session.get("email")
+            user_id = graph_accessor.exec_sql("SELECT user_id FROM users WHERE email = %s;", (email,))[0][0]
+            mem = graph_accessor.exec_sql("SELECT 1 FROM user_projects WHERE user_id = %s AND project_id = %s;", (user_id, project_id))
+            if not mem:
+                self.set_status(403); self.write({"error": "Not a member of this project"}); return
+
+            graph_accessor.rename_project_task(int(task_id), new_name)
+            self.write({"success": True, "task_id": int(task_id), "name": new_name, "project_id": project_id})
+        except Exception as e:
+            logging.error(f"RenameTask error: {e}")
+            self.set_status(500)
+            self.write({"error": f"{e}"})
+
+
+class DeleteTaskHandler(BaseHandler):
+    def post(self, task_id):
+        if self.is_session_expired() or not self.is_authenticated():
+            self.set_status(401); self.write({"error": "Session expired or not authenticated"}); return
+        try:
+            # Verify task exists and user membership in the task's project
+            row = graph_accessor.exec_sql("SELECT project_id FROM project_tasks WHERE task_id = %s;", (int(task_id),))
+            if not row:
+                self.set_status(404); self.write({"error": "Task not found"}); return
+            project_id = int(row[0][0])
+
+            email = self.session.session.get("email")
+            user_id = graph_accessor.exec_sql("SELECT user_id FROM users WHERE email = %s;", (email,))[0][0]
+            mem = graph_accessor.exec_sql("SELECT 1 FROM user_projects WHERE user_id = %s AND project_id = %s;", (user_id, project_id))
+            if not mem:
+                self.set_status(403); self.write({"error": "Not a member of this project"}); return
+
+            graph_accessor.delete_project_task(int(task_id))
+            self.write({"success": True, "deleted_task_id": int(task_id), "project_id": project_id})
+        except Exception as e:
+            logging.error(f"DeleteTask error: {e}")
+            self.set_status(500)
+            self.write({"error": f"{e}"})
+
 def make_app():
     return Application([
         (r"/health", HealthCheckHandler),
         (r"/db_ping", DbPingHandler),
+        (r"/api/session/keepalive", KeepAliveHandler),
         (r"/find_related_entities_by_tag", FindRelatedEntitiesByTagHandler),
         (r"/find_related_entities", FindRelatedEntitiesHandler),
         (r"/add_to_crawl_queue", AddToCrawlQueueHandler),
@@ -993,13 +1132,16 @@ def make_app():
         (r"/api/projects/list", ListProjectsHandler),
         (r"/api/projects/create", CreateProjectHandler),
         (r"/api/projects/select", SelectProjectHandler),
-        (r"/api/projects/rename", RenameProjectHandler),   # NEW
-        (r"/api/projects/delete", DeleteProjectHandler),   # NEW
-        (r"/api/project/(\d+)/tasks", ProjectTaskHandler), # GET for list/find, POST for create
-        (r"/api/task/(\d+)/entities", TaskEntityHandler),   # GET for list, POST for link
-        (r"/api/task/(\d+)/dependencies", TaskDependencyHandler), # GET for list, POST for create
-        (r"/api/project/(\d+)/dependencies", ProjectDependenciesHandler), # Add this line
-        (r"/api/user/find_task", UserFindTaskHandler),      # GET to find task for user
+        (r"/api/projects/rename", RenameProjectHandler),
+        (r"/api/projects/delete", DeleteProjectHandler),
+        (r"/api/project/(\d+)/tasks", ProjectTaskHandler),
+        (r"/api/task/(\d+)/entities", TaskEntityHandler),
+        (r"/api/task/(\d+)/dependencies", TaskDependencyHandler),
+        (r"/api/project/(\d+)/dependencies", ProjectDependenciesHandler),
+        (r"/api/task/(\d+)/flesh_out", FleshOutTaskHandler),
+        (r"/api/task/(\d+)/rename", RenameTaskHandler),
+        (r"/api/task/(\d+)/delete", DeleteTaskHandler),
+        (r"/api/user/find_task", UserFindTaskHandler),
     ])
 
 if __name__ == "__main__":

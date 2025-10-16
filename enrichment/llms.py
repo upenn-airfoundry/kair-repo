@@ -30,6 +30,12 @@ mcp_client = MultiServerMCPClient(
             "url": "http://localhost:8001/mcp",
             "transport": "streamable_http",
             
+        },
+        "SearchAPI": {
+            # Make sure you start your server on port 8001
+            "url": "http://localhost:8002/mcp",
+            "transport": "streamable_http",
+            
         }
     })
 

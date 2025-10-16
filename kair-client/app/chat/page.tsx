@@ -15,6 +15,7 @@ export default function ChatPage() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [activeProjectId, setActiveProjectId] = useState<number | null>(null);
   const [activeProjectName, setActiveProjectName] = useState<string>("");
+  const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
   // ChatInput manages its own message list; keep a typed no-op callback to satisfy props
   const addMessage: (message: Message) => void = React.useCallback(() => {
     // no-op; ChatInput manages messages internally
@@ -71,6 +72,7 @@ export default function ChatPage() {
                   projectName={activeProjectName}
                   refreshKey={refreshKey}
                   onProjectChanged={handleProjectChanged}
+                  onTaskSelected={setSelectedTaskId}
                 />
               ) : (
                 <div className="h-full w-full border rounded-lg flex items-center justify-center text-muted-foreground">
@@ -90,6 +92,7 @@ export default function ChatPage() {
                 <ChatInput
                   projectId={activeProjectId}
                   onRefreshRequest={handleRefreshRequest}
+                  selectedTaskId={selectedTaskId}
                   addMessage={addMessage}
                 />
               ) : (

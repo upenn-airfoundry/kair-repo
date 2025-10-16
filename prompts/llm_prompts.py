@@ -1,3 +1,4 @@
+import logging
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 from langchain_core.prompts import MessagesPlaceholder  # needed for agent prompt placeholders
@@ -62,7 +63,7 @@ class TaskDependency(BaseModel):
     dependent_task_id: str = Field(..., description="The unique identifier of the dependent task that consumes the data.")
     dependent_task_description: str = Field(..., description="The full 'description_and_goals' of the dependent task that consumes the data.")
     data_schema: str = Field(..., description="The schema of the data flowing from the source to the dependent task, formatted as 'field:type'.")
-    data_flow_type: Literal["automatic", "gated by user feedback", "rethinking the previous task"] = Field(..., description="The nature of the data flow between the tasks.")
+    data_flow_type: Literal["automatic", "gated by user feedback", "rethinking the previous task", "parent task-subtask"] = Field(..., description="The nature of the data flow between the tasks.")
     relationship_description: str = Field(..., description="A description of the dependency, including the criteria evaluated from the source task's output before the dependent task can proceed.")
 
 class TaskDependencyList(BaseModel):
@@ -169,7 +170,7 @@ class FacultyList(BaseModel):
     
     
 class QueryClassification(BaseModel):
-    query_class: Literal["general_knowledge", "learning_resources_or_technical_training", "papers_reports_or_prior_work", "molecules_algorithms_solutions_strategies_or_plans"]
+    query_class: Literal["general_knowledge", "learning_resources_or_technical_training", "information_from_prior_work_like_papers_or_videos_or_articles", "multi_step_planning_or_problem_solving", "other"] = Field(..., description="The class of the query, chosen from the predefined categories.")
     task_summary: str = Field(..., description="A brief description of the task involved.")
 
 class DocumentPrompts:
@@ -764,13 +765,23 @@ class QueryPrompts:
             prompt = items[0]
             response = items[1]
             history_str += f"User: {prompt}\nSystem: {response}\n"
-        context = (
-            f"General instructions: {system_profile}\n"
-            f"User expertise: {user_profile.get('expertise','')}\n"
-            f"Projects and interests: {user_profile.get('projects','')}\n"
-            f"Task summary: {task_summary}\n"
-            f"Recent history:\n{history_str}\n"
-            f"Current query: {user_prompt}"
+            
+        if len(history_str) == 0:
+            context = (
+                f"General instructions: {system_profile}\n"
+                f"User expertise: {user_profile.get('expertise','')}\n"
+                f"Projects and interests: {user_profile.get('projects','')}\n"
+                f"Task summary: {task_summary}\n"
+                f"Current query: {user_prompt}"
+            )
+        else:
+            context = (
+                f"General instructions: {system_profile}\n"
+                f"User expertise: {user_profile.get('expertise','')}\n"
+                f"Projects and interests: {user_profile.get('projects','')}\n"
+                f"Task summary: {task_summary}\n"
+                f"Recent history:\n{history_str}\n"
+                f"Current query: {user_prompt}"
         )
         return context
 
@@ -1077,7 +1088,7 @@ class ReviewPrompts:
 
             prompt = ChatPromptTemplate.from_messages([
                 ("system",
-                 "You are a strict evaluator. Determine if the provided answer fully and directly addresses the user's original request. "
+                 "You are a strict evaluator. Determine if the provided answer fully and directly addresses the user's original request, or if it provides a plan that would, upon completion, fully answer the user's original request. "
                  "If not, draft a revised prompt that clarifies ambiguities, specifies the expected output format, and ensures completeness. "
                  "Return a JSON object matching the AnswerResponsiveness schema."),
                 ("user",

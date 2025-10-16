@@ -89,16 +89,17 @@ class CrawlQueue:
         
         # Iterate through the list of URLs      
         for url in url_list:
-            # Check if the URL already exists in the crawl_queue table
-            exists = graph_db.exec_sql("SELECT 1 FROM crawl_queue WHERE url = %s;", (url,))
-
-            if len(exists) == 0:
+            try:
                 # Insert the URL into the crawl_queue table
                 graph_db.execute(
                     "INSERT INTO crawl_queue (create_time, url, comment) VALUES (%s, %s, %s);",
                     (datetime.now().date(), url, None)
                 )
                 added_count += 1
+            except Exception as e:
+                logging.warning(f"Could not add URL {url}, probably already exists: {e}")
+                # graph_db.rollback()
+
 
         # Commit the transaction
         graph_db.commit()

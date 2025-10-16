@@ -358,6 +358,9 @@ CREATE TABLE task_entities (
 
 CREATE TYPE data_flow_type AS ENUM ('automatic', 'gated by user feedback', 'rethinking the previous task');
 
+ALTER TYPE data_flow_type ADD VALUE IF NOT EXISTS 'parent task-subtask';
+
+
 CREATE TABLE task_dependencies (
     source_task_id INTEGER REFERENCES project_tasks(task_id) ON DELETE CASCADE,
     dependent_task_id INTEGER REFERENCES project_tasks(task_id) ON DELETE CASCADE,

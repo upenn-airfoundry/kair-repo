@@ -2182,7 +2182,7 @@ class GraphAccessor:
             with self.conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT e.entity_id, e.entity_type, e.entity_name, e.entity_detail, e.entity_url, te.feedback_rating
+                    SELECT e.entity_id, e.entity_type, e.entity_name, e.entity_detail, e.entity_json, e.entity_url, te.feedback_rating
                     FROM entities e
                     JOIN task_entities te ON e.entity_id = te.entity_id
                     WHERE te.task_id = %s
@@ -2190,7 +2190,7 @@ class GraphAccessor:
                     """,
                     (task_id,)
                 )
-                return [{"id": r[0], "type": r[1], "name": r[2], "detail": r[3], "url": r[4], "rating": r[5]} for r in cur.fetchall()]
+                return [{"id": r[0], "type": r[1], "name": r[2], "detail": r[3], "json": r[4], "url": r[5], "rating": r[6]} for r in cur.fetchall()]
                 
         except Exception as e:
             logging.error(f"Error fetching entities for task: {e}")
@@ -2321,4 +2321,35 @@ class GraphAccessor:
         except Exception as e:
             logging.error(f"Error fetching all project dependencies: {e}")
             return []
+    
+    def rename_project_task(self, task_id: int, new_name: str) -> None:
+        """Rename a task by task_id."""
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE {self.schema}.project_tasks SET task_name = %s WHERE task_id = %s;",
+                    (new_name, task_id)
+                )
+            self.conn.commit()
+        except Exception as e:
+            logging.error(f"Error renaming project task: {e}")
+            self.conn.rollback()
+            raise
+
+    def delete_project_task(self, task_id: int) -> None:
+        """
+        Delete a task by task_id. This will cascade-delete task_dependencies and task_entities
+        via FK constraints, but will not delete any entities (entities table rows).
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    f"DELETE FROM {self.schema}.project_tasks WHERE task_id = %s;",
+                    (task_id,)
+                )
+            self.conn.commit()
+        except Exception as e:
+            logging.error(f"Error deleting project task: {e}")
+            self.conn.rollback()
+            raise
 

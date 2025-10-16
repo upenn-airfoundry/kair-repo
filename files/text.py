@@ -7,18 +7,9 @@
 
 # Crawls the PDFs listed in the frontier queue
 
-import traceback
 import os
 import json
 
-from datetime import datetime
-from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.schema import Document
-
-from aryn_sdk.partition import partition_file
-
-from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from backend.graph_db import GraphAccessor
 
