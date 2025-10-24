@@ -14,6 +14,12 @@ SKIP_ENRICHMENT = os.getenv("SKIP_ENRICHMENT", "true").lower() in ("1", "true", 
 ALLOWED_ORIGIN = os.environ.get("ALLOWED_ORIGIN", "http://" + server + ":3000")
 SESSION_TTL_SECONDS = int(os.environ.get("SESSION_TTL_SECONDS", "1800"))  # 30 min default
 
+logging.info("Starting server with the following configuration:")
+logging.info(f"  SERVER: {server}")
+logging.info(f"  SKIP_ENRICHMENT: {SKIP_ENRICHMENT}")
+logging.info(f"  ALLOWED_ORIGIN: {ALLOWED_ORIGIN}")
+logging.info(f"  SESSION_TTL_SECONDS: {SESSION_TTL_SECONDS}")
+    
 # Add parent directory to Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 

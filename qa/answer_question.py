@@ -12,6 +12,7 @@ import asyncio
 from search import search_over_criteria, search_multiple_criteria, generate_rag_answer, search_basic, is_relevant_answer_with_data
 from enrichment.llms import gemini_query_embedding
 from prompts.llm_prompts import SolutionTask, SolutionPlan, TaskDependency
+from prompts.llm_prompts import PeoplePrompts, ExpertBiosketch
 
 class AnswerQuestionHandler():
     def __init__(self, graph_accessor: GraphAccessor, username: str, user_profile: dict[str, Any], user_id: int, project_id: int) -> None:
@@ -568,6 +569,32 @@ class AnswerQuestionHandler():
                 
                 self.graph_accessor.add_user_history(self.user_id, self.project_id, original_prompt, answer)
                 return (answer, 0)
+            
+            elif classification.query_class == "info_about_an_expert":
+                # Produce structured biosketch
+                biosketch: ExpertBiosketch = PeoplePrompts.generate_expert_biosketch_from_prompt(original_prompt)
+                # Store as json_data if a task is selected
+                if selected_task_id is not None and biosketch is not None:
+                    try:
+                        self.add_task_entities(selected_task_id, {"expert_biosketch": biosketch.model_dump()})  # type: ignore
+                    except Exception as e:
+                        logging.warning(f"Failed to store biosketch entity: {e}")
+                # Create a readable markdown summary for UI
+                name_line = "## " + (biosketch.name or "Expert") + (f" ({biosketch.organization})" if biosketch.organization else "")
+                md = [name_line, ""]
+                if biosketch.biosketch:
+                    md += ["### Biographical Sketch", biosketch.biosketch.strip(), ""]
+                if biosketch.education_and_experience:
+                    md += ["### Education and Experience"] + [f"- {item}" for item in biosketch.education_and_experience] + [""]
+                if biosketch.expertise_and_contributions:
+                    md += ["### Expertise and Major Contributions"] + [f"- {item}" for item in biosketch.expertise_and_contributions] + [""]
+                if biosketch.recent_publications_or_products:
+                    md += ["### Recent Publications or Products"] + [f"- {item}" for item in biosketch.recent_publications_or_products] + [""]
+                answer_md = "\n".join(md).strip()
+                # Save to user history
+                self.graph_accessor.add_user_history(self.user_id, self.project_id, original_prompt, answer_md)
+                # Project state may have been modified if we linked json_data; returning 0 is fine for UI
+                return (answer_md, 1)
 
             elif classification.query_class == "learning_resources_or_technical_training" or classification.query_class == "information_from_prior_work_like_papers_or_videos_or_articles":
                 return await self.search_over_papers(user_prompt, original_prompt, task_summary, selected_task_id, parent_task_id=parent_task_id)

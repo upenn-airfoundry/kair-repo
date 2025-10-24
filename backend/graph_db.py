@@ -24,6 +24,10 @@ import time
 # Load environment variables from .env file
 _ = load_dotenv(find_dotenv())
 
+COMPUTE_OPENAI = False
+COMPUTE_GEMINI = True
+COMPUTE_QWEN = True
+
 class GraphAccessor:
     def __init__(self):
         self.schema = os.getenv("DB_SCHEMA", "public")
@@ -479,7 +483,24 @@ class GraphAccessor:
     
     def add_author_tag(self, paper_id: int, name: str, email: Optional[str] = None, organization: Optional[str] = None) -> int:
         """Add an author tag to a paper."""
-        return self.add_or_update_tag(paper_id, "author", name, add_another=True)
+        from enrichment.llms import gemini_doc_embedding, qwen_doc_embedding
+        if COMPUTE_OPENAI:
+            openai_embedding = self.generate_embedding(name)
+        else:
+            openai_embedding = None
+        if COMPUTE_GEMINI:  
+            gemini_embedding = gemini_doc_embedding(name)
+        else:
+            gemini_embedding = None
+        if COMPUTE_QWEN:
+            qwen_embedding = qwen_doc_embedding(name)
+        else:
+            qwen_embedding = None
+        return self.add_or_update_tag(paper_id, "author", name, add_another=True, \
+            openai_embed=openai_embedding, 
+            gemini_embed=gemini_embedding, # type: ignore
+            qwen_embed=qwen_embedding # type: ignore
+            )
         
 
     def update_paragraph(self, paragraph_id: int, content: Optional[str] = None, embedding: Optional[List[float]] = None):
@@ -516,7 +537,7 @@ class GraphAccessor:
     #         # throw the exception again
     #         raise e
 
-    def add_or_update_tag(self, entity_id: int, tag_name: str, tag_value: str, add_another: bool = True, tag_embed: Optional[List[float]] = None):
+    def add_or_update_tag(self, entity_id: int, tag_name: str, tag_value: str, add_another: bool = True, openai_embed: Optional[List[float]] = None, gemini_embed: Optional[List[float]] = None, qwen_embed: Optional[List[float]] = None):
         """Add a tag to an entity.
 
         Depending on whether add_another is true: if the tag already exists, it will either update the (first) tag value
@@ -529,7 +550,20 @@ class GraphAccessor:
                 cur.execute(f"SELECT tag_value FROM {self.schema}.entity_tags WHERE entity_id = %s AND tag_name = %s and entity_tag_instance = 1;", (entity_id, tag_name))
                 the_tag = cur.fetchone()
                 if the_tag is None:
-                    cur.execute(f"INSERT INTO {self.schema}.entity_tags (entity_id, tag_name, tag_value, tag_embed) VALUES (%s, %s, %s, %s);", (entity_id, tag_name, tag_value, tag_embed))
+                    from enrichment.llms import gemini_doc_embedding, qwen_doc_embedding
+                    if COMPUTE_OPENAI and openai_embed is None:
+                        openai_embed = self.generate_embedding(tag_value)
+                    else:
+                        openai_embed = None
+                    if COMPUTE_GEMINI and gemini_embed is None:  
+                        gemini_embed = gemini_doc_embedding(tag_value)
+                    else:
+                        gemini_embed = None
+                    if COMPUTE_QWEN and qwen_embed is None:
+                        qwen_embed = qwen_doc_embedding(tag_value)
+                    else:
+                        qwen_embed = None
+                    cur.execute(f"INSERT INTO {self.schema}.entity_tags (entity_id, tag_name, tag_value, tag_embed, gem_embed, qwen_embed) VALUES (%s, %s, %s, %s);", (entity_id, tag_name, tag_value, openai_embed, gemini_embed, qwen_embed))
                 elif not add_another:
                     # Update the tag if it already exists
                     cur.execute(f"UPDATE {self.schema}.entity_tags SET tag_value = %s WHERE entity_id = %s AND tag_name = %s and entity_tag_instance = 1;", (tag_value, entity_id, tag_name))

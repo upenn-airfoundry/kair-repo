@@ -7,6 +7,7 @@ import requests
 
 from pydantic import BaseModel, Field
 from typing import List, Optional, Literal, Union, Any
+
 from enrichment.llms import get_agentic_llm
 
 # Add the new Pydantic models for learning resources
@@ -170,7 +171,7 @@ class FacultyList(BaseModel):
     
     
 class QueryClassification(BaseModel):
-    query_class: Literal["general_knowledge", "learning_resources_or_technical_training", "information_from_prior_work_like_papers_or_videos_or_articles", "multi_step_planning_or_problem_solving", "other"] = Field(..., description="The class of the query, chosen from the predefined categories.")
+    query_class: Literal["general_knowledge", "info_about_an_expert", "learning_resources_or_technical_training", "information_from_prior_work_like_papers_or_videos_or_articles", "multi_step_planning_or_problem_solving", "other"] = Field(..., description="The class of the query, chosen from the predefined categories.")
     task_summary: str = Field(..., description="A brief description of the task involved.")
 
 class DocumentPrompts:
@@ -674,8 +675,58 @@ class WebPrompts:
             return "Summary could not be generated."
 
 
+class ExpertBiosketch(BaseModel):
+    """
+    Structured biosketch for an expert.
+    """
+    name: Optional[str] = Field(None, description="The expert's full name, if determinable from the prompt/context.")
+    organization: Optional[str] = Field(None, description="The expert's primary organization or affiliation, if known.")
+    biosketch: str = Field(..., description="A concise narrative biographical sketch.")
+    education_and_experience: List[str] = Field(
+        default_factory=list,
+        description="Bullet points for education and work experience. Include notable roles, especially research leadership/management."
+    )
+    expertise_and_contributions: List[str] = Field(
+        default_factory=list,
+        description="Bullet points describing areas of expertise and major contributions."
+    )
+    recent_publications_or_products: List[str] = Field(
+        default_factory=list,
+        description="Recent publications, software, datasets, or products (short citations or links when possible)."
+    )
+
+
 class PeoplePrompts:
-    
+    @classmethod
+    def generate_expert_biosketch_from_prompt(cls, prompt_text: str) -> ExpertBiosketch:
+        """
+        Generate a structured ExpertBiosketch from a free-form prompt about a person.
+        """
+        llm = get_better_llm()
+        schema = ExpertBiosketch.model_json_schema()
+        # Ensure schema is prompt-safe
+        schema_str = json.dumps(schema, indent=2).replace("{", "{{").replace("}", "}}")
+
+        prompt = ChatPromptTemplate.from_messages([
+            ("system",
+             "You are a careful researcher. Extract a concise, factual expert biosketch. "
+             "Populate the schema fields without inventing details. If you are uncertain, omit that item. "
+             "Prefer verified, widely known facts; keep bullet items short. "
+             "Return a single JSON object that strictly conforms to the ExpertBiosketch schema:\n"
+             f"```json\n{schema_str}\n```"),
+            ("user",
+             "Create an expert biosketch for the person described below. "
+             "If their name or organization is apparent, include it. "
+             "Fill fields: biosketch (narrative), education_and_experience (bullets; include leadership/management roles), "
+             "expertise_and_contributions (bullets), recent_publications_or_products (bullets).\n\n"
+             "Prompt:\n{input_text}")
+        ])
+
+        structured_llm = llm.with_structured_output(ExpertBiosketch)  # type: ignore
+        chain = prompt | structured_llm
+        result: ExpertBiosketch = chain.invoke({"input_text": prompt_text})
+        return result
+
     @classmethod
     def get_person_publications(cls, graph_accessor: GraphAccessor, name: str, organization: str, scholar_id: str) -> List[dict]:
         from crawl.web_fetch import scholar_search_gscholar_by_id

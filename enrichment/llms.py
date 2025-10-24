@@ -132,6 +132,12 @@ def _build_query_embeddings():
     return _import_genai_embeddings()(model="models/gemini-embedding-001", task_type="RETRIEVAL_QUERY")
 
 
+def qwen_doc_embedding(text):
+    return [[0.0] * 4096 for _ in text] if isinstance(text, list) else [0.0] * 4096
+
+
+
+
 def gemini_doc_embedding(text):
     try:
         embeddings = _build_doc_embeddings()
@@ -140,8 +146,8 @@ def gemini_doc_embedding(text):
         else:
             return embeddings.embed_documents([text])[0]
     except Exception:
-        # Fallback to a zero vector length 1536
-        return [[0.0] * 1536 for _ in text] if isinstance(text, list) else [0.0] * 1536
+        # Fallback to a zero vector length 3072
+        return [[0.0] * 3072 for _ in text] if isinstance(text, list) else [0.0] * 3072
 
 
 def gemini_query_embedding(query):
