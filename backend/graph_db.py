@@ -24,9 +24,9 @@ import time
 # Load environment variables from .env file
 _ = load_dotenv(find_dotenv())
 
-COMPUTE_OPENAI = False
-COMPUTE_GEMINI = True
-COMPUTE_QWEN = True
+COMPUTE_OPENAI = os.getenv("COMPUTE_OPENAI", False)
+COMPUTE_GEMINI = os.getenv("COMPUTE_GEMINI", True)
+COMPUTE_QWEN = os.getenv("COMPUTE_QWEN", True)
 
 class GraphAccessor:
     def __init__(self):
