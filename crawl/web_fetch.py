@@ -93,8 +93,9 @@ def extract_publisher_name(url):
 
 
 def get_pdf_protocol(url, filename, retry_delay=12, retries=3):
+    bearer = os.getenv("BEARER_TOKEN_PROTOCOLS", "")
     headers = {
-        "Authorization": "Bearer 5d0b895fc7456a9550d6cd1aa4fd1da520e9a08d7ee560b0acf79c49480ae44f95016aeeaaa17eaaffb6513f8b0a4d9da7020789fa5caa7166b3bd223ad5ce59",
+        "Authorization": f"Bearer {bearer}",
         "User-Agent": "curl/7.79.1"
     }
 

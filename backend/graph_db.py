@@ -24,6 +24,10 @@ import time
 # Load environment variables from .env file
 _ = load_dotenv(find_dotenv())
 
+COMPUTE_OPENAI = os.getenv("COMPUTE_OPENAI", False)
+COMPUTE_GEMINI = os.getenv("COMPUTE_GEMINI", True)
+COMPUTE_QWEN = os.getenv("COMPUTE_QWEN", True)
+
 class GraphAccessor:
     def __init__(self):
         self.schema = os.getenv("DB_SCHEMA", "public")
@@ -141,6 +145,59 @@ class GraphAccessor:
             # throw the exception again
             raise e
         return paper_id
+    
+    def add_json(self, name: str, description: str, json_content: Any, url: Optional[str] = None) -> int:
+        """
+        Create a new entity of type 'json' and store the provided JSON content.
+
+        Args:
+            name (str): The name of the entity.
+            description (str): A description for the entity.
+            json_content (Any): The JSON-serializable content to store.
+            url (Optional[str]): An optional URL for the entity.
+
+        Returns:
+            int: The ID of the newly created entity.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    INSERT INTO {self.schema}.entities (entity_type, entity_name, entity_detail, entity_json, entity_url)
+                    VALUES ('json_data', %s, %s, %s, %s)
+                    RETURNING entity_id;
+                    """,
+                    (name, description, json.dumps(json_content), url)
+                )
+                entity_id = cur.fetchone()[0]  # type: ignore
+            self.conn.commit()
+            return entity_id
+        except Exception as e:
+            logging.error(f"Error adding JSON entity: {e}")
+            self.conn.rollback()
+            raise e
+
+    def get_json(self, entity_id: int) -> Optional[Any]:
+        """
+        Retrieve the JSON content for a given entity ID.
+
+        Args:
+            entity_id (int): The ID of the entity.
+
+        Returns:
+            Optional[Any]: The deserialized JSON content, or None if not found.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(f"SELECT entity_json FROM {self.schema}.entities WHERE entity_id = %s;", (entity_id,))
+                result = cur.fetchone()
+                if result and result[0]:
+                    return json.loads(result[0])
+                return None
+        except Exception as e:
+            logging.error(f"Error getting JSON entity: {e}")
+            self.conn.rollback()
+            return None
     
     def update_paper_description(self, paper_id: int):
         """Update the description of a paper, given both the summary and author info."""
@@ -426,7 +483,24 @@ class GraphAccessor:
     
     def add_author_tag(self, paper_id: int, name: str, email: Optional[str] = None, organization: Optional[str] = None) -> int:
         """Add an author tag to a paper."""
-        return self.add_or_update_tag(paper_id, "author", name, add_another=True)
+        from enrichment.llms import gemini_doc_embedding, qwen_doc_embedding
+        if COMPUTE_OPENAI:
+            openai_embedding = self.generate_embedding(name)
+        else:
+            openai_embedding = None
+        if COMPUTE_GEMINI:  
+            gemini_embedding = gemini_doc_embedding(name)
+        else:
+            gemini_embedding = None
+        if COMPUTE_QWEN:
+            qwen_embedding = qwen_doc_embedding(name)
+        else:
+            qwen_embedding = None
+        return self.add_or_update_tag(paper_id, "author", name, add_another=True, \
+            openai_embed=openai_embedding, 
+            gemini_embed=gemini_embedding, # type: ignore
+            qwen_embed=qwen_embedding # type: ignore
+            )
         
 
     def update_paragraph(self, paragraph_id: int, content: Optional[str] = None, embedding: Optional[List[float]] = None):
@@ -463,7 +537,7 @@ class GraphAccessor:
     #         # throw the exception again
     #         raise e
 
-    def add_or_update_tag(self, entity_id: int, tag_name: str, tag_value: str, add_another: bool = True, tag_embed: Optional[List[float]] = None):
+    def add_or_update_tag(self, entity_id: int, tag_name: str, tag_value: str, add_another: bool = True, openai_embed: Optional[List[float]] = None, gemini_embed: Optional[List[float]] = None, qwen_embed: Optional[List[float]] = None):
         """Add a tag to an entity.
 
         Depending on whether add_another is true: if the tag already exists, it will either update the (first) tag value
@@ -476,7 +550,20 @@ class GraphAccessor:
                 cur.execute(f"SELECT tag_value FROM {self.schema}.entity_tags WHERE entity_id = %s AND tag_name = %s and entity_tag_instance = 1;", (entity_id, tag_name))
                 the_tag = cur.fetchone()
                 if the_tag is None:
-                    cur.execute(f"INSERT INTO {self.schema}.entity_tags (entity_id, tag_name, tag_value, tag_embed) VALUES (%s, %s, %s, %s);", (entity_id, tag_name, tag_value, tag_embed))
+                    from enrichment.llms import gemini_doc_embedding, qwen_doc_embedding
+                    if COMPUTE_OPENAI and openai_embed is None:
+                        openai_embed = self.generate_embedding(tag_value)
+                    else:
+                        openai_embed = None
+                    if COMPUTE_GEMINI and gemini_embed is None:  
+                        gemini_embed = gemini_doc_embedding(tag_value)
+                    else:
+                        gemini_embed = None
+                    if COMPUTE_QWEN and qwen_embed is None:
+                        qwen_embed = qwen_doc_embedding(tag_value)
+                    else:
+                        qwen_embed = None
+                    cur.execute(f"INSERT INTO {self.schema}.entity_tags (entity_id, tag_name, tag_value, tag_embed, gem_embed, qwen_embed) VALUES (%s, %s, %s, %s);", (entity_id, tag_name, tag_value, openai_embed, gemini_embed, qwen_embed))
                 elif not add_another:
                     # Update the tag if it already exists
                     cur.execute(f"UPDATE {self.schema}.entity_tags SET tag_value = %s WHERE entity_id = %s AND tag_name = %s and entity_tag_instance = 1;", (tag_value, entity_id, tag_name))
@@ -2129,7 +2216,7 @@ class GraphAccessor:
             with self.conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT e.entity_id, e.entity_type, e.entity_name, e.entity_detail, e.entity_url, te.feedback_rating
+                    SELECT e.entity_id, e.entity_type, e.entity_name, e.entity_detail, e.entity_json, e.entity_url, te.feedback_rating
                     FROM entities e
                     JOIN task_entities te ON e.entity_id = te.entity_id
                     WHERE te.task_id = %s
@@ -2137,7 +2224,7 @@ class GraphAccessor:
                     """,
                     (task_id,)
                 )
-                return [{"id": r[0], "type": r[1], "name": r[2], "detail": r[3], "url": r[4], "rating": r[5]} for r in cur.fetchall()]
+                return [{"id": r[0], "type": r[1], "name": r[2], "detail": r[3], "json": r[4], "url": r[5], "rating": r[6]} for r in cur.fetchall()]
                 
         except Exception as e:
             logging.error(f"Error fetching entities for task: {e}")
@@ -2268,4 +2355,35 @@ class GraphAccessor:
         except Exception as e:
             logging.error(f"Error fetching all project dependencies: {e}")
             return []
+    
+    def rename_project_task(self, task_id: int, new_name: str) -> None:
+        """Rename a task by task_id."""
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE {self.schema}.project_tasks SET task_name = %s WHERE task_id = %s;",
+                    (new_name, task_id)
+                )
+            self.conn.commit()
+        except Exception as e:
+            logging.error(f"Error renaming project task: {e}")
+            self.conn.rollback()
+            raise
+
+    def delete_project_task(self, task_id: int) -> None:
+        """
+        Delete a task by task_id. This will cascade-delete task_dependencies and task_entities
+        via FK constraints, but will not delete any entities (entities table rows).
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    f"DELETE FROM {self.schema}.project_tasks WHERE task_id = %s;",
+                    (task_id,)
+                )
+            self.conn.commit()
+        except Exception as e:
+            logging.error(f"Error deleting project task: {e}")
+            self.conn.rollback()
+            raise
 

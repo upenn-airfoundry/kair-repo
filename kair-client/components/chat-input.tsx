@@ -1,13 +1,51 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Button } from "@/components/ui/button";
-import { Send } from 'lucide-react';
+import { Send, Upload } from 'lucide-react';
 import { config } from "@/config";
 import ReactMarkdown from 'react-markdown';
-import { useAuth } from '@/context/auth-context';
+import type { Components } from 'react-markdown';
 import { useSecureFetch } from '@/hooks/useSecureFetch';
 import remarkGfm from 'remark-gfm';
+
+// Lightweight markdown component overrides to avoid horizontal overflow
+const useMarkdownComponents = () => {
+  return useMemo<Components>(() => ({
+    // Allow content to be wider than the pane; the outer message list will scroll horizontally.
+    pre: ({ className, ...props }: React.ComponentProps<'pre'>) => (
+      <pre {...props} className={`min-w-fit ${className ?? ''}`} />
+    ),
+    table: ({ children, ...rest }: React.ComponentProps<'table'>) => (
+      <div className="inline-block min-w-fit">
+        <table {...rest}>{children}</table>
+      </div>
+    ),
+    a: ({ className, ...props }: React.ComponentProps<'a'>) => (
+      <a {...props} className={`break-all ${className ?? ''}`} />
+    ),
+    code: (
+      { inline, className, children, ...props }: { inline?: boolean } & React.ComponentProps<'code'>
+    ) =>
+      inline ? (
+        <code {...props} className={`break-all whitespace-pre-wrap ${className ?? ''}`}>{children}</code>
+      ) : (
+        <code {...props} className={className}>{children}</code>
+      ),
+    img: ({ className, alt = '', ...props }: React.ImgHTMLAttributes<HTMLImageElement>) => (
+      <>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img {...props} alt={alt} className={`max-w-full h-auto ${className ?? ''}`} />
+      </>
+    ),
+    p: ({ className, ...props }: React.ComponentProps<'p'>) => (
+      <p {...props} className={`break-words break-all whitespace-pre-wrap ${className ?? ''}`} />
+    ),
+    li: ({ className, ...props }: React.ComponentProps<'li'>) => (
+      <li {...props} className={`break-words break-all whitespace-pre-wrap ${className ?? ''}`} />
+    ),
+  }), []);
+};
 
 // Message type
 export interface Message {
@@ -20,18 +58,21 @@ interface ChatInputProps {
   addMessage: (message: Message) => void;
   projectId: number;
   onRefreshRequest: () => void; // Add the new prop to the interface
+  selectedTaskId?: number | null;
 }
 
-export default function ChatInput({ addMessage, projectId, onRefreshRequest }: ChatInputProps) {
+export default function ChatInput({ addMessage, projectId, onRefreshRequest, selectedTaskId }: ChatInputProps) {
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const { user } = useAuth();
+  const [isUploading, setIsUploading] = useState(false);
   const secureFetch = useSecureFetch(); // Get the secure fetch function
+  const mdComponents = useMarkdownComponents();
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null); // Ref for the scrollable message container
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Function to scroll to the bottom of the message list
   const scrollToBottom = () => {
@@ -77,24 +118,34 @@ export default function ChatInput({ addMessage, projectId, onRefreshRequest }: C
   useEffect(() => {
     if (!projectId) return;
 
-    const fetchHistory = async () => {
-      try {
-        setMessages([]); // clear immediately on project change
-        const response = await secureFetch(`${config.apiBaseUrl}/api/chat/history?project_id=${projectId}`);
-        if (response.ok) {
-          const data = await response.json();
-          if (data.history && data.history.length > 0) {
-            setMessages(data.history);
-          } else {
-            setMessages([{ id: 'welcome', sender: 'bot', content: 'How can the KAIR Assistant help you today?' }]);
+    const fetchHistoryWithRetry = async () => {
+      setMessages([]); // clear immediately on project change
+      const maxAttempts = 6;
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        try {
+          const response = await secureFetch(`${config.apiBaseUrl}/api/chat/history?project_id=${projectId}`, {
+            cache: 'no-store',
+          });
+          if (response.ok) {
+            const data = await response.json();
+            if (data.history && data.history.length > 0) {
+              setMessages(data.history);
+            } else {
+              setMessages([{ id: 'welcome', sender: 'bot', content: 'How can the KAIR Assistant help you today?' }]);
+            }
+            return;
           }
+        } catch {
+          /* ignore and retry */
         }
-      } catch (error) {
-        console.error("Failed to fetch chat history:", error);
+        // backoff: 100ms, 200ms, ...
+        await new Promise((r) => setTimeout(r, 100 * (attempt + 1)));
       }
+      // Fallback if still failing
+      setMessages([{ id: 'welcome', sender: 'bot', content: 'How can the KAIR Assistant help you today?' }]);
     };
 
-    fetchHistory();
+    fetchHistoryWithRetry();
   }, [projectId, secureFetch]);
 
 
@@ -112,21 +163,16 @@ export default function ChatInput({ addMessage, projectId, onRefreshRequest }: C
     setIsLoading(true);
 
     try {
-      // Expand prompt with user profile context
       const expandedPrompt = trimmedMessage;
-      // if (user?.profile) {
-      //     expandedPrompt =
-      //         `User profile:\n` +
-      //         `Biosketch: ${user.profile.biosketch}\n` +
-      //         `Expertise: ${user.profile.expertise}\n` +
-      //         `Projects: ${user.profile.projects}\n\n` +
-      //         `User query: ${trimmedMessage}`;
-      // }
-
+      const payload: { prompt: string; project_id: number; selected_task_id?: number } = {
+        prompt: expandedPrompt,
+        project_id: projectId,
+      };
+      if (selectedTaskId != null) payload.selected_task_id = Number(selectedTaskId);
       const response = await secureFetch(`${config.apiBaseUrl}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: expandedPrompt, project_id: projectId }),
+        body: JSON.stringify(payload),
         credentials: 'include',
       });
 
@@ -158,10 +204,73 @@ export default function ChatInput({ addMessage, projectId, onRefreshRequest }: C
     }
   };
 
+  const handleUploadClick = () => {
+    if (selectedTaskId == null || isUploading) return;
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange: React.ChangeEventHandler<HTMLInputElement> = async (e) => {
+    const file = e.target.files?.[0];
+    // Reset input so selecting the same file again still triggers change
+    e.currentTarget.value = '';
+    if (!file || selectedTaskId == null) return;
+    try {
+      setIsUploading(true);
+      const text = await file.text();
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch (err) {
+        const errorMsg: Message = {
+          id: Date.now().toString() + '-error',
+          sender: 'bot',
+          content: `Failed to parse JSON file: ${(err as Error)?.message || err}`,
+        };
+        setMessages((prev) => [...prev, errorMsg]);
+        addMessage(errorMsg);
+        return;
+      }
+      // POST to backend to attach JSON to the selected task
+      const resp = await secureFetch(`${config.apiBaseUrl}/api/task/${Number(selectedTaskId)}/entities`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ json: parsed, filename: file.name }),
+      });
+      if (!resp.ok) {
+        const errorText = await resp.text().catch(() => '');
+        throw new Error(errorText || 'Upload failed');
+      }
+      // Notify user and optionally trigger UI refreshes
+      const botMsg: Message = {
+        id: Date.now().toString() + '-bot',
+        sender: 'bot',
+        content: `Uploaded JSON from "${file.name}" and linked it to task ${selectedTaskId}.`,
+      };
+      setMessages((prev) => [...prev, botMsg]);
+      addMessage(botMsg);
+      // Dispatch a custom event so any details viewer can refetch entities if listening
+      window.dispatchEvent(new CustomEvent('task-entities-updated', { detail: { taskId: Number(selectedTaskId) } }));
+    } catch (err) {
+      const errorMsg: Message = {
+        id: Date.now().toString() + '-error',
+        sender: 'bot',
+        content: `Upload error: ${(err as Error)?.message || err}`,
+      };
+      setMessages((prev) => [...prev, errorMsg]);
+      addMessage(errorMsg);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full w-full max-w-full min-w-0 overflow-x-hidden">
       {/* Message list */}
-      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div
+        ref={scrollContainerRef}
+        className="flex-1 w-full max-w-full min-w-0 overflow-y-auto overflow-x-auto p-4 space-y-4"
+      >
         {messages.map((msg) => (
           <div
             key={msg.id}
@@ -170,15 +279,19 @@ export default function ChatInput({ addMessage, projectId, onRefreshRequest }: C
                 ? "text-right"
                 : "text-left"
             }
+            // Ensure message rows don't expand horizontally
+            style={{ minWidth: 0, maxWidth: '100%' }}
           >
             <div
               className={
                 msg.sender === 'user'
-                  ? "inline-block bg-blue-100 dark:bg-blue-900 rounded px-3 py-2"
-                  : "inline-block bg-gray-100 dark:bg-gray-800 rounded px-3 py-2"
+                  ? "inline-block bg-blue-100 dark:bg-blue-900 rounded px-3 py-2 break-words whitespace-pre-wrap"
+                  : "inline-block bg-gray-100 dark:bg-gray-800 rounded px-3 py-2 break-words whitespace-pre-wrap"
               }
             >
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+                {msg.content}
+              </ReactMarkdown>
             </div>
           </div>
         ))}
@@ -196,14 +309,14 @@ export default function ChatInput({ addMessage, projectId, onRefreshRequest }: C
       {/* Input form */}
       <form
         onSubmit={handleSubmit}
-        className="p-4 bg-background border-t flex items-center gap-2"
+        className="p-4 bg-background border-t flex items-center gap-2 w-full max-w-full min-w-0 overflow-x-hidden"
       >
         <textarea
-          ref={inputRef} // Attach the ref to the textarea element
+          ref={inputRef}
           value={message}
           onChange={(e) => setMessage(e.target.value)}
           placeholder="Make a request of the KAIR Assistant..."
-          className="flex-grow resize-none border rounded px-3 py-2 max-h-40 overflow-y-auto"
+          className="flex-1 w-0 min-w-0 max-w-full resize-none border rounded px-3 py-2 max-h-40 overflow-y-auto overflow-x-hidden"
           rows={1}
           disabled={isLoading}
           onKeyDown={(e) => {
@@ -221,10 +334,39 @@ export default function ChatInput({ addMessage, projectId, onRefreshRequest }: C
           variant="ghost"
           disabled={!message.trim() || isLoading}
           aria-label="Send message"
+          className="shrink-0"
         >
           <Send className="h-4 w-4" />
           <span className="sr-only">Send message</span>
         </Button>
+        {/* JSON upload button appears only when a task is selected */}
+        {selectedTaskId != null && (
+          <>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="application/json,.json"
+              hidden
+              onChange={handleFileChange}
+            />
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              disabled={isUploading}
+              onClick={handleUploadClick}
+              aria-label="Upload JSON to selected task"
+              title="Upload JSON to selected task"
+              className="shrink-0"
+            >
+              {isUploading ? (
+                <span className="inline-block h-4 w-4 rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground animate-spin" />
+              ) : (
+                <Upload className="h-4 w-4" />
+              )}
+            </Button>
+          </>
+        )}
       </form>
     </div>
   );

@@ -3,16 +3,23 @@
 import React, { useEffect, useState } from "react";
 import { PanelGroup, Panel, PanelResizeHandle } from "react-resizable-panels";
 import ProjectGraphPane from "@/components/project-graph-pane";
-import ChatInput from "@/components/chat-input";
+import ChatInput, { Message } from "@/components/chat-input";
 import { ProtectedRoute } from "@/components/protected-route";
-import { AppSidebar } from "@/components/app-sidebar"; // if you previously used it directly here, no longer needed
 import { useAuth } from "@/context/auth-context";
+import { useSecureFetch } from "@/hooks/useSecureFetch";
+import { config } from "@/config";
 
 export default function ChatPage() {
   const { user } = useAuth();
+  const secureFetch = useSecureFetch();
   const [refreshKey, setRefreshKey] = useState(0);
   const [activeProjectId, setActiveProjectId] = useState<number | null>(null);
   const [activeProjectName, setActiveProjectName] = useState<string>("");
+  const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
+  // ChatInput manages its own message list; keep a typed no-op callback to satisfy props
+  const addMessage: (message: Message) => void = React.useCallback(() => {
+    // no-op; ChatInput manages messages internally
+  }, []);
 
   useEffect(() => {
     if (user?.project_id) setActiveProjectId(user.project_id);
@@ -20,16 +27,31 @@ export default function ChatPage() {
   }, [user?.project_id, user?.project_name]);
 
   useEffect(() => {
-    const handler = (e: any) => {
-      const pid = Number(e?.detail?.projectId);
-      if (Number.isFinite(pid)) {
+    const handler = (e: CustomEvent<{ projectId: number | null }>) => {
+      const pid = e.detail.projectId;
+      if (pid !== null && Number.isFinite(pid)) {
         setActiveProjectId(pid);
+        // When project changes, we need to fetch its name
+        secureFetch(`${config.apiBaseUrl}/api/projects/list?mine=1`)
+          .then((res) => res.json())
+          .then((data) => {
+            const project = data?.projects?.find((p: { id: number }) => p.id === pid);
+            if (project) {
+              setActiveProjectName(project.name);
+            }
+          })
+          .catch(() => setActiveProjectName("")); // Clear name on error
         setRefreshKey((k) => k + 1);
+      } else {
+        // Handle project deselection
+        setActiveProjectId(null);
+        setActiveProjectName("");
       }
+      // Chat messages are managed by ChatInput; nothing to clear here
     };
-    window.addEventListener("project-changed", handler as any);
-    return () => window.removeEventListener("project-changed", handler as any);
-  }, []);
+    window.addEventListener("project-changed", handler as EventListener);
+    return () => window.removeEventListener("project-changed", handler as EventListener);
+  }, [secureFetch]);
 
   const handleRefreshRequest = () => setRefreshKey((k) => k + 1);
   const handleProjectChanged = (pid: number) => {
@@ -50,10 +72,11 @@ export default function ChatPage() {
                   projectName={activeProjectName}
                   refreshKey={refreshKey}
                   onProjectChanged={handleProjectChanged}
+                  onTaskSelected={setSelectedTaskId}
                 />
               ) : (
                 <div className="h-full w-full border rounded-lg flex items-center justify-center text-muted-foreground">
-                  Loading project workflow...
+                  {user ? "Select a project to begin." : "Loading project workflow..."}
                 </div>
               )}
             </div>
@@ -66,10 +89,15 @@ export default function ChatPage() {
           <Panel defaultSize={70} minSize={20}>
             <div className="h-full w-full flex flex-col">
               {activeProjectId ? (
-                <ChatInput projectId={activeProjectId} onRefreshRequest={handleRefreshRequest} />
+                <ChatInput
+                  projectId={activeProjectId}
+                  onRefreshRequest={handleRefreshRequest}
+                  selectedTaskId={selectedTaskId}
+                  addMessage={addMessage}
+                />
               ) : (
                 <div className="p-4 text-center text-muted-foreground">
-                  Loading chat or no project selected...
+                  {user ? "Select a project to begin." : "Loading chat or no project selected..."}
                 </div>
               )}
             </div>

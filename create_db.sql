@@ -81,6 +81,8 @@ ALTER TYPE entity_types ADD VALUE IF NOT EXISTS 'url';
 
 ALTER TYPE entity_types ADD VALUE IF NOT EXISTS 'accession_number';
 
+ALTER TYPE entity_types ADD VALUE IF NOT EXISTS 'json_data';
+
 -- Data is "chunked" into hierarchies of entities.
 -- An entity can be a synopsis, fact, new concept, claim, author, organization,
 -- tag, paper, section, paragraph, table, hypothesis, source, method, event,
@@ -100,6 +102,11 @@ CREATE TABLE entities(
     entity_embed vector(1536),
     FOREIGN KEY (entity_parent) REFERENCES entities(entity_id) ON DELETE CASCADE
 );
+
+ALTER TABLE entities
+    ADD COLUMN IF NOT EXISTS gem_embed halfvec(3072),
+    ADD COLUMN IF NOT EXISTS qwen_embed halfvec(3072);
+
 ALTER TABLE entities
     ADD CONSTRAINT unique_entities UNIQUE(entity_type, entity_name),
     ADD CONSTRAINT unique_entity_parent UNIQUE(entity_type, entity_name, entity_parent);
@@ -124,6 +131,13 @@ CREATE INDEX entity_type_idx ON entities USING btree ("entity_type");
 CREATE INDEX entity_parent_idx ON entities USING btree ("entity_parent");
 CREATE INDEX entity_embed_idx ON entities
 USING diskann (entity_embed vector_cosine_ops);
+
+CREATE INDEX entity_gem_embedding_idx ON entities
+USING hnsw (gem_embed halfvec_cosine_ops);
+
+CREATE INDEX entity_qwen_embedding_idx ON entities
+USING hnsw (qwen_embed halfvec_cosine_ops);
+
 
 CREATE INDEX entity_keyword_idx ON entities USING GIN (to_tsvector('english', entity_detail));
 
@@ -159,11 +173,21 @@ ALTER TABLE entity_tags
     DROP CONSTRAINT entity_tags_pkey,
     ADD PRIMARY KEY (entity_id, entity_tag_instance, tag_name);
 
+ALTER TABLE entity_tags
+    ADD COLUMN IF NOT EXISTS gem_embed halfvec(3072),
+    ADD COLUMN IF NOT EXISTS qwen_embed halfvec(3072);
+
+
 CREATE INDEX entity_tag_idx ON entity_tags(tag_name);
 CREATE INDEX entity_tag_val_idx ON entity_tags(tag_value);
 CREATE INDEX entity_tag_embedding_idx ON entity_tags
 USING diskann (tag_embed vector_cosine_ops);
 
+CREATE INDEX entity_tag_gem_embedding_idx ON entity_tags
+USING hnsw (gem_embed halfvec_cosine_ops);
+
+CREATE INDEX entity_tag_qwen_embedding_idx ON entity_tags
+USING hnsw (qwen_embed halfvec_cosine_ops);
 
 CREATE INDEX entity_tag_keyword_idx ON entity_tags USING GIN (to_tsvector('english', tag_value));
 
@@ -355,6 +379,9 @@ CREATE TABLE task_entities (
 );
 
 CREATE TYPE data_flow_type AS ENUM ('automatic', 'gated by user feedback', 'rethinking the previous task');
+
+ALTER TYPE data_flow_type ADD VALUE IF NOT EXISTS 'parent task-subtask';
+
 
 CREATE TABLE task_dependencies (
     source_task_id INTEGER REFERENCES project_tasks(task_id) ON DELETE CASCADE,

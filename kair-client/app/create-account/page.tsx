@@ -1,11 +1,12 @@
+import { Suspense } from "react"
 import CreateAccount from "@/components/create-account"
 
-export default function Page() {
+export const dynamic = "force-dynamic";
+
+export default function CreateAccountPage() {
   return (
-    <div className="flex min-h-svh w-full items-center justify-center p-6 md:p-10">
-      <div className="w-full max-w-sm">
-        <CreateAccount />
-      </div>
-    </div>
+    <Suspense fallback={<div className="p-4 text-sm text-muted-foreground">Loading…</div>}>
+      <CreateAccount />
+    </Suspense>
   )
 }

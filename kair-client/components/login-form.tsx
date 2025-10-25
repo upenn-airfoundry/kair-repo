@@ -29,6 +29,24 @@ export function LoginForm({
   const { login } = useAuth();
   const router = useRouter(); // Initialize useRouter
 
+  // Poll an authenticated endpoint until the session is readable
+  const waitForSessionReady = async (projectId: number, maxAttempts = 6) => {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        const res = await fetch(`${config.apiBaseUrl}/api/chat/history?project_id=${projectId}`, {
+          method: 'GET',
+          credentials: 'include',
+        });
+        if (res.ok) return true;
+      } catch {
+        /* ignore and retry */
+      }
+      // backoff: 100ms, 200ms, 300ms, ...
+      await new Promise((r) => setTimeout(r, 100 * (attempt + 1)));
+    }
+    return false;
+  };
+
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setIsLoading(true);
@@ -56,6 +74,12 @@ export function LoginForm({
           project_id: data.user.project_id, // <-- include project_id from server
           project_name: data.user.project_name // <-- include project_name from server
         });
+        // Ensure the session is persisted/visible to subsequent handlers
+        try {
+          await waitForSessionReady(data.user.project_id);
+        } catch {
+          /* ignore; continue to navigate */
+        }
         router.push('/chat'); // Redirect to /dashboard
       } else {
         setError(data.message || "Login failed. Please try again.");

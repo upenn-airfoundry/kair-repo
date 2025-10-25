@@ -16,6 +16,21 @@ import { useSecureFetch } from "@/hooks/useSecureFetch";
 
 type Project = { id: number; name: string };
 
+// Define a more specific type for the account object
+interface Account {
+  user?: {
+    project_id?: number | string;
+    selected_project_id?: number | string;
+    profile?: {
+      selected_project_id?: number | string;
+      descriptor?: {
+        selected_project_id?: number | string;
+      };
+    };
+    projects?: Project[];
+  };
+}
+
 const data = {
   navSecondary: [
     { title: "Settings", url: "#", icon: IconSettings },
@@ -34,7 +49,7 @@ export function AppSidebar({ className, ...props }: React.ComponentProps<typeof 
   const [selectedId, setSelectedId] = React.useState<number | null>(null);
   const [expanded, setExpanded] = React.useState<boolean>(true);
 
-  const extractSelectedFromAccount = (acct: any): number | null => {
+  const extractSelectedFromAccount = (acct: Account | null): number | null => {
     const v =
       acct?.user?.profile?.descriptor?.selected_project_id ??
       acct?.user?.profile?.selected_project_id ??
@@ -72,12 +87,14 @@ export function AppSidebar({ className, ...props }: React.ComponentProps<typeof 
   }, [secureFetch]);
 
   React.useEffect(() => {
-    const handler = (e: any) => {
-      const pid = Number(e?.detail?.projectId);
-      if (Number.isFinite(pid)) setSelectedId(pid);
+    const handler = (e: CustomEvent<{ projectId: number | null }>) => {
+      const pid = e.detail?.projectId;
+      if (pid !== undefined && Number.isFinite(pid)) {
+        setSelectedId(pid);
+      }
     };
-    window.addEventListener("project-changed", handler as any);
-    return () => window.removeEventListener("project-changed", handler as any);
+    window.addEventListener("project-changed", handler as EventListener);
+    return () => window.removeEventListener("project-changed", handler as EventListener);
   }, []);
 
   const handleSelectProject = async (pid: number) => {
@@ -101,8 +118,11 @@ export function AppSidebar({ className, ...props }: React.ComponentProps<typeof 
     } catch { /* noop */ }
   };
 
+  // Normalize collapsible; avoid boolean 'true'
+  const { collapsible: collapsibleMode, ...restProps } = props;
+
   return (
-    <Sidebar collapsible {...props} className={cn("h-full", className)}>
+    <Sidebar {...restProps} collapsible={collapsibleMode ?? "icon"} className={cn("h-full", className)}>
       <SidebarContent>
         {/* Projects tree */}
         <div className="px-2 py-2">
