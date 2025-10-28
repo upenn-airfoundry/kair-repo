@@ -2,6 +2,7 @@ from backend.graph_db import GraphAccessor
 from typing import List, Dict
 
 import logging
+import asyncio
 
 ##################
 ## Simple module to add URLs into the database frontier queue
@@ -16,6 +17,7 @@ from dotenv import load_dotenv, find_dotenv
 _ = load_dotenv(find_dotenv())
 
 import os
+from entities.generate_doc_info import handle_file
 
 graph_db = GraphAccessor()
 
@@ -183,3 +185,100 @@ class CrawlQueue:
         rows = graph_db.exec_sql("SELECT id, path FROM crawled WHERE crawl_time = %s ORDER BY id ASC;", (date,))
         
         return [{"id": row[0], "path": row[1]} for row in rows]
+
+    @classmethod
+    async def extract_from_urls(cls, items, task_id: int, task_description: str, task_schema: str) -> int:
+        """
+        Given a set of URLs (list[str] or dict with 'urls'/'items'), ensure they are in the crawl_queue,
+        download into DOWNLOADS_DIR (matching web_fetch.py), generate TEI via fetch_and_crawl_items,
+        and index newly crawled PDFs via handle_file.
+        """
+        # Normalize to a list of URLs
+        urls: List[str] = []
+        if not items:
+            return 0
+        if isinstance(items, dict):
+            if isinstance(items.get("urls"), list):
+                urls = [u for u in items["urls"] if isinstance(u, str)]
+            elif isinstance(items.get("items"), list):
+                for it in items["items"]:
+                    if isinstance(it, str):
+                        urls.append(it)
+                    elif isinstance(it, dict) and isinstance(it.get("url"), str):
+                        urls.append(it["url"])
+        elif isinstance(items, list):
+            for it in items:
+                if isinstance(it, str):
+                    urls.append(it)
+                elif isinstance(it, dict) and isinstance(it.get("url"), str):
+                    urls.append(it["url"])
+        elif isinstance(items, str):
+            urls = [items]
+
+        if not urls:
+            logging.info("extract_from_urls: no URLs provided")
+            return 0
+
+        # Ensure each URL is present in crawl_queue; collect (id,url) rows
+        rows: List[Dict[str, str]] = []
+        for url in urls:
+            try:
+                found = graph_db.exec_sql("SELECT id FROM crawl_queue WHERE url = %s LIMIT 1;", (url,))
+                if found:
+                    cid = int(found[0][0])
+                else:
+                    inserted = graph_db.exec_sql(
+                        "INSERT INTO crawl_queue (create_time, url, comment) VALUES (%s, %s, %s) RETURNING id;",
+                        (datetime.now().date(), url, f"task:{task_id}" if task_id else None)
+                    )
+                    cid = int(inserted[0][0])
+                rows.append({"id": cid, "url": url})
+            except Exception as e:
+                logging.warning(f"extract_from_urls: failed to queue URL {url}: {e}")
+        try:
+            graph_db.commit()
+        except Exception as e:
+            logging.debug(f"extract_from_urls: commit warning (ignored): {e}")
+
+        if not rows:
+            return 0
+
+        # Ensure download dir exists and crawl (downloads + TEI)
+        os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+        from crawl.web_fetch import fetch_and_crawl_items
+        try:
+            await asyncio.to_thread(fetch_and_crawl_items, rows, DOWNLOADS_DIR)
+        except Exception as e:
+            logging.error(f"extract_from_urls: fetch_and_crawl_items failed: {e}")
+            return 0
+
+        # Index newly crawled documents for these IDs
+        try:
+            id_list = [int(r["id"]) for r in rows]
+            docs = graph_db.exec_sql(
+                "SELECT c.id, c.path, cq.url "
+                "FROM crawled c LEFT JOIN crawl_queue cq ON c.id = cq.id "
+                "WHERE c.id = ANY(%s);",
+                (id_list,)
+            )
+            tasks = []
+            for _cid, path, url in docs:
+                # Skip if already indexed
+                try:
+                    if graph_db.exists_document(url):
+                        continue
+                except Exception:
+                    # If exists check fails, try to index anyway
+                    pass
+                # Skip external file:// paths (not under DOWNLOADS_DIR)
+                if isinstance(path, str) and path.startswith("file://"):
+                    logging.debug(f"extract_from_urls: skipping external local file {path}")
+                    continue
+                # handle_file expects path relative to DOWNLOAD_DIR
+                tasks.append(asyncio.to_thread(handle_file, path, url, False))
+            if tasks:
+                await asyncio.gather(*tasks)
+        except Exception as e:
+            logging.error(f"extract_from_urls: indexing failed: {e}")
+
+        return len(rows)

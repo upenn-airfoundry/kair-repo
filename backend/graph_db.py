@@ -1640,22 +1640,22 @@ class GraphAccessor:
         from enrichment.llms import gemini_doc_embedding
         try:
             with self.conn.cursor() as cur:
-                cur.execute(f"SELECT entity_id, tag_name, tag_value FROM {self.schema}.entity_tags WHERE gem_embed IS NULL;")
+                cur.execute(f"SELECT entity_id, entity_tag_instance, tag_name, tag_value FROM {self.schema}.entity_tags WHERE gem_embed IS NULL;")
                 tags = cur.fetchall()
                 batch_size = 250
                 total = len(tags)
                 for batch_start in range(0, total, batch_size):
                     batch = tags[batch_start:batch_start + batch_size]
-                    tag_values = [tag_value for _, _, tag_value in batch if tag_value]
+                    tag_values = [tag_value for _, _, _, tag_value in batch if tag_value]
                     embeddings = gemini_doc_embedding(tag_values) if tag_values else []
                     embed_idx = 0
-                    for entity_id, tag_name, tag_value in batch:
+                    for entity_id, entity_tag_instance, tag_name, tag_value in batch:
                         if tag_value:
                             embedding = embeddings[embed_idx]
                             embed_idx += 1
                             cur.execute(
-                                f"UPDATE {self.schema}.entity_tags SET gem_embed = %s WHERE entity_id = %s AND tag_name = %s;",
-                                (embedding, entity_id, tag_name)
+                                f"UPDATE {self.schema}.entity_tags SET gem_embed = %s WHERE entity_id = %s AND entity_tag_instance = %s AND tag_name = %s;",
+                                (embedding, entity_id, entity_tag_instance, tag_name)
                             )
                     self.conn.commit()
                     logging.info(f"Re-embedded {min(batch_start + batch_size, total)} of {total} tags with Gemini embeddings.")

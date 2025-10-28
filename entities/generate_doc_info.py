@@ -15,7 +15,6 @@ import logging
 
 from files.pdfs import split_pdf_with_langchain, get_presplit_aryn_file, chunk_and_partition_pdf_file, get_pdf_splits
 from files.text import index_split_paragraphs
-from crawl.crawler_queue import CrawlQueue
 
 from files.tables import read_csv, read_json, read_jsonl, read_mat, read_xml, sample_rows_to_string
 from files.tables import create_table_entity
@@ -89,6 +88,7 @@ def parse_files_and_index(use_aryn: bool = False):
     Args:
         use_aryn (bool, optional): Uses the Aryn parser. Defaults to False.
     """
+    from crawl.crawler_queue import CrawlQueue
     files = CrawlQueue.get_crawled_paths()
 
     for doc in files:

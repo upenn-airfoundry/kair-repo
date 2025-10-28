@@ -71,6 +71,22 @@ class TaskDependencyList(BaseModel):
     """A list of dependencies between tasks."""
     dependencies: List[TaskDependency]
 
+class PaperQuestionSpec(BaseModel):
+    """
+    Specification for answering a question using research papers/articles.
+    """
+    evaluation_prompt: str = Field(
+        ...,
+        description="A clear prompt to be evaluated against the content of papers/articles to answer the user's question."
+    )
+    outputs: List[TaskOutput] = Field(
+        default_factory=list,
+        description="Structured output fields expected from evaluating the prompt. Each has a name and datatype."
+    )
+    outputs_schema: str = Field(
+        default="",
+        description="Compact schema string like '(field:type, field2:type, ...)'. Derived from outputs if not explicitly provided."
+    )
 
 from backend.graph_db import GraphAccessor
 
@@ -927,6 +943,56 @@ class PlanningPrompts:
 
         result = chain.invoke({"solution_plan_str": plan_str})
         return result
+
+    @classmethod
+    def extract_paper_question_spec(cls, user_request: str) -> "PaperQuestionSpec":
+        """
+        Given a user's question about research papers/articles, return:
+          - evaluation_prompt: the concise prompt to evaluate against paper/article content;
+          - outputs and outputs_schema: structured fields (name, datatype) expected in the answer.
+        """
+        try:
+            llm = get_better_llm()
+            if llm is None:
+                # Conservative fallback
+                return PaperQuestionSpec(
+                    evaluation_prompt=user_request.strip(),
+                    outputs=[],
+                    outputs_schema="(title:string,answer:string,url:string)",
+                )
+
+            prompt = ChatPromptTemplate.from_messages([
+                ("system",
+                 "You design extraction specs for answering questions using research papers/articles. "
+                 "Return a structured object with:\n"
+                 "1) 'evaluation_prompt': a precise prompt to apply to the paper(s) to extract/compute the answer; "
+                 "2) 'outputs': an array of fields with 'name' and 'datatype' (string, number, boolean, date, json, list[string], etc.); "
+                 "3) optionally 'outputs_schema' as a compact string like '(field:type, field2:type)'. "
+                 "Keep fields unambiguous and minimal."),
+                ("user", "Question about papers/articles:\n{question}")
+            ])
+
+            structured_llm = llm.with_structured_output(PaperQuestionSpec)  # type: ignore
+            chain = prompt | structured_llm
+            spec: PaperQuestionSpec = chain.invoke({"question": user_request})
+
+            # Derive outputs_schema if missing
+            if not (spec.outputs_schema or "").strip():
+                parts = []
+                for o in (spec.outputs or []):
+                    name = (o.name or "").strip()
+                    dtype = (o.datatype or "string").strip()
+                    if name:
+                        parts.append(f"{name}:{dtype}")
+                spec.outputs_schema = f"({', '.join(parts)})" if parts else "(answer:string,url:string)"
+            return spec
+        except Exception as e:
+            logging.warning(f"extract_paper_question_spec failed: {e}")
+            return PaperQuestionSpec(
+                evaluation_prompt=user_request.strip(),
+                outputs=[],
+                outputs_schema="(title:string,answer:string,url:string)",
+            )
 
     @classmethod
     async def execute_single_source_paper_tasks(cls, solution_plan: SolutionPlan) -> dict:

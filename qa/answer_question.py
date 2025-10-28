@@ -160,6 +160,29 @@ class AnswerQuestionHandler():
             self.graph_accessor.add_user_history(self.user_id, self.project_id, original_prompt, answer)
             return (answer, 0)
 
+        # Derive an evaluation prompt and output schema for downstream crawling/indexing
+        eval_prompt = task_summary or original_prompt
+        outputs_schema = ""
+        try:
+            spec = PlanningPrompts.extract_paper_question_spec(original_prompt)
+            if getattr(spec, "evaluation_prompt", ""):
+                eval_prompt = spec.evaluation_prompt
+            # Prefer explicit outputs_schema; otherwise derive from outputs
+            if getattr(spec, "outputs_schema", ""):
+                outputs_schema = spec.outputs_schema
+            if not outputs_schema and getattr(spec, "outputs", None):
+                parts = []
+                for o in spec.outputs:
+                    try:
+                        parts.append(f"{o.name}:{o.datatype or 'string'}")
+                    except Exception:
+                        continue
+                outputs_schema = f"({', '.join(parts)})" if parts else ""
+        except Exception as e:
+            logging.warning(f"extract_paper_question_spec failed; using defaults: {e}")
+        if not outputs_schema:
+            outputs_schema = "(title:string,answer:string,url:string)"
+
         # Find a suitable existing task or create one
         task_id = self.get_most_suitable_task(task_summary, selected_task_id)
         if task_id is None:
@@ -181,10 +204,11 @@ class AnswerQuestionHandler():
                     )
             except Exception as e:
                 logging.warning(f"Failed to create parent->subtask dependency ({parent_task_id} -> {task_id}): {e}")
-             
+
+        # Collect paper URLs to crawl, while creating/linking entities
+        items: List[str] = []
         for resource in answer.resources:
             entity_id = self.graph_accessor.get_entity_by_url(resource.url)
-            
             if entity_id is None:
                 # Entity does not exist, create a new one
                 video_sites = ['youtube.com', 'youtu.be', 'vimeo.com', 'coursera.org', 'edx.org', 'khanacademy.org', 'udemy.com', 'dailymotion.com']
@@ -194,7 +218,7 @@ class AnswerQuestionHandler():
 
                 # If it's a paper, add to crawl queue                
                 if entity_type == 'paper':
-                    CrawlQueue.add_urls_to_crawl_queue([resource.url])
+                    items.append(resource.url)
             
             # Link the task to the new or existing entity
             if entity_id and task_id:
@@ -203,6 +227,12 @@ class AnswerQuestionHandler():
         resource_summary = [resource.model_dump() for resource in answer.resources]
         self.add_task_entities(task_id, {'sources': resource_summary})
 
+        # Trigger crawl + TEI generation + indexing with task-specific eval prompt and schema
+        if items:
+            try:
+                await CrawlQueue.extract_from_urls(items, task_id, eval_prompt, outputs_schema)
+            except Exception as e:
+                logging.warning(f"extract_from_urls failed: {e}")
 
         # Update the project task info!
         return (markdown_answer, task_id)

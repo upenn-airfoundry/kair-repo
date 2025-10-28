@@ -234,8 +234,9 @@ def fetch_and_crawl_frontier(downloads_dir: str = DOWNLOADS_DIR):
     # Ensure the downloads directory exists
     os.makedirs(downloads_dir, exist_ok=True)
 
-    rows = CrawlQueue.get_urls_to_crawl()
+    fetch_and_crawl_items(CrawlQueue.get_urls_to_crawl(), downloads_dir)
 
+def fetch_and_crawl_items(rows: list[dict], downloads_dir: str = DOWNLOADS_DIR):
     for row in rows:
         crawl_id = int(row['id'])
         url = row['url']
@@ -311,8 +312,7 @@ def searchapi_for_authorid(author_id: str, searchapi_key: str) -> dict:
     try:
         response = requests.get(url, params=params)
         response.raise_for_status()
-        data = response.json()
-        return data
+        return response.json()
     except Exception as e:
         print(f"Error searching for author '{author_id}': {e}")
         return {}
