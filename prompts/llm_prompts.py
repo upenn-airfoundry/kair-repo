@@ -852,7 +852,9 @@ class QueryPrompts:
         )
         return context
 
-    def classify_query_and_summarize(query: str) -> QueryClassification:
+
+    @classmethod
+    def classify_query_and_summarize(cls,query: str) -> QueryClassification:
         # Use a fast LLM (e.g., Gemini Flash or GPT-3.5) with a structured output
         from enrichment.llms import get_analysis_llm
         from langchain.prompts import ChatPromptTemplate

@@ -85,14 +85,21 @@ class BaseHandler(tornado.web.RequestHandler, SessionMixin):
     def is_authenticated(self):
         # Checks if session exists and is not expired
         session_id = self.get_cookie("msid")
+        if graph_accessor is None:
+            return False
         if session_id:
             session_data = state.get(session_id)
             if session_data and "username" in session_data:
                 self.session.session = session_data
                 # Ensure user_id is available for other handlers
                 if "user_id" not in self.session.session:
-                     (user_id, _) = graph_accessor.get_user_and_project_ids(self.session.session.get("email"))
-                     self.session.session["user_id"] = user_id
+                    result = graph_accessor.get_user_and_project_ids(self.session.session.get("email"))
+                    if result is None:
+                        self.set_status(500)
+                        self.write({"error": "Could not retrieve user information"})
+                        return
+                    (user_id, project_id) = result
+                    self.session.session["user_id"] = user_id
                 return True
         return False
 
@@ -242,6 +249,14 @@ class LoginHandler(BaseHandler):
 
 class CreateAccountHandler(BaseHandler):
     def post(self):
+        if graph_accessor is None:
+            logging.error("Create account attempted but database is not configured (graph_accessor is None)")
+            self.set_status(503)
+            self.write({
+                "success": False,
+                "message": "Service temporarily unavailable: database is not configured"
+            })
+            return
         try:
             data = self.get_json()
             email = data.get("userId") or data.get("email")
@@ -265,10 +280,9 @@ class CreateAccountHandler(BaseHandler):
                 return
 
             # Check if user already exists
-            existing = graph_accessor.exec_sql(
+            if graph_accessor.exec_sql(
                 "SELECT 1 FROM users WHERE email = %s;", (email,)
-            )
-            if existing:
+            ):
                 self.set_status(409)
                 self.write({"success": False, "message": "Account already exists"})
                 return
@@ -313,6 +327,10 @@ class FindRelatedEntitiesByTagHandler(BaseHandler):
             self.write({"error": "Session expired or not authenticated"})
             self.redirect_to_login()
             return
+        if graph_accessor is None:
+            self.set_status(503)
+            self.write({"error": "Graph accessor not initialized"})
+            return
         self.renew_session()  # Renew expiration on access
 
         tag_name = self.get_argument('tag_name', None)
@@ -336,6 +354,10 @@ class FindRelatedEntitiesHandler(BaseHandler):
             self.write({"error": "Session expired or not authenticated"})
             self.redirect_to_login()
             return
+        if graph_accessor is None:
+            self.set_status(503)
+            self.write({"error": "Graph accessor not initialized"})
+            return
         self.renew_session()  # Renew expiration on access
         query = self.get_argument('query', None)
         k = int(self.get_argument('k', 10))
@@ -351,10 +373,12 @@ class FindRelatedEntitiesHandler(BaseHandler):
             self.set_status(400)
             self.write({"error": "'query' parameter is required"})
             return
-            
-        logging.debug("Find related entities: " + query)
+
+        logging.debug(f"Find related entities: {query}")
         if keywords:
-            logging.debug("Keywords: " + str(keywords))
+            logging.debug(f"Keywords: {keywords}")
+        else:
+            keywords = []
         results = graph_accessor.find_related_entities(query, k, entity_type, keywords)
         self.write({"results": results})
 
@@ -366,6 +390,11 @@ class AddToCrawlQueueHandler(BaseHandler):
             self.write({"error": "Session expired or not authenticated"})
             self.redirect_to_login()
             return
+        if graph_accessor is None:
+            self.set_status(503)
+            self.write({"error": "Graph accessor not initialized"})
+            return
+            
         self.renew_session()  # Renew expiration on access
 
         data = self.get_json()
@@ -392,7 +421,7 @@ class AddToCrawlQueueHandler(BaseHandler):
         self.write({"message": "URL added to crawl queue"})
 
 class CrawlFilesHandler(BaseHandler):
-    def post(self):
+    async def post(self):
         # Guard: only allow if session is valid and not expired
         if self.is_session_expired() or not self.is_authenticated():
             self.set_status(401)
@@ -403,14 +432,14 @@ class CrawlFilesHandler(BaseHandler):
         try:
             # Lazy import to avoid prompts dependency at startup
             from crawl.web_fetch import fetch_and_crawl_frontier
-            fetch_and_crawl_frontier()
+            await fetch_and_crawl_frontier()
             self.write({"message": "Crawling completed successfully"})
         except Exception as e:
             self.set_status(500)
             self.write({"error": f"An error occurred during crawling: {e}"})
 
 class ParsePDFsAndIndexHandler(BaseHandler):
-    def post(self):
+    async def post(self):
         # Guard: only allow if session is valid and not expired
         if self.is_session_expired() or not self.is_authenticated():
             self.set_status(401)
@@ -423,13 +452,13 @@ class ParsePDFsAndIndexHandler(BaseHandler):
             #     self.set_status(503)
             #     self.write({"error": "Parsing not available at startup"})
             #     return
-            EnrichmentDaemon.parse_files_and_index(use_aryn=False)
+            await EnrichmentDaemon.parse_and_index_file(use_aryn=False)
             self.write({"message": "PDF parsing and indexing completed successfully"})
         except Exception as e:
             self.set_status(500)
             self.write({"error": f"An error occurred during parsing and indexing: {e}"})
 
-class UncrowledEntriesHandler(BaseHandler):
+class UncrawledEntriesHandler(BaseHandler):
     def get(self):
         try:
             query = """
@@ -493,10 +522,10 @@ class AddAssessmentCriterionHandler(BaseHandler):
                 self.set_status(400)
                 self.write({"error": "'name', 'scope', and 'prompt' fields are required"})
                 return
-            
-            logging.info("Adding assessment criterion with name: " + name)
-            logging.debug("Scope: " + scope)
-            logging.debug("Prompt: " + prompt)
+
+            logging.info(f"Adding assessment criterion with name: {name}")
+            logging.debug(f"Scope: {scope}")
+            logging.debug(f"Prompt: {prompt}")
 
             criterion_id = EnrichmentDaemon.add_enrichment_task(name, prompt, scope, promise)
 
@@ -635,6 +664,10 @@ class AccountInfoHandler(BaseHandler):
             self.set_status(401)
             self.write({"error": "Session expired or not authenticated"})
             return
+        if graph_accessor is None:
+            self.set_status(503)
+            self.write({"error": "Graph accessor not initialized"})
+            return
         email = self.session.session.get("email")
         user_id = graph_accessor.exec_sql("SELECT user_id FROM users WHERE email = %s;", (email,))[0][0]
         profile = graph_accessor.get_user_profile(email)
@@ -654,6 +687,10 @@ class UpdateAccountHandler(BaseHandler):
             self.set_status(401)
             self.write({"error": "Session expired or not authenticated"})
             return
+        if graph_accessor is None:
+            self.set_status(503)
+            self.write({"error": "Graph accessor not initialized"})
+            return
         data = self.get_json()
         email = self.session.session.get("email")
         graph_accessor.update_user_profile(email, data.get("profile", {}))
@@ -664,6 +701,8 @@ class SelectProjectHandler(BaseHandler):
         """Select an existing project for the current user and persist it in the profile."""
         if self.is_session_expired() or not self.is_authenticated():
             self.set_status(401); self.write({"error": "Session expired or not authenticated"}); return
+        if graph_accessor is None:
+            self.set_status(503); self.write({"error": "Graph accessor not initialized"}); return
         try:
             data = self.get_json()
             project_id = int(data.get("project_id", 0))
@@ -712,6 +751,10 @@ class ListProjectsHandler(BaseHandler):
             self.set_status(401)
             self.write({"error": "Session expired or not authenticated"})
             return
+        if graph_accessor is None:
+            self.set_status(503)
+            self.write({"error": "Graph accessor not initialized"})
+            return
         # If mine=1, return the full set of this user's projects (no limit)
         mine = self.get_argument("mine", "").lower() in ("1", "true", "yes")
         if mine:
@@ -729,6 +772,10 @@ class CreateProjectHandler(BaseHandler):
     def post(self):
         if self.is_session_expired() or not self.is_authenticated():
             self.set_status(401); self.write({"error": "Session expired or not authenticated"}); return
+        if graph_accessor is None:
+            self.set_status(503)
+            self.write({"error": "Graph accessor not initialized"})
+            return
         try:
             data = self.get_json()
             name = data.get("name")
@@ -755,6 +802,10 @@ class ProjectTaskHandler(BaseHandler):
         """Create a new project task."""
         if not self.is_authenticated():
             self.set_status(401); self.write({"error": "Not authenticated"}); return
+        if graph_accessor is None:
+            self.set_status(503)
+            self.write({"error": "Graph accessor not initialized"})
+            return
         
         data = self.get_json()
         name = data.get("name")
@@ -771,6 +822,10 @@ class ProjectTaskHandler(BaseHandler):
         """Retrieve all tasks for a project or find the most related one."""
         if not self.is_authenticated():
             self.set_status(401); self.write({"error": "Not authenticated"}); return
+        if graph_accessor is None:
+            self.set_status(503)
+            self.write({"error": "Graph accessor not initialized"})
+            return
         
         description = self.get_argument("description", None)
         if description:
@@ -786,6 +841,10 @@ class TaskEntityHandler(BaseHandler):
         """Add and link an entity to a task."""
         if not self.is_authenticated():
             self.set_status(401); self.write({"error": "Not authenticated"}); return
+        if graph_accessor is None:
+            self.set_status(503)
+            self.write({"error": "Graph accessor not initialized"})
+            return
         
         data = self.get_json()
         entity_id = data.get("entity_id")
@@ -801,6 +860,10 @@ class TaskEntityHandler(BaseHandler):
         """Retrieve all entities for a task."""
         if not self.is_authenticated():
             self.set_status(401); self.write({"error": "Not authenticated"}); return
+        if graph_accessor is None:
+            self.set_status(503)
+            self.write({"error": "Graph accessor not initialized"})
+            return
         
         entities = graph_accessor.get_entities_for_task(int(task_id))
         self.write({"entities": entities})
@@ -811,6 +874,10 @@ class TaskDependencyHandler(BaseHandler):
         """Create a dependency between two tasks."""
         if not self.is_authenticated():
             self.set_status(401); self.write({"error": "Not authenticated"}); return
+        if graph_accessor is None:
+            self.set_status(503)
+            self.write({"error": "Graph accessor not initialized"})
+            return
 
         data = self.get_json()
         source_task_id = data.get("source_task_id")
@@ -834,6 +901,10 @@ class TaskDependencyHandler(BaseHandler):
         """Retrieve all tasks that a given task depends on."""
         if not self.is_authenticated():
             self.set_status(401); self.write({"error": "Not authenticated"}); return
+        if graph_accessor is None:
+            self.set_status(503)
+            self.write({"error": "Graph accessor not initialized"})
+            return
 
         dependencies = graph_accessor.get_task_dependencies(int(dependent_task_id))
         self.write({"dependencies": dependencies})
@@ -844,6 +915,10 @@ class ProjectDependenciesHandler(BaseHandler):
         """Retrieve all task dependencies for a project."""
         if not self.is_authenticated():
             self.set_status(401); self.write({"error": "Not authenticated"}); return
+        if graph_accessor is None:
+            self.set_status(503)
+            self.write({"error": "Graph accessor not initialized"})
+            return
 
         dependencies = graph_accessor.get_all_dependencies_for_project(int(project_id))
         self.write({"dependencies": dependencies})
@@ -854,6 +929,10 @@ class UserFindTaskHandler(BaseHandler):
         """Find the most similar task for a user across all projects."""
         if not self.is_authenticated():
             self.set_status(401); self.write({"error": "Not authenticated"}); return
+        if graph_accessor is None:
+            self.set_status(503)
+            self.write({"error": "Graph accessor not initialized"})
+            return
         
         user_id = self.session.session.get("user_id")
         description = self.get_argument("description", None)
@@ -871,10 +950,18 @@ class ChatHistoryHandler(BaseHandler):
             self.set_status(401)
             self.write({"error": "Session expired or not authenticated"})
             return
+        if graph_accessor is None:
+            self.set_status(503); self.write({"error": "Graph accessor not initialized"}); return
 
         try:
             project_id = self.get_argument("project_id")
-            user_id = graph_accessor.get_user_and_project_ids(self.session.session.get("email"))[0]
+            result = graph_accessor.get_user_and_project_ids(self.session.session.get("email"))
+            if result is None:
+                self.set_status(500)
+                self.write({"error": "Failed to retrieve user and project IDs"})
+                return
+            user_id = result[0]
+            project_id = result[1]
 
             if not user_id or not project_id:
                 self.set_status(400)
@@ -904,6 +991,8 @@ class RenameProjectHandler(BaseHandler):
     def post(self):
         if self.is_session_expired() or not self.is_authenticated():
             self.set_status(401); self.write({"error": "Session expired or not authenticated"}); return
+        if graph_accessor is None:
+            self.set_status(503); self.write({"error": "Graph accessor not initialized"}); return
         try:
             data = self.get_json()
             project_id = int(data.get("project_id", 0))
@@ -936,6 +1025,8 @@ class DeleteProjectHandler(BaseHandler):
     def post(self):
         if self.is_session_expired() or not self.is_authenticated():
             self.set_status(401); self.write({"error": "Session expired or not authenticated"}); return
+        if graph_accessor is None:
+            self.set_status(503); self.write({"error": "Graph accessor not initialized"}); return
         try:
             data = self.get_json()
             project_id = int(data.get("project_id", 0))
@@ -1038,9 +1129,16 @@ class FleshOutTaskHandler(BaseHandler):
                 self.set_status(500)
                 self.write({"error": "Session expired, please log in again"})
                 return
+            if graph_accessor is None:
+                self.set_status(503); self.write({"error": "Graph accessor not initialized"}); return
 
             email = self.session.session.get("email")
-            (user_id, project_id) = graph_accessor.get_user_and_project_ids(email)
+            result = graph_accessor.get_user_and_project_ids(email)
+            if result is None:
+                self.set_status(500)
+                self.write({"error": "Could not retrieve user information"})
+                return
+            (user_id, project_id) = result
             # Ensure the handler is on the current project
             handler = question_handlers[session_id]
             handler.set_project_id(project_id)
@@ -1064,6 +1162,9 @@ class RenameTaskHandler(BaseHandler):
     def post(self, task_id):
         if self.is_session_expired() or not self.is_authenticated():
             self.set_status(401); self.write({"error": "Session expired or not authenticated"}); return
+            
+        if graph_accessor is None:
+            self.set_status(503); self.write({"error": "Graph accessor not initialized"}); return
         try:
             data = self.get_json() or {}
             new_name = (data.get("name") or data.get("task_name") or "").strip()
@@ -1124,7 +1225,7 @@ def make_app():
         (r"/add_to_crawl_queue", AddToCrawlQueueHandler),
         (r"/crawl_files", CrawlFilesHandler),
         (r"/parse_pdfs_and_index", ParsePDFsAndIndexHandler),
-        (r"/uncrawled_entries", UncrowledEntriesHandler),
+        (r"/uncrawled_entries", UncrawledEntriesHandler),
         (r"/get_assessment_criteria", GetAssessmentCriteriaHandler),
         (r"/add_assessment_criterion", AddAssessmentCriterionHandler),
         (r"/add_enrichment", AddEnrichmentHandler),

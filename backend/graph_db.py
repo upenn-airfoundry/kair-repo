@@ -10,7 +10,7 @@ import json
 import psycopg2
 from psycopg2.extras import execute_values
 import os
-from typing import List, Tuple, Optional, Any
+from typing import List, Tuple, Optional, Any, Dict
 import pandas as pd
 import uuid
 
@@ -445,9 +445,12 @@ class GraphAccessor:
                 cur.execute(f"SELECT entity_id FROM {self.schema}.entities WHERE entity_parent = %s AND entity_type = 'paragraph' AND entity_detail = %s;", (paper_id, content,))
                 paragraph_id = cur.fetchone() # type: ignore
                 if paragraph_id is None:
+                    from enrichment.llms import gemini_doc_embedding, qwen_doc_embedding
+                    gemini_embedding = gemini_doc_embedding(content) if COMPUTE_GEMINI else None
+                    qwen_embedding = qwen_doc_embedding(content) if COMPUTE_QWEN else None
                     cur.execute(
-                        f"INSERT INTO {self.schema}.entities (entity_parent, entity_type, entity_detail, entity_embed) VALUES (%s, 'paragraph', %s, %s) RETURNING entity_id;",
-                        (paper_id, content, embedding)
+                        f"INSERT INTO {self.schema}.entities (entity_parent, entity_type, entity_detail, entity_embed, gem_embed, qwen_embed) VALUES (%s, 'paragraph', %s, %s, %s, %s) RETURNING entity_id;",
+                        (paper_id, content, embedding, gemini_embedding, qwen_embedding)
                     )
                     paragraph_id = cur.fetchone()[0] # type: ignore
             self.conn.commit()
@@ -1682,6 +1685,7 @@ class GraphAccessor:
             # For a paper, recompute the entity_embed by finding the linked entity_tag and copying its summary. If one doesn't exist, take the filename at the end of the URL
             with self.conn.cursor() as cur:
                 cur.execute(f"SELECT entity_id, entity_url FROM {self.schema}.entities WHERE entity_type = 'paper';")
+
                 papers = cur.fetchall()
                 for entity_id, entity_url in papers:
                     # Try to get the summary tag
@@ -2387,3 +2391,122 @@ class GraphAccessor:
             self.conn.rollback()
             raise
 
+
+    def get_task_names_for_project(self, project_id: int) -> List[Tuple[int, str]]:
+        try:
+            return self.exec_sql(
+                "SELECT task_id, task_name FROM project_tasks WHERE project_id = %s",
+                (project_id,)
+            ) or []
+        except Exception as e:
+            logging.error(f"Error fetching task names for project {project_id}: {e}")
+            return []
+
+    def get_task_project(self, task_id: int) -> Optional[int]:
+        try:
+            rows = self.exec_sql(
+                "SELECT project_id FROM project_tasks WHERE task_id = %s",
+                (task_id,)
+            )
+            return int(rows[0][0]) if rows and len(rows) > 0 and len(rows[0]) > 0 else None
+        except Exception as e:
+            logging.error(f"Error fetching project for task {task_id}: {e}")
+            return None
+
+    def get_task_core(self, task_id: int, project_id: Optional[int] = None) -> Optional[dict]:
+        """
+        Fetch a single task (optionally scoped to project_id).
+        Returns dict: {task_id, project_id, task_name, task_description, task_schema, task_context}
+        """
+        try:
+            with self.conn.cursor() as cur:
+                if project_id is None:
+                    cur.execute(
+                        "SELECT task_id, project_id, task_name, task_description, task_schema, task_context "
+                        "FROM project_tasks WHERE task_id = %s;",
+                        (task_id,)
+                    )
+                else:
+                    cur.execute(
+                        "SELECT task_id, project_id, task_name, task_description, task_schema, task_context "
+                        "FROM project_tasks WHERE task_id = %s AND project_id = %s;",
+                        (task_id, project_id)
+                    )
+                row = cur.fetchone()
+                if not row:
+                    return None
+                return {
+                    "task_id": row[0],
+                    "project_id": row[1],
+                    "task_name": row[2],
+                    "task_description": row[3],
+                    "task_schema": row[4],
+                    "task_context": row[5],
+                }
+        except Exception as e:
+            logging.error(f"Error fetching task core: {e}")
+            self.conn.rollback()
+            return None
+
+    def get_upstream_task_ids(self, task_id: int) -> List[int]:
+        """
+        Return IDs of tasks that the given task depends on (source_task_id for dependent_task_id=task_id).
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT source_task_id FROM task_dependencies WHERE dependent_task_id = %s;",
+                    (task_id,)
+                )
+                return [int(r[0]) for r in cur.fetchall()]
+        except Exception as e:
+            logging.error(f"Error fetching upstream task ids for {task_id}: {e}")
+            self.conn.rollback()
+            return []
+
+    def get_tasks_core_by_ids(self, task_ids: List[int]) -> List[dict]:
+        """
+        Fetch core fields for multiple tasks.
+        Returns list of dicts: {task_id, task_name, task_description, task_schema}
+        """
+        if not task_ids:
+            return []
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT task_id, task_name, task_description, task_schema "
+                    "FROM project_tasks WHERE task_id = ANY(%s);",
+                    (task_ids,)
+                )
+                rows = cur.fetchall()
+                return [
+                    {
+                        "task_id": r[0],
+                        "task_name": r[1],
+                        "task_description": r[2],
+                        "task_schema": r[3],
+                    }
+                    for r in rows
+                ]
+        except Exception as e:
+            logging.error(f"Error fetching tasks by ids: {e}")
+            self.conn.rollback()
+            return []
+
+    def get_dependencies_rows_for_task(self, task_id: int) -> List[Tuple[int, int, Optional[str], Optional[str]]]:
+        """
+        Return (source_task_id, dependent_task_id, relationship_description, data_schema)
+        rows where either side is task_id.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT source_task_id, dependent_task_id, relationship_description, data_schema "
+                    "FROM task_dependencies WHERE source_task_id = %s OR dependent_task_id = %s;",
+                    (task_id, task_id)
+                )
+                return cur.fetchall()
+        except Exception as e:
+            logging.error(f"Error fetching dependencies for task {task_id}: {e}")
+            self.conn.rollback()
+            return []

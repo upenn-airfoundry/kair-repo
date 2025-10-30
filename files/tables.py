@@ -2,35 +2,37 @@ import pandas as pd
 import random
 from scipy.io import loadmat
 
+from io import StringIO
+
 from backend.graph_db import GraphAccessor
 
 SAMPLE_SIZE = 50
 
-def read_csv(file_path: str) -> pd.DataFrame:
+def read_csv(file_path: StringIO, delimiter:str = ',') -> pd.DataFrame:
     """
     Read a CSV file into a DataFrame.
     """
-    return pd.read_csv(file_path)
+    return pd.read_csv(file_path, delimiter=delimiter)
 
-def read_json(file_path: str) -> pd.DataFrame:
+def read_json(file_path: StringIO) -> pd.DataFrame:
     """
     Read a JSON file into a DataFrame.
     """
     return pd.read_json(file_path)
 
-def read_jsonl(file_path: str) -> pd.DataFrame:
+def read_jsonl(file_path: StringIO) -> pd.DataFrame:
     """
     Read a JSON file into a DataFrame.
     """
     return pd.read_json(file_path,lines=True )
 
-def read_xml(file_path: str) -> pd.DataFrame:
+def read_xml(file_path: StringIO) -> pd.DataFrame:
     """
     Read an XML file into a DataFrame.
     """
     return pd.read_xml(file_path)
 
-def read_mat(file_path: str) -> pd.DataFrame:
+def read_mat(file_path: StringIO) -> pd.DataFrame:
     """
     Read a Matlab MAT file into a DataFrame.
     """

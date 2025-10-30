@@ -21,6 +21,7 @@ from grobid_client.grobid_client import GrobidClient # Note the module structure
 
 import requests
 import json
+from entities.generate_doc_info import handle_file
 from prompts.llm_prompts import DocumentPrompts
 
 _ = load_dotenv(find_dotenv())
@@ -230,13 +231,13 @@ def get_pdf(row):
     else:
         pass
     
-def fetch_and_crawl_frontier(downloads_dir: str = DOWNLOADS_DIR):
+async def fetch_and_crawl_frontier(downloads_dir: str = DOWNLOADS_DIR):
     # Ensure the downloads directory exists
     os.makedirs(downloads_dir, exist_ok=True)
 
-    fetch_and_crawl_items(CrawlQueue.get_urls_to_crawl(), downloads_dir)
+    await fetch_and_crawl_items(CrawlQueue.get_urls_to_crawl(), downloads_dir)
 
-def fetch_and_crawl_items(rows: list[dict], downloads_dir: str = DOWNLOADS_DIR):
+async def fetch_and_crawl_items(rows: list[dict], downloads_dir: str = DOWNLOADS_DIR):
     for row in rows:
         crawl_id = int(row['id'])
         url = row['url']
@@ -260,6 +261,8 @@ def fetch_and_crawl_items(rows: list[dict], downloads_dir: str = DOWNLOADS_DIR):
                     logging.debug(f"File {filename} already exists. Skipping download.")
                     CrawlQueue.add_to_crawled(crawl_id, 'file://' + filename)
                     continue
+
+                await handle_file(filename, url)
 
                 # Fetch the PDF from the URL
                 response = requests.get(url, timeout=10)

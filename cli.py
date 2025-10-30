@@ -13,6 +13,7 @@ from datetime import datetime
 from backend.graph_db import GraphAccessor
 from dblp_parser.dblp_parser import DBLP
 from dotenv import load_dotenv, find_dotenv
+import asyncio
 
 from crawl.crawler_queue import CrawlQueue
 from crawl.web_fetch import fetch_and_crawl_frontier
@@ -70,7 +71,7 @@ def main():
         print("Adding URLs to the crawl queue...")
         add_urls_to_frontier_from_file()
         print("Starting crawl...")
-        fetch_and_crawl_frontier()
+        asyncio.run(fetch_and_crawl_frontier())
     elif args.command == "test_crawl":
         # Dynamically load the MCP server module and call index_papers
         mcp_path = os.path.join(os.path.dirname(__file__), "server", "mcp", "papers_mcp_server.py")
@@ -122,9 +123,9 @@ def main():
     elif args.command == "add_local_files":
         crawl_local_files(PDFS_DIR)
         crawl_local_files(DATA_DIR)
-        fetch_and_crawl_frontier()
+        asyncio.run(fetch_and_crawl_frontier())
     elif args.command == "process":
-        parse_files_and_index()
+        asyncio.run(parse_files_and_index())
     elif args.command == "dblp":
         if not os.path.exists('dblp.jsonl'):
             print("DBLP file not found. Downloading and parsing...")

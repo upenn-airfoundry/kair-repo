@@ -44,8 +44,8 @@ class EnrichmentDaemon:
             return False
         
     @classmethod
-    def parse_and_index_file(cls, use_aryn: bool = False):
+    async def parse_and_index_file(cls, use_aryn: bool = False):
         if cls.graph_accessor is None:
             raise ValueError("EnrichmentDaemon not initialized with a GraphAccessor.")
         
-        parse_files_and_index(use_aryn)
+        await parse_files_and_index(use_aryn)

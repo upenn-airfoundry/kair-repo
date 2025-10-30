@@ -1,8 +1,10 @@
 from typing import Any, List, Dict, Optional
 import logging
 from datetime import datetime
+from sklearn.metrics.pairwise import cosine_similarity
+import numpy as np
 
-from flask import json
+#from flask import json
 from backend.graph_db import GraphAccessor
 from prompts.llm_prompts import QueryPrompts, TaskDependencyList, WebPrompts, PlanningPrompts, ReviewPrompts
 from prompts.llm_prompts import QueryClassification, DecisionPrompts, RequiresHumanDecision
@@ -14,6 +16,8 @@ from enrichment.llms import gemini_query_embedding
 from prompts.llm_prompts import SolutionTask, SolutionPlan, TaskDependency
 from prompts.llm_prompts import PeoplePrompts, ExpertBiosketch
 
+import json
+
 class AnswerQuestionHandler():
     def __init__(self, graph_accessor: GraphAccessor, username: str, user_profile: dict[str, Any], user_id: int, project_id: int) -> None:
         self.graph_accessor = graph_accessor
@@ -24,6 +28,15 @@ class AnswerQuestionHandler():
         system_profile = graph_accessor.get_system_profile()
         if system_profile and "profile_context" in system_profile:
             self.system_profile = system_profile["profile_context"]
+
+    @classmethod
+    def get_gemini_similarity(cls, embed1: List[float], embed2: List[float]) -> float:
+        try:
+            sim = cosine_similarity(np.array(embed1).reshape(1, -1), np.array(embed2).reshape(1, -1))[0][0]
+            return float(sim)
+        except Exception:
+            return -1.0
+    
         
     def set_project_id(self, project_id: int) -> None:
         self.project_id = project_id
@@ -88,7 +101,7 @@ class AnswerQuestionHandler():
     def modify_task_entities(self, task_id: int, prompt: str) -> None:
         entities = self.get_task_entities(task_id)
 
-        
+        raise NotImplementedError()
         pass
     
     def get_most_suitable_task(self, task_summary: str, selected_task_id: Optional[int]) -> Optional[int]:
@@ -98,50 +111,37 @@ class AnswerQuestionHandler():
           - Otherwise, find an existing task in the project with high embedding similarity to task_summary.
           - If none are suitable, return None.
         """
-        try:
-            # Prefer explicitly selected task if it belongs to this project
-            if selected_task_id is not None:
-                owner = self.graph_accessor.exec_sql(
-                    "SELECT project_id FROM project_tasks WHERE task_id = %s",
-                    (selected_task_id,)
-                )
-                if owner and int(owner[0][0]) == int(self.project_id):
-                    return int(selected_task_id)
-        except Exception:
-            # ignore and proceed to similarity match
-            pass
+        # Prefer explicitly selected task if it belongs to this project
+        if selected_task_id is not None:
+            project = self.graph_accessor.get_task_project(selected_task_id)
+            if project and int(project) == int(self.project_id):
+                return int(selected_task_id)
 
-        try:
-            rows = self.graph_accessor.exec_sql(
-                "SELECT task_id, task_name FROM project_tasks WHERE project_id = %s",
-                (self.project_id,)
-            ) or []
-            if not rows:
-                return None
-
-            # Embed the summary once
-            try:
-                embed_summary = gemini_query_embedding(task_summary)
-            except Exception:
-                embed_summary = None
-
-            best_id: Optional[int] = None
-            best_sim: float = -1.0
-            for task_id, task_name in rows:
-                if embed_summary is None:
-                    continue
-                try:
-                    embed_name = gemini_query_embedding(task_name)
-                    sim = sum(a * b for a, b in zip(embed_name, embed_summary))
-                    # Original behavior: require a high threshold; keep the best above it
-                    if sim > 0.9 and sim > best_sim:
-                        best_sim = sim
-                        best_id = int(task_id)
-                except Exception:
-                    continue
-            return best_id
-        except Exception:
+        # Otherwise, find the most similar existing task in this project        
+        if not (rows := self.graph_accessor.get_task_names_for_project(self.project_id)):
             return None
+
+        # Embed the summary once
+        try:
+            embed_summary = gemini_query_embedding(task_summary)
+        except Exception:
+            embed_summary = None
+
+        best_id: Optional[int] = None
+        best_sim: float = -1.0
+        for task_id, task_name in rows:
+            if embed_summary is None:
+                continue
+            try:
+                embed_name = gemini_query_embedding(task_name)
+                sim = AnswerQuestionHandler.get_gemini_similarity(embed_name, embed_summary)
+                # Original behavior: require a high threshold; keep the best above it
+                if sim > 0.9 and sim > best_sim:
+                    best_sim = sim
+                    best_id = int(task_id)
+            except Exception:
+                continue
+        return best_id
 
     async def search_over_papers(self, user_prompt: str, original_prompt: str, task_summary: str, selected_task_id: Optional[int], parent_task_id: Optional[int] = None) -> tuple[Optional[str], Optional[int]]:
         """
@@ -249,14 +249,14 @@ class AnswerQuestionHandler():
             tuple[Optional[str], Optional[int]]: A tuple containing the search results and the task ID.
         """
         questions = search_over_criteria(user_prompt, self.graph_accessor.get_assessment_criteria(None))
-        logging.info('Expanded into subquestions: ' + questions)
+        logging.info(f'Expanded into subquestions: {questions}')
         
         relevant_docs = search_multiple_criteria(questions)
         main = self.graph_accessor.find_related_entity_ids_by_tag(user_prompt, "summary", 50)
 
-        logging.debug("Relevant docs: " + str(relevant_docs))
-        logging.debug("Main papers: " + str(main))
-        
+        logging.debug(f"Relevant docs: {relevant_docs}")
+        logging.debug(f"Main papers: {main}")
+
         docs_in_order = []
         count = 0
         for doc in relevant_docs:
@@ -272,134 +272,121 @@ class AnswerQuestionHandler():
                 docs_in_order.append(main[other_docs])
                 count += 1
             other_docs += 1
-        
-        print("Items matching criteria: " + str(docs_in_order))
-        
-        if len(docs_in_order):
-            paper_info = self.graph_accessor.get_entities_with_summaries(list(docs_in_order))
-            answer = generate_rag_answer(paper_info, user_prompt)
 
-            self.graph_accessor.add_user_history(self.user_id, self.project_id, questions, answer)
-            if answer is None or len(answer) == 0 or "i am sorry" in answer.lower() or not is_relevant_answer_with_data(user_prompt, answer):
-                questions = None
-                answer = await search_basic(user_prompt)
-            
-            if questions:
-                question_str = ''
-                question_map = json.loads(questions)
-                for q in question_map.keys():
-                    question_str += f' * {q}: {question_map[q]}\n'
+        print(f"Items matching criteria: {docs_in_order}")
 
-                return (answer + '\n\nWe additionally looked for assessment criteria: \n\n' + question_str, 1)
-            else:
-                return (answer, 0)
-        else:
+        if docs_in_order is None or not len(docs_in_order):
             return (None, 0)
+
+        paper_info = self.graph_accessor.get_entities_with_summaries(list(docs_in_order))
+        answer = generate_rag_answer(paper_info, user_prompt)
+
+        self.graph_accessor.add_user_history(self.user_id, self.project_id, questions, answer)
+        if answer is None or len(answer) == 0 or "i am sorry" in answer.lower() or not is_relevant_answer_with_data(user_prompt, answer):
+            questions = None
+            answer = await search_basic(user_prompt)
         
-    async def flesh_out_task(self, task_id: int, dependencies: TaskDependencyList, parent_task_id: Optional[int] = None) -> tuple[Optional[str], Optional[int]]:
-        """Expand a task into more detail or sub-tasks.
+        if questions is None:
+            return (answer, 0)
+        
+        question_str = ''
+        question_map = json.loads(questions)
+        for q in question_map.keys():
+            question_str += f' * {q}: {question_map[q]}\n'
 
-        Returns:
-            tuple[Optional[str], Optional[int]]: A tuple containing the response and a status code.
+        return (answer + '\n\nWe additionally looked for assessment criteria: \n\n' + question_str, 1)
+        
+    async def flesh_out_task(self, task_id: int, dependencies: "TaskDependencyList", parent_task_id: Optional[int] = None) -> tuple[Optional[str], Optional[int]]:
         """
-        # 1. Fetch the task details from the database
-        task_rows = self.graph_accessor.exec_sql(
-            "SELECT task_name, task_description, task_schema, task_context FROM project_tasks WHERE task_id = %s AND project_id = %s",
-            (task_id, self.project_id)
-        )
-
-        if not task_rows:
+        Expand a task into more detail or sub-tasks.
+        """
+        # 1) Load task core via GraphAccessor
+        task_row = self.graph_accessor.get_task_core(task_id, project_id=self.project_id)
+        if not task_row:
             logging.error(f"Task with ID {task_id} not found in project {self.project_id}.")
             return (f"Error: Task with ID {task_id} not found.", 0)
 
-        task_info = task_rows[0]
-        task_name, task_description, task_schema, task_context_json = task_info
-        
-        task:dict = {}
+        task_name = task_row.get("task_name") or ""
+        task_description = task_row.get("task_description") or ""
+        task_schema = task_row.get("task_schema") or ""
+        task_context_json = task_row.get("task_context")
+
+        task: dict = {}
         if task_context_json:
             try:
-                task = json.loads(json.loads(task_context_json))
+                # task_context may already be JSON or a JSON string; handle both
+                task = json.loads(task_context_json) if isinstance(task_context_json, str) else task_context_json
+                # prior code double-loaded JSON; keep robust here
+                if isinstance(task, str):
+                    task = json.loads(task)
             except json.JSONDecodeError:
                 task = {}
 
         prompt = task_description or task_name
-        
+
         if task:
-            if 'needs_user_clarification' in task and task['needs_user_clarification']:
+            if task.get('needs_user_clarification'):
                 prompt = "This task needs further clarification from the user.\n\n" + prompt + "\n\n"
                 return ("This task needs further clarification from you before it can be expanded. Please provide more details.", 0)
-            elif 'description_and_goals' in task and len(task['description_and_goals']) > 0:
-                prompt = "Please try to execute the task: " + task['description_and_goals'] + "\n\n"
-            if 'outputs' in task and len(task['outputs']) > 0:
+            elif task.get('description_and_goals'):
+                prompt = "Please try to execute the task: " + str(task['description_and_goals']) + "\n\n"
+            if task.get('outputs'):
                 prompt += "The desired outputs are:\n"
                 for output in task['outputs']:
-                    prompt += f"- {output['name']} ({output['datatype']}): {output['description']}\n"
-                    prompt += "\n\n"
+                    prompt += f"- {output['name']} ({output['datatype']}): {output.get('description','')}\n"
+                prompt += "\n\n"
+
         prompt += "\n\nIf the task cannot be directly solved, please provide a more detailed plan or sub-tasks to achieve this task, considering the project context and user profile."
 
         if dependencies:
-            # 1. Get the tasks that our current task depends on (prior tasks)
-            prior_task_rows = self.graph_accessor.exec_sql(
-                "SELECT source_task_id FROM task_dependencies WHERE dependent_task_id = %s",
-                (task_id,)
-            )
-            prior_task_ids = [row[0] for row in prior_task_rows] if prior_task_rows else []
-            
-            if prior_task_ids:
-                prior_task_details_rows = self.graph_accessor.exec_sql(
-                    "SELECT task_name, task_description FROM project_tasks WHERE task_id = ANY(%s)",
-                    (prior_task_ids,)
-                )
-            else:
-                prior_task_details_rows = []
+            # Upstream tasks (prior tasks)
+            prior_task_ids = self.graph_accessor.get_upstream_task_ids(task_id)
+            prior_tasks = self.graph_accessor.get_tasks_core_by_ids(prior_task_ids) if prior_task_ids else []
 
-            # 2. From those prior tasks, find their linked 'json_data' entities
             if prior_task_ids:
-                json_entity_ids = []
+                # Collect json_data entities from upstream tasks
+                json_entity_ids: List[int] = []
                 for prior_id in prior_task_ids:
                     entities = self.graph_accessor.get_entities_for_task(prior_id)
                     for entity in entities:
                         if entity.get('type') == 'json_data':
                             json_entity_ids.append(entity['id'])
-                
-                # 3. Add the content of these entities to the prompt
+
                 unique_entity_ids = list(set(json_entity_ids))
                 if unique_entity_ids:
                     prompt += "\nThis task depends on the outputs of prior tasks. The available information from those tasks is provided below as context:\n\n"
-            
                     prompt += "--- BEGIN UPSTREAM DATA ---\n"
-                    # Create a map from prior task ID to its description for easy lookup
-                    prior_task_details_map = {
-                        row[0]: row[2] for row in prior_task_details_rows
-                    } if prior_task_details_rows else {}
 
-                    # Group entities by their source task
+                    # Group entities by their source task and annotate each upstream task with its description
+                    prior_task_map: Dict[int, dict] = {int(t["task_id"]): t for t in prior_tasks if t.get("task_id") is not None}
+
+                    # Build map task_id -> [json_entity_ids]
                     prior_task_to_entities: Dict[int, List[int]] = {}
                     for prior_id in prior_task_ids:
-                        entities = self.graph_accessor.get_entities_for_task(prior_id)
-                        json_ids = [entity['id'] for entity in entities if entity.get('type') == 'json_data']
+                        ents = self.graph_accessor.get_entities_for_task(prior_id)
+                        json_ids = [e['id'] for e in ents if e.get('type') == 'json_data']
                         if json_ids:
-                            prior_task_to_entities[prior_id] = json_ids
+                            prior_task_to_entities[int(prior_id)] = json_ids
 
-                    # Add the grouped data to the prompt
+                    # Add grouped data to prompt
                     for prior_id, entity_ids in prior_task_to_entities.items():
-                        # Look up the task's name/description
-                        task_desc_row = next((row for row in prior_task_details_rows if row[0] == prior_id), None)
-                        task_desc = task_desc_row[1] if task_desc_row and task_desc_row[1] else f"Task {prior_id}"
-                        
-                        prompt += f"\n--- Data from upstream task: '{task_desc}' ---\n"
+                        trow = prior_task_map.get(int(prior_id))
+                        tdesc = (trow.get("task_description") if trow else None) or f"Task {prior_id}"
+                        prompt += f"\n--- Data from upstream task: '{tdesc}' ---\n"
                         for entity_id in entity_ids:
                             json_content = self.graph_accessor.get_json(entity_id)
                             if json_content:
-                                # We don't need to print the entity ID itself, just its content.
                                 prompt += f"{json_content}\n\n"
+
+                    # Also include the unique entity contents (flat list) if desired
                     for entity_id in unique_entity_ids:
                         json_content = self.graph_accessor.get_json(entity_id)
                         if json_content:
                             prompt += f"Entity {entity_id}:\n{json_content}\n\n"
+
                     prompt += "--- END UPSTREAM DATA ---\n\n"
 
-        # 2. Use an LLM to generate a more detailed plan or sub-tasks
+        # 2) Use an LLM to generate a more detailed plan or sub-tasks
         return await self.answer_question(prompt, selected_task_id=task_id, parent_task_id=parent_task_id)
 
         # Here you could create sub-tasks, link new entities, or update the existing task.
@@ -554,21 +541,7 @@ class AnswerQuestionHandler():
         try:
             if self.project_id is None:
                 # Create a new project and associate it with the user
-                new_project_id = self.graph_accessor.exec_sql(
-                    "INSERT INTO projects (project_name, project_description, created_at) VALUES (%s, %s, %s) RETURNING project_id;",
-                    (f"{self.username}'s Project", "New project created", datetime.now())
-                )
-                self.graph_accessor.commit()
-                if new_project_id is None or len(new_project_id) == 0:
-                    raise Exception("Failed to create a new project.")
-                
-                new_project_id = new_project_id[0][0]
-                self.graph_accessor.execute(
-                    "INSERT INTO user_projects (user_id, project_id) VALUES (%s, %s);",
-                    (self.user_id, new_project_id)
-                )
-                self.graph_accessor.commit()
-                self.project_id = new_project_id
+                self.project_id = self.graph_accessor.create_project( f"{self.username}'s Project", "New project created", self.user_id)
 
             user_history = self.get_history(self.user_id, self.project_id)
 
@@ -580,7 +553,7 @@ class AnswerQuestionHandler():
             # 2. Build expanded prompt
             expanded_prompt = QueryPrompts.build_expanded_prompt(self.system_profile, self.user_profile, user_history, task_summary, user_prompt)
 
-            print("Expanded prompt: " + expanded_prompt)
+            print(f"Expanded prompt: {expanded_prompt}")
             
             original_prompt = user_prompt
             user_prompt = expanded_prompt
@@ -593,9 +566,8 @@ class AnswerQuestionHandler():
                     "You are an expert assistant. Please answer the following general knowledge question concisely and accurately.\n\nIf you don't know the answer, just say you don't know. Do not make up an answer."
                 )
 
-                if ReviewPrompts.assess_responsiveness(user_prompt, answer).fully_responsive:
-                    if selected_task_id is not None:
-                        self.add_task_entities(selected_task_id, {"answer": {"response": answer, "source_prompt": user_prompt}})
+                if ReviewPrompts.assess_responsiveness(user_prompt, answer).fully_responsive and selected_task_id is not None:
+                    self.add_task_entities(selected_task_id, {"answer": {"response": answer, "source_prompt": user_prompt}})
                 
                 self.graph_accessor.add_user_history(self.user_id, self.project_id, original_prompt, answer)
                 return (answer, 0)
@@ -656,7 +628,7 @@ class AnswerQuestionHandler():
                         name=node_name,
                         description=task_summary or original_prompt,
                         schema="",
-                        task_context=plan_context
+                        task_context=plan_context # type: ignore
                     )
                     # If there is a parent, add a parent->subtask edge to this wrapper node
                     if parent_task_id is not None:
@@ -760,47 +732,48 @@ class AnswerQuestionHandler():
         """
         Convenience: load the task, its upstream and downstream neighbors from the DB, then decide.
         """
-        # Load task
-        rows = self.graph_accessor.exec_sql(
-            "SELECT task_id, task_name, task_description, task_schema FROM project_tasks WHERE task_id = %s;",
-            (task_id,)
-        )
-        if not rows:
+        # Load task core
+        row = self.graph_accessor.get_task_core(task_id)
+        if not row:
             return True  # conservative default
         task = {
-            "task_id": rows[0][0],
-            "task_name": rows[0][1],
-            "description": rows[0][2],
-            "schema": rows[0][3],
+            "task_id": row["task_id"],
+            "task_name": row["task_name"],
+            "description": row["task_description"],
+            "schema": row["task_schema"],
         }
 
-        # Load dependencies
-        deps = self.graph_accessor.exec_sql(
-            "SELECT source_task_id, dependent_task_id, relationship_description, data_schema FROM task_dependencies WHERE source_task_id = %s OR dependent_task_id = %s;",
-            (task_id, task_id)
-        ) or []
+        # Load dependencies (both directions) and classify upstream/downstream
+        deps = self.graph_accessor.get_dependencies_rows_for_task(task_id) or []
 
         upstream_tasks: List[Dict[str, Any]] = []
         downstream_tasks: List[Dict[str, Any]] = []
         if deps:
-            # Collect upstream ids (sources feeding into task_id)
             upstream_ids = [int(r[0]) for r in deps if int(r[1]) == task_id]
             downstream_ids = [int(r[1]) for r in deps if int(r[0]) == task_id]
 
-            def load_tasks(ids: List[int]) -> List[Dict[str, Any]]:
-                if not ids:
-                    return []
-                rs = self.graph_accessor.exec_sql(
-                    "SELECT task_id, task_name, task_description, task_schema FROM project_tasks WHERE task_id = ANY(%s);",
-                    (ids,)
-                ) or []
-                return [{"task_id": r[0], "task_name": r[1], "description": r[2], "schema": r[3]} for r in rs]
+            # Batch fetch task cores
+            upstream_tasks = [
+                {
+                    "task_id": t["task_id"],
+                    "task_name": t["task_name"],
+                    "description": t["task_description"],
+                    "schema": t["task_schema"],
+                }
+                for t in self.graph_accessor.get_tasks_core_by_ids(upstream_ids)
+            ]
+            downstream_tasks = [
+                {
+                    "task_id": t["task_id"],
+                    "task_name": t["task_name"],
+                    "description": t["task_description"],
+                    "schema": t["task_schema"],
+                }
+                for t in self.graph_accessor.get_tasks_core_by_ids(downstream_ids)
+            ]
 
-            upstream_tasks = load_tasks(upstream_ids)
-            downstream_tasks = load_tasks(downstream_ids)
-
-            # Attach relationship info per downstream if present
-            rel_map = {}
+            # Attach relationship info for downstream
+            rel_map: Dict[int, Dict[str, Optional[str]]] = {}
             for r in deps:
                 if int(r[0]) == task_id:
                     rel_map[int(r[1])] = {"relationship_description": r[2], "data_schema": r[3]}
