@@ -1,4 +1,4 @@
-from typing import Any, List, Dict, Optional
+from typing import Any, List, Dict, Optional, Union
 import logging
 from datetime import datetime
 from sklearn.metrics.pairwise import cosine_similarity
@@ -13,7 +13,7 @@ import asyncio
 # from prompts.llm_prompts import LearningResource, LearningResourceList, PotentialSource, TaskOutput, SolutionTask, SolutionPlan
 from search import search_over_criteria, search_multiple_criteria, generate_rag_answer, search_basic, is_relevant_answer_with_data
 from enrichment.llms import gemini_query_embedding
-from prompts.llm_prompts import SolutionTask, SolutionPlan, TaskDependency
+from prompts.llm_prompts import SolutionTask, SolutionPlan, TaskDependency, UpstreamTaskContext
 from prompts.llm_prompts import PeoplePrompts, ExpertBiosketch
 
 import json
@@ -228,11 +228,22 @@ class AnswerQuestionHandler():
         self.add_task_entities(task_id, {'sources': resource_summary})
 
         # Trigger crawl + TEI generation + indexing with task-specific eval prompt and schema
+        results = []
         if items:
             try:
-                await CrawlQueue.extract_from_urls(items, task_id, eval_prompt, outputs_schema)
+                results = await CrawlQueue.fetch_url_content(items, task_id, eval_prompt, outputs_schema)
             except Exception as e:
-                logging.warning(f"extract_from_urls failed: {e}")
+                logging.warning(f"fetch_url_content failed: {e}")
+                
+        if results:
+            # Trigger text extraction of documents
+            
+            # TODO: leverage enrichment tasks for analysis here
+            # Also incorporate new enrichment tasks for any remaining questions
+            await CrawlQueue.analyze_documents(results)
+            
+        # TODO: after analyze_documents is done and enriched -- search for results
+        # with the key criteria, return results and annotations to build the task schema
 
         # Update the project task info!
         return (markdown_answer, task_id)
@@ -311,80 +322,40 @@ class AnswerQuestionHandler():
         task_schema = task_row.get("task_schema") or ""
         task_context_json = task_row.get("task_context")
 
-        task: dict = {}
-        if task_context_json:
-            try:
-                # task_context may already be JSON or a JSON string; handle both
-                task = json.loads(task_context_json) if isinstance(task_context_json, str) else task_context_json
-                # prior code double-loaded JSON; keep robust here
-                if isinstance(task, str):
-                    task = json.loads(task)
-            except json.JSONDecodeError:
-                task = {}
+        # Build upstream contexts
+        upstream_contexts: List[UpstreamTaskContext] = []
+        prior_task_ids = self.graph_accessor.get_upstream_task_ids(task_id)
+        prior_tasks = self.graph_accessor.get_tasks_core_by_ids(prior_task_ids) if prior_task_ids else []
+        if prior_task_ids:
+            prior_task_map: Dict[int, dict] = {int(t["task_id"]): t for t in prior_tasks if t.get("task_id") is not None}
+            for prior_id in prior_task_ids:
+                ents = self.graph_accessor.get_entities_for_task(prior_id) or []
+                json_ids = [int(e["id"]) for e in ents if isinstance(e, dict) and e.get("type") == "json_data"]
+                if not json_ids:
+                    continue
+                title = (prior_task_map.get(int(prior_id), {}) or {}).get("task_description") or f"Task {prior_id}"
+                json_blobs: List[Union[str, dict]] = []
+                for eid in json_ids:
+                    blob = self.graph_accessor.get_json(eid)
+                    if blob is None:
+                        continue
+                    try:
+                        json_blobs.append(json.loads(blob) if isinstance(blob, str) else blob)
+                    except Exception:
+                        json_blobs.append(blob)
+                if json_blobs:
+                    upstream_contexts.append(UpstreamTaskContext(title=title, json_entities=json_blobs))
 
-        prompt = task_description or task_name
-
-        if task:
-            if task.get('needs_user_clarification'):
-                prompt = "This task needs further clarification from the user.\n\n" + prompt + "\n\n"
-                return ("This task needs further clarification from you before it can be expanded. Please provide more details.", 0)
-            elif task.get('description_and_goals'):
-                prompt = "Please try to execute the task: " + str(task['description_and_goals']) + "\n\n"
-            if task.get('outputs'):
-                prompt += "The desired outputs are:\n"
-                for output in task['outputs']:
-                    prompt += f"- {output['name']} ({output['datatype']}): {output.get('description','')}\n"
-                prompt += "\n\n"
-
-        prompt += "\n\nIf the task cannot be directly solved, please provide a more detailed plan or sub-tasks to achieve this task, considering the project context and user profile."
-
-        if dependencies:
-            # Upstream tasks (prior tasks)
-            prior_task_ids = self.graph_accessor.get_upstream_task_ids(task_id)
-            prior_tasks = self.graph_accessor.get_tasks_core_by_ids(prior_task_ids) if prior_task_ids else []
-
-            if prior_task_ids:
-                # Collect json_data entities from upstream tasks
-                json_entity_ids: List[int] = []
-                for prior_id in prior_task_ids:
-                    entities = self.graph_accessor.get_entities_for_task(prior_id)
-                    for entity in entities:
-                        if entity.get('type') == 'json_data':
-                            json_entity_ids.append(entity['id'])
-
-                unique_entity_ids = list(set(json_entity_ids))
-                if unique_entity_ids:
-                    prompt += "\nThis task depends on the outputs of prior tasks. The available information from those tasks is provided below as context:\n\n"
-                    prompt += "--- BEGIN UPSTREAM DATA ---\n"
-
-                    # Group entities by their source task and annotate each upstream task with its description
-                    prior_task_map: Dict[int, dict] = {int(t["task_id"]): t for t in prior_tasks if t.get("task_id") is not None}
-
-                    # Build map task_id -> [json_entity_ids]
-                    prior_task_to_entities: Dict[int, List[int]] = {}
-                    for prior_id in prior_task_ids:
-                        ents = self.graph_accessor.get_entities_for_task(prior_id)
-                        json_ids = [e['id'] for e in ents if e.get('type') == 'json_data']
-                        if json_ids:
-                            prior_task_to_entities[int(prior_id)] = json_ids
-
-                    # Add grouped data to prompt
-                    for prior_id, entity_ids in prior_task_to_entities.items():
-                        trow = prior_task_map.get(int(prior_id))
-                        tdesc = (trow.get("task_description") if trow else None) or f"Task {prior_id}"
-                        prompt += f"\n--- Data from upstream task: '{tdesc}' ---\n"
-                        for entity_id in entity_ids:
-                            json_content = self.graph_accessor.get_json(entity_id)
-                            if json_content:
-                                prompt += f"{json_content}\n\n"
-
-                    # Also include the unique entity contents (flat list) if desired
-                    for entity_id in unique_entity_ids:
-                        json_content = self.graph_accessor.get_json(entity_id)
-                        if json_content:
-                            prompt += f"Entity {entity_id}:\n{json_content}\n\n"
-
-                    prompt += "--- END UPSTREAM DATA ---\n\n"
+        spec = PlanningPrompts.build_flesh_out_prompt(
+            task_name=task_name,
+            task_description=task_description,
+            task_schema=task_schema,
+            task_context=task_context_json,
+            upstream_contexts=upstream_contexts,
+        )
+        if spec.needs_user_clarification:
+            return ("This task needs further clarification from you before it can be expanded. Please provide more details.", 0)
+        prompt = spec.prompt
 
         # 2) Use an LLM to generate a more detailed plan or sub-tasks
         return await self.answer_question(prompt, selected_task_id=task_id, parent_task_id=parent_task_id)
@@ -773,13 +744,13 @@ class AnswerQuestionHandler():
             ]
 
             # Attach relationship info for downstream
-            rel_map: Dict[int, Dict[str, Optional[str]]] = {}
-            for r in deps:
-                if int(r[0]) == task_id:
-                    rel_map[int(r[1])] = {"relationship_description": r[2], "data_schema": r[3]}
+            rel_map: Dict[int, Dict[str, Optional[str]]] = {
+                int(r[1]): {"relationship_description": r[2], "data_schema": r[3]}
+                for r in deps
+                if int(r[0]) == task_id
+            }
             for dt in downstream_tasks:
-                info = rel_map.get(int(dt["task_id"]))
-                if info:
+                if info := rel_map.get(int(dt["task_id"])):
                     dt.update(info)
 
         return await self.requires_human(task, upstream_tasks, downstream_tasks)

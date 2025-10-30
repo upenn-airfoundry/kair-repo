@@ -21,6 +21,8 @@ from entities.generate_doc_info import handle_file
 
 graph_db = GraphAccessor()
 
+SKIP_EXISTING = False
+
 # Directory to save downloaded PDFs
 DOWNLOADS_DIR = os.getenv("PDF_PATH", os.path.expanduser("~/Downloads") + '/pdfs')
 
@@ -187,7 +189,7 @@ class CrawlQueue:
         return [{"id": row[0], "path": row[1]} for row in rows]
 
     @classmethod
-    async def extract_from_urls(cls, items, task_id: int, task_description: str, task_schema: str) -> int:
+    async def fetch_url_content(cls, items, task_id: int, task_description: str, task_schema: str) -> list[Dict[str,str]]:
         """
         Given a set of URLs (list[str] or dict with 'urls'/'items'), ensure they are in the crawl_queue,
         download into DOWNLOADS_DIR (matching web_fetch.py), generate TEI via fetch_and_crawl_items,
@@ -217,7 +219,7 @@ class CrawlQueue:
 
         if not urls:
             logging.info("extract_from_urls: no URLs provided")
-            return 0
+            return {}
 
         # Ensure each URL is present in crawl_queue; collect (id,url) rows
         rows: List[Dict[str, str]] = []
@@ -241,7 +243,7 @@ class CrawlQueue:
             logging.debug(f"extract_from_urls: commit warning (ignored): {e}")
 
         if not rows:
-            return 0
+            return {}
 
         # Ensure download dir exists and crawl (downloads + TEI)
         os.makedirs(DOWNLOADS_DIR, exist_ok=True)
@@ -250,9 +252,13 @@ class CrawlQueue:
             await asyncio.to_thread(fetch_and_crawl_items, rows, DOWNLOADS_DIR)
         except Exception as e:
             logging.error(f"extract_from_urls: fetch_and_crawl_items failed: {e}")
-            return 0
+            return {}
 
-        # Index newly crawled documents for these IDs
+        return [{"id": row[0], "path": row[1], "url": row[2]} for row in rows]
+
+    @classmethod
+    async def analyze_documents(cls, rows: List[Dict[str, str]]) -> None:
+                # Index newly crawled documents for these IDs
         try:
             id_list = [int(r["id"]) for r in rows]
             docs = graph_db.exec_sql(
@@ -265,13 +271,13 @@ class CrawlQueue:
             for _cid, path, url in docs:
                 # Skip if already indexed
                 try:
-                    if graph_db.exists_document(url):
+                    if SKIP_EXISTING and graph_db.exists_document(url):
                         continue
                 except Exception:
                     # If exists check fails, try to index anyway
                     pass
                 # Skip external file:// paths (not under DOWNLOADS_DIR)
-                if isinstance(path, str) and path.startswith("file://"):
+                if SKIP_EXISTING and isinstance(path, str) and path.startswith("file://"):
                     logging.debug(f"extract_from_urls: skipping external local file {path}")
                     continue
                 # handle_file expects path relative to DOWNLOAD_DIR
@@ -281,4 +287,3 @@ class CrawlQueue:
         except Exception as e:
             logging.error(f"extract_from_urls: indexing failed: {e}")
 
-        return len(rows)

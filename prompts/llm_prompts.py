@@ -88,6 +88,16 @@ class PaperQuestionSpec(BaseModel):
         description="Compact schema string like '(field:type, field2:type, ...)'. Derived from outputs if not explicitly provided."
     )
 
+class UpstreamTaskContext(BaseModel):
+    """Grouped upstream context per prior task."""
+    title: str = Field(..., description="Title or description of the upstream task.")
+    json_entities: List[Union[str, dict]] = Field(default_factory=list, description="JSON snippets produced by the task.")
+
+class FleshOutPromptSpec(BaseModel):
+    """Assembled prompt and whether the task needs user clarification."""
+    prompt: str
+    needs_user_clarification: bool = False
+
 from backend.graph_db import GraphAccessor
 
 import pandas as pd
@@ -945,7 +955,101 @@ class PlanningPrompts:
 
         result = chain.invoke({"solution_plan_str": plan_str})
         return result
+    
+    @classmethod
+    def build_flesh_out_prompt(
+        cls,
+        *,
+        task_name: str,
+        task_description: str,
+        task_schema: str = "",
+        task_context: Optional[Union[str, dict]] = None,
+        upstream_contexts: List[UpstreamTaskContext] = [],
+    ) -> FleshOutPromptSpec:
+        """
+        Assemble the prompt used to flesh out a task and optionally include upstream JSON entities.
+        If task_context looks like a SolutionTask, include outputs and execution guidance.
+        """
+        # Base prompt
+        base = (task_description or "").strip() or (task_name or "").strip() or "Task"
+        prompt_lines: List[str] = [base]
+        needs_user = False
 
+        # Parse optional structured task context (may be a SolutionTask)
+        sol: Optional[SolutionTask] = None
+        try:
+            ctx_obj: Any = task_context
+            if isinstance(ctx_obj, str):
+                ctx_obj = json.loads(ctx_obj)
+            if isinstance(ctx_obj, dict):
+                try:
+                    # Pydantic v2
+                    sol = SolutionTask.model_validate(ctx_obj)  # type: ignore[attr-defined]
+                except Exception:
+                    # v1 fallback
+                    sol = SolutionTask.parse_obj(ctx_obj)  # type: ignore
+        except Exception:
+            sol = None
+
+        # If the context indicates clarification is needed, mark and return a short prompt
+        if sol and getattr(sol, "needs_user_clarification", False):
+            needs_user = True
+            prompt_lines = [
+                "This task needs further clarification from the user.",
+                "",
+                base,
+                "",
+                "Please provide more details."
+            ]
+            return FleshOutPromptSpec(prompt="\n".join(prompt_lines).strip(), needs_user_clarification=needs_user)
+
+        # If we have a SolutionTask with description/goals, bias toward execution phrasing
+        if sol and getattr(sol, "description_and_goals", None):
+            prompt_lines = [f"Please try to execute the task: {sol.description_and_goals.strip()}", ""]
+
+        # Include desired outputs if available
+        outputs = getattr(sol, "outputs", None)
+        if outputs:
+            prompt_lines.append("The desired outputs are:")
+            for o in outputs:
+                try:
+                    desc = getattr(o, "description", "") or ""
+                    prompt_lines.append(f"- {o.name} ({o.datatype}): {desc}")
+                except Exception:
+                    continue
+            prompt_lines.append("")
+
+        # Global guidance
+        prompt_lines.append(
+            "If the task cannot be directly solved, please provide a more detailed plan or sub-tasks to achieve this task, "
+            "considering the project context and user profile."
+        )
+        prompt_lines.append("")
+
+        # Upstream JSON entities grouped by source task
+        if upstream_contexts:
+            prompt_lines.append(
+                "This task depends on the outputs of prior tasks. The available information from those tasks is provided below as context:"
+            )
+            prompt_lines.append("")
+            prompt_lines.append("--- BEGIN UPSTREAM DATA ---")
+            for grp in upstream_contexts:
+                title = grp.title or "Upstream task"
+                prompt_lines.append(f"\n--- Data from upstream task: '{title}' ---")
+                for js in grp.json_entities or []:
+                    try:
+                        if isinstance(js, (dict, list)):
+                            prompt_lines.append(json.dumps(js, ensure_ascii=False))
+                        else:
+                            prompt_lines.append(str(js))
+                    except Exception:
+                        prompt_lines.append(str(js))
+                prompt_lines.append("")
+            prompt_lines.append("--- END UPSTREAM DATA ---")
+            prompt_lines.append("")
+
+        return FleshOutPromptSpec(prompt="\n".join(prompt_lines).strip(), needs_user_clarification=needs_user)
+    
     @classmethod
     def extract_paper_question_spec(cls, user_request: str) -> "PaperQuestionSpec":
         """

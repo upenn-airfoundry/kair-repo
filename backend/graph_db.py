@@ -192,13 +192,47 @@ class GraphAccessor:
                 cur.execute(f"SELECT entity_json FROM {self.schema}.entities WHERE entity_id = %s;", (entity_id,))
                 result = cur.fetchone()
                 if result and result[0]:
-                    return json.loads(result[0])
+                    if isinstance(result[0], str):
+                        return json.loads(result[0])
+                    else:
+                        return result[0]
                 return None
         except Exception as e:
             logging.error(f"Error getting JSON entity: {e}")
             self.conn.rollback()
             return None
-    
+
+    def get_json_many(self, entity_ids: List[int]) -> Dict[int, Any]:
+        """
+        Batch fetch entity_json for multiple entity IDs.
+        Returns a mapping {entity_id: deserialized_json}, omitting IDs with no JSON.
+        """
+        if not entity_ids:
+            return {}
+        try:
+            rows = self.exec_sql(
+                f"SELECT entity_id, entity_json FROM {self.schema}.entities WHERE entity_id = ANY(%s);",
+                (list(map(int, entity_ids)),)
+            )
+            result: Dict[int, Any] = {}
+            for eid, payload in rows:
+                if payload is None:
+                    continue
+                # payload may be native dict (json/jsonb) or a string; deserialize if needed
+                if isinstance(payload, (dict, list)):
+                    result[int(eid)] = payload
+                else:
+                    try:
+                        result[int(eid)] = json.loads(payload)
+                    except Exception:
+                        # Store raw if not JSON-deserializable
+                        result[int(eid)] = payload
+            return result
+        except Exception as e:
+            logging.error(f"Error batch fetching JSON entities: {e}")
+            self.conn.rollback()
+            return {}
+
     def update_paper_description(self, paper_id: int):
         """Update the description of a paper, given both the summary and author info."""
         try:
