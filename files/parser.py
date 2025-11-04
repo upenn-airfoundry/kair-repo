@@ -23,11 +23,12 @@ from files.text import index_split_paragraphs_new
 
 
 DOWNLOAD_DIR = os.getenv("PDF_PATH", os.path.expanduser("~/Downloads"))
+parser = None
 try:
     parser = GrobidParser(segment_sentences=False,
                             grobid_server=os.getenv("GROBID_SERVER", "http://localhost:8070"))
 except Exception as e:
-    print(f"GrobidParser is not available. Defaulting to Langchain parser.")
+    print("GrobidParser is not available. Defaulting to Langchain parser.")
     parser = None        
 
 class ParsedObject:
@@ -82,11 +83,11 @@ class FileParser:
     def __init__(self) -> None:
         pass
 
-    async def parse(self, url: str) -> Optional[ParsedObject]:
+    async def parse(self, local_file: str, url: str) -> Optional[ParsedObject]:
         return None
     
     @classmethod
-    def get_parser(cls, url: str) -> 'FileParser':
+    def get_parser(cls, local_file: str, url: str, content_type: str, use_aryn: bool = False) -> 'FileParser':
         """
         Get the appropriate parser for the given file URL. Specifically looks
         at the extension in the URL, which isn't 100% foolproof. If it isn't a
@@ -99,35 +100,38 @@ class FileParser:
             FileParser: An instance of the appropriate parser class.
         """
         
-        if url.endswith('.pdf') or url.endswith('.pdf.json') or url.endswith('.txt') or url.endswith('.md') or url.endswith('.docx') or url.endswith('.doc') \
+        if content_type == 'application/pdf' or content_type == 'application/json' or content_type == 'text/plain' or content_type == 'text/markdown' or content_type == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' or content_type == 'application/msword' \
+            or content_type == 'text/html' or content_type == 'text/htm' or content_type == 'application/vnd.openxmlformats-officedocument.presentationml.presentation' or content_type == 'application/vnd.ms-powerpoint' or content_type == 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' or content_type == 'application/vnd.ms-excel' or \
+            url.endswith('.pdf') or url.endswith('.pdf.json') or url.endswith('.txt') or url.endswith('.md') or url.endswith('.docx') or url.endswith('.doc') \
             or url.endswith('.html') or url.endswith('.htm') or url.endswith('.pptx') or url.endswith('.ppt') or url.endswith('.xlsx') or url.endswith('.xls'):
             if parser:
                 return DocumentParser(GrobidExtractorFactory())
             else:
                 return DocumentParser(LangchainExtractorFactory())
-        elif url.endswith('.jsonl') or url.endswith('.json') or url.endswith('.csv') or url.endswith('.xml') or url.endswith('.mat') or url.endswith('.tsv'):
+        elif content_type == 'application/jsonl' or content_type == 'application/json' or content_type == 'application/csv' or content_type == 'application/xml' or content_type == 'application/x-matlab' or content_type == 'application/x-matlab'  or \
+            url.endswith('.jsonl') or url.endswith('.json') or url.endswith('.csv') or url.endswith('.xml') or url.endswith('.mat') or url.endswith('.tsv'):
             return TableParser()
         else:
-            if url.startswith("http://") or url.startswith("https://"):
-                with contextlib.suppress(requests.exceptions.RequestException):
-                    response = requests.head(url, allow_redirects=True)
-                    if response.status_code == 200:
-                        content_type = response.headers.get('Content-Type', '').split(';')[0].strip()
+            # if url.startswith("http://") or url.startswith("https://"):
+            #     with contextlib.suppress(requests.exceptions.RequestException):
+            #         response = requests.head(url, allow_redirects=True)
+            #         if response.status_code == 200:
+            #             content_type = response.headers.get('Content-Type', '').split(';')[0].strip()
                         
-                        table_mime_types = [
-                            "application/jsonl",
-                            "application/tsv",
-                            "text/tab-separated-values",
-                            "application/csv",
-                            "text/csv",
-                            "application/xml",
-                            "text/xml",
-                            "application/json",
-                            "application/matlab",
-                        ]
-                        
-                        if content_type in table_mime_types:
-                            return TableParser()
+            table_mime_types = [
+                "application/jsonl",
+                "application/tsv",
+                "text/tab-separated-values",
+                "application/csv",
+                "text/csv",
+                "application/xml",
+                "text/xml",
+                "application/json",
+                "application/matlab",
+            ]
+            
+            if content_type in table_mime_types:
+                return TableParser()
 
             return DocumentParser(LangchainExtractorFactory())
     
@@ -152,60 +156,62 @@ class TableParser(FileParser):
         super().__init__()
         self.df = None
         
-    async def parse(self, url: str) -> Optional[TableObject]:
+    async def parse(self, local_file: str, url: str) -> Optional[TableObject]:
         obj = TableObject()
         
         mime_type = ''
-        if (url.startswith("file://")):
-            filename = url[7:]
+        # if (url.startswith("file://")):
+        #     filename = url[7:]
             
-            while '..' in filename:
-                filename.replace('..', '.')
+        #     while '..' in filename:
+        #         filename.replace('..', '.')
                 
-            file = DOWNLOAD_DIR + filename
+        #     file = DOWNLOAD_DIR + filename
+        
+        file = local_file
             
-            if file.endswith('.jsonl'):
-                mime_type = "application/jsonl"
-            elif file.endswith('.tsv'):
-                mime_type= "application/tsv"
-            elif file.endswith('.csv'):
-                mime_type = "application/csv"
-            elif file.endswith('.xml'):
-                mime_type = "application/xml"
-            elif file.endswith('.html'):
-                mime_type = "text/html"
-            elif file.endswith('.mat'):
-                mime_type = "application/matlab"
-                
-            try:
-                if mime_type == 'application/matlab':
-                    with open(file, "rb") as f:
-                        contents = f.read()
-                        buffer = BytesIO(contents)
-                else:
-                    with open(file, "r", encoding='utf-8') as f:
-                        contents = f.read()
-                        buffer = StringIO(contents)
-            except:
-                raise IOError(f"Unable to read file {file}")
-
-        elif url.startswith("http://") or url.startswith("https://"):
-            # fetch with requests, figure out mime type
-            response = requests.get(url)
-            if response.status_code != 200:
-                raise IOError(f"Unable to request from {url}")
-            try:
-                mime_type_header = response.headers['Content-Type']
-                mime_type = mime_type_header.split(';')[0].strip()
-            except KeyError:
-                mime_type = 'application/octet-stream'
+        if file.endswith('.jsonl'):
+            mime_type = "application/jsonl"
+        elif file.endswith('.tsv'):
+            mime_type= "application/tsv"
+        elif file.endswith('.csv'):
+            mime_type = "application/csv"
+        elif file.endswith('.xml'):
+            mime_type = "application/xml"
+        elif file.endswith('.html'):
+            mime_type = "text/html"
+        elif file.endswith('.mat'):
+            mime_type = "application/matlab"
             
+        try:
             if mime_type == 'application/matlab':
-                buffer = BytesIO(response.content)
+                with open(file, "rb") as f:
+                    contents = f.read()
+                    buffer = BytesIO(contents)
             else:
-                buffer = StringIO(response.text)
-        else:
-            raise IOError(f"Unable to get mime type of {url}")
+                with open(file, "r", encoding='utf-8') as f:
+                    contents = f.read()
+                    buffer = StringIO(contents)
+        except:
+            raise IOError(f"Unable to read file {file}")
+
+        # elif url.startswith("http://") or url.startswith("https://"):
+        #     # fetch with requests, figure out mime type
+        #     response = requests.get(url)
+        #     if response.status_code != 200:
+        #         raise IOError(f"Unable to request from {url}")
+        #     try:
+        #         mime_type_header = response.headers['Content-Type']
+        #         mime_type = mime_type_header.split(';')[0].strip()
+        #     except KeyError:
+        #         mime_type = 'application/octet-stream'
+            
+        #     if mime_type == 'application/matlab':
+        #         buffer = BytesIO(response.content)
+        #     else:
+        #         buffer = StringIO(response.text)
+        # else:
+        #     raise IOError(f"Unable to get mime type of {url}")
             
         if mime_type == "application/jsonl":
             content = read_jsonl(buffer) # type: ignore
@@ -257,7 +263,8 @@ class DocumentObject(ParsedObject):
         )
 
 class DocumentExtractor:
-    def __init__(self, url: str):
+    def __init__(self, local_file: str, url: str):
+        self.local_file = local_file
         self.url = url
     
     async def parse(self):
@@ -267,11 +274,11 @@ class DocumentExtractor:
         return DocumentObject()
     
 class ArynExtractor(DocumentExtractor):
-    def __init__(self, url: str):
-        super().__init__(url)
+    def __init__(self, local_file: str, url: str):
+        super().__init__(local_file, url)
         
     async def parse(self):
-        self.data = chunk_and_partition_pdf_file(self.url, '') 
+        self.data = chunk_and_partition_pdf_file(self.local_file, '')
         
     def get_object(self) -> DocumentObject:
         obj = DocumentObject()
@@ -287,76 +294,74 @@ class ArynExtractor(DocumentExtractor):
         return obj
 
 class LangchainExtractor(DocumentExtractor):
-    def __init__(self, url: str, chunk_size: int = 1000, chunk_overlap: int = 200):
-        super().__init__(url)
+    def __init__(self, local_file: str, url: str, chunk_size: int = 1000, chunk_overlap: int = 200):
+        super().__init__(local_file, url)
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         
     async def parse(self):
-        self.data = chunk_and_partition_pdf_file(self.url, '') 
+        self.doc_list = split_pdf_with_langchain(self.local_file, self.chunk_size, self.chunk_overlap)
+
         
     def get_object(self) -> DocumentObject:
         obj = DocumentObject()
-        
-        doc_list = split_pdf_with_langchain(self.url, self.chunk_size, self.chunk_overlap)
-        
+
         obj.set_metadata({'url': self.url})
-        obj.set_split_objects([doc.page_content for doc in doc_list])
-        
+        obj.set_split_objects([doc.page_content for doc in self.doc_list])
+
         return obj
 
 class GrobidExtractor(DocumentExtractor):
-    def __init__(self, url: str, chunk_size: int = 1000, chunk_overlap: int = 200):
-        super().__init__(url)
+    def __init__(self, local_file: str, url: str, chunk_size: int = 1000, chunk_overlap: int = 200):
+        super().__init__(local_file, url)
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         
     async def parse(self):
-        self.data = chunk_and_partition_pdf_file(self.url, '') 
-        
-    def get_object(self) -> DocumentObject:
-        obj = DocumentObject()
-        
         loader = GenericLoader.from_filesystem(
             path=DOWNLOAD_DIR, 
             glob=self.url.split('/')[-1],
             suffixes=[".pdf"],
             parser=parser)
-        doc_list = loader.load()
+        self.doc_list = loader.load()
 
-        if len(doc_list):
-            obj.set_metadata(doc_list[0].metadata)
+
+    def get_object(self) -> DocumentObject:
+        obj = DocumentObject()
+
+        if len(self.doc_list):
+            obj.set_metadata(self.doc_list[0].metadata)
         obj.get_metadata()['url'] = self.url
-        obj.set_split_objects([doc.page_content for doc in doc_list])
-        
+        obj.set_split_objects([doc.page_content for doc in self.doc_list])
+
         return obj
 
 
 class ExtractorFactory:
-    def get_extractor(self, url: str) -> DocumentExtractor:
-        return DocumentExtractor(url)
+    def get_extractor(self, local_file: str, url: str) -> DocumentExtractor:
+        return DocumentExtractor(local_file, url)
     
 class ArynExtractorFactory(ExtractorFactory):
-    def get_extractor(self, url: str) -> ArynExtractor:
-        return ArynExtractor(url)
+    def get_extractor(self, local_file: str, url: str) -> ArynExtractor:
+        return ArynExtractor(local_file, url)
     
 class GrobidExtractorFactory(ExtractorFactory):
-    def get_extractor(self, url: str) -> GrobidExtractor:
-        return GrobidExtractor(url)
-    
+    def get_extractor(self, local_file: str, url: str) -> GrobidExtractor:
+        return GrobidExtractor(local_file, url)
+
 class LangchainExtractorFactory(ExtractorFactory):
-    def get_extractor(self, url: str) -> LangchainExtractor:
-        return LangchainExtractor(url)
-    
-        
+    def get_extractor(self, local_file: str, url: str) -> LangchainExtractor:
+        return LangchainExtractor(local_file, url)
+
+
 class DocumentParser(FileParser):
     def __init__(self, extractor: ExtractorFactory) -> None:
         super().__init__()
         self.extractor_factory = extractor
-        
-    async def parse(self, url: str) -> Optional[DocumentObject]:
-        extractor = self.extractor_factory.get_extractor(url)
-        
+
+    async def parse(self, local_file: str, url: str) -> Optional[DocumentObject]:
+        extractor = self.extractor_factory.get_extractor(local_file, url)
+
         await extractor.parse()
         
         return extractor.get_object()

@@ -8,42 +8,47 @@ import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
 import { useSecureFetch } from '@/hooks/useSecureFetch';
 import remarkGfm from 'remark-gfm';
+// Optional (only if you expect raw HTML in the markdown):
+// import rehypeRaw from 'rehype-raw';
+// import rehypeSanitize from 'rehype-sanitize';
 
 // Lightweight markdown component overrides to avoid horizontal overflow
 const useMarkdownComponents = () => {
   return useMemo<Components>(() => ({
-    // Allow content to be wider than the pane; the outer message list will scroll horizontally.
+    // Keep pre/Code scrollable and avoid horizontal overflow
     pre: ({ className, ...props }: React.ComponentProps<'pre'>) => (
-      <pre {...props} className={`min-w-fit ${className ?? ''}`} />
-    ),
-    table: ({ children, ...rest }: React.ComponentProps<'table'>) => (
-      <div className="inline-block min-w-fit">
-        <table {...rest}>{children}</table>
-      </div>
-    ),
-    a: ({ className, ...props }: React.ComponentProps<'a'>) => (
-      <a {...props} className={`break-all ${className ?? ''}`} />
+      <pre
+        {...props}
+        className={`overflow-x-auto max-w-full ${className ?? ''}`}
+      />
     ),
     code: (
       { inline, className, children, ...props }: { inline?: boolean } & React.ComponentProps<'code'>
     ) =>
       inline ? (
-        <code {...props} className={`break-all whitespace-pre-wrap ${className ?? ''}`}>{children}</code>
+        <code
+          {...props}
+          className={`break-words whitespace-normal ${className ?? ''}`}
+        >
+          {children}
+        </code>
       ) : (
         <code {...props} className={className}>{children}</code>
       ),
-    img: ({ className, alt = '', ...props }: React.ImgHTMLAttributes<HTMLImageElement>) => (
-      <>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img {...props} alt={alt} className={`max-w-full h-auto ${className ?? ''}`} />
-      </>
+    table: ({ children, ...rest }: React.ComponentProps<'table'>) => (
+      <div className="overflow-x-auto max-w-full">
+        <table {...rest}>{children}</table>
+      </div>
     ),
-    p: ({ className, ...props }: React.ComponentProps<'p'>) => (
-      <p {...props} className={`break-words break-all whitespace-pre-wrap ${className ?? ''}`} />
+    a: ({ className, ...props }: React.ComponentProps<'a'>) => (
+      <a
+        {...props}
+        target="_blank"
+        rel="noopener noreferrer"
+        className={`break-words underline ${className ?? ''}`}
+      />
     ),
-    li: ({ className, ...props }: React.ComponentProps<'li'>) => (
-      <li {...props} className={`break-words break-all whitespace-pre-wrap ${className ?? ''}`} />
-    ),
+    // Remove p/li overrides that force break-all/whitespace-pre-wrap.
   }), []);
 };
 
@@ -285,13 +290,20 @@ export default function ChatInput({ addMessage, projectId, onRefreshRequest, sel
             <div
               className={
                 msg.sender === 'user'
-                  ? "inline-block bg-blue-100 dark:bg-blue-900 rounded px-3 py-2 break-words whitespace-pre-wrap"
-                  : "inline-block bg-gray-100 dark:bg-gray-800 rounded px-3 py-2 break-words whitespace-pre-wrap"
+                  ? "inline-block bg-blue-100 dark:bg-blue-900 rounded px-3 py-2"
+                  : "inline-block bg-gray-100 dark:bg-gray-800 rounded px-3 py-2"
               }
             >
-              <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-                {msg.content}
-              </ReactMarkdown>
+              <div className="prose prose-sm dark:prose-invert max-w-none">
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  // If you expect raw HTML from the LLM, uncomment rehype plugins:
+                  // rehypePlugins={[rehypeRaw, rehypeSanitize]}
+                  components={mdComponents}
+                >
+                  {msg.content}
+                </ReactMarkdown>
+              </div>
             </div>
           </div>
         ))}

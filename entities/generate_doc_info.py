@@ -42,12 +42,12 @@ DOWNLOAD_DIR = os.getenv("PDF_PATH", os.path.expanduser("~/Downloads"))
 graph_db = GraphAccessor()
 
         
-async def handle_file(path: str, url: str, use_aryn: bool = False):
+async def handle_file(path: str, url: str, content_type: str, use_aryn: bool = False):
     # pdf_path = os.path.join(DOWNLOAD_DIR, path)
 
-    parser = FileParser.get_parser(path)
+    parser = FileParser.get_parser(path, url, content_type, use_aryn)    
     
-    parsed_object = await parser.parse(url)
+    parsed_object = await parser.parse(path, url)
 
     # # Get today's date
     the_date = datetime.now().date()

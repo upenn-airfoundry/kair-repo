@@ -1,8 +1,9 @@
 from dotenv import load_dotenv, find_dotenv
 import os
 import logging
-from typing import Any, List
+from typing import Any, List, Optional
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from pydantic import BaseModel
 
 # Replace create_react_agent with create_tool_calling_agent
 from langchain.agents import create_tool_calling_agent, AgentExecutor
@@ -32,7 +33,7 @@ mcp_client = MultiServerMCPClient(
             
         },
         "SearchAPI": {
-            # Make sure you start your server on port 8001
+            # Make sure you start your server on port 8002
             "url": "http://localhost:8002/mcp",
             "transport": "streamable_http",
             
@@ -102,7 +103,8 @@ def _import_openai_llm():
     return ChatOpenAI
 
 def _import_vertex_llm():
-    from langchain_google_vertexai import ChatVertexAI
+    # Import ChatVertexAI; callers should be prepared to handle ImportError
+    from langchain_google_vertexai import ChatVertexAI  # may raise ImportError on version mismatch
     return ChatVertexAI
 
 def _import_genai_embeddings():
@@ -166,39 +168,51 @@ def get_structured_analysis_llm():
         print(f"Error initializing OpenAI LLM: {e}")
         return None
 
+def _make_llm(model: str, temperature: float = 0.0, max_tokens: Optional[int] = None):
+    """
+    Try Vertex Chat first; if that import fails (e.g., due to a LangChain mismatch),
+    fall back to Google GenAI (AI Studio) client; then to OpenAI as last resort.
+    """
+    # 1) Vertex AI (preferred)
+    try:
+        ChatVertexAI = _import_vertex_llm()
+        _ensure_vertex_initialized()
+        return ChatVertexAI(model=model, temperature=temperature, max_tokens=max_tokens, max_retries=6, stop=None)
+    except Exception as e:
+        logging.warning(f"Vertex Chat import/init failed, falling back to Google GenAI: {e}")
+    # 2) Google GenAI (langchain-google-genai)
+    try:
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        # ChatGoogleGenerativeAI uses max_output_tokens instead of max_tokens
+        kwargs = dict(model=model, temperature=temperature)
+        if max_tokens is not None:
+            kwargs["max_output_tokens"] = max_tokens
+        return ChatGoogleGenerativeAI(**kwargs)
+    except Exception as e:
+        logging.warning(f"Google GenAI init failed, falling back to OpenAI: {e}")
+    # 3) OpenAI fallback
+    try:
+        ChatOpenAI = _import_openai_llm()
+        return ChatOpenAI(model=os.getenv("OPENAI_FALLBACK_MODEL", "gpt-4o-mini"), temperature=temperature)
+    except Exception as e:
+        logging.error(f"OpenAI fallback init failed: {e}")
+        return None
+
 def get_analysis_llm():
-    try:
-        ChatVertexAI = _import_vertex_llm()
-        _ensure_vertex_initialized()
-        return ChatVertexAI(model="gemini-2.0-flash-lite-001", temperature=0, max_tokens=None, max_retries=6, stop=None)
-    except Exception as e:
-        print(f"Error initializing Vertex AI LLM: {e}")
-        return None
+    # Light, fast model for structured analysis
+    return _make_llm("gemini-2.0-flash-lite-001", temperature=0, max_tokens=None)
 
-def get_better_llm():#use_mcp_tools: bool = False) -> 'ChatVertexAI':
-    """
-    Returns a high-quality Gemini model instance.
+def get_better_llm():  # use_mcp_tools: bool = False
+     """
+     Returns a high-quality Gemini model instance.
 
-    Args:
-        use_mcp_tools (bool): If True, binds the available MCP tools to the LLM.
+     Args:
+         use_mcp_tools (bool): If True, binds the available MCP tools to the LLM.
 
-    Returns:
-        ChatVertexAI: An instance of the Gemini model.
-    """
-    try:
-        ChatVertexAI = _import_vertex_llm()
-        _ensure_vertex_initialized()
-        llm = ChatVertexAI(model="gemini-2.5-flash", temperature=0, max_tokens=None, max_retries=6, stop=None)
-
-        # if use_mcp_tools:
-        #     # Bind the defined MCP tools to the LLM instance
-        #     tool_definitions: List[Type[BaseModel]] = list(MCP_TOOLS.values())
-        #     llm = llm.bind_tools(tool_definitions)
-
-        return llm
-    except Exception as e:
-        print(f"Error initializing Vertex AI LLM: {e}")
-        return None
+     Returns:
+         ChatVertexAI: An instance of the Gemini model.
+     """
+     return _make_llm("gemini-2.5-flash", temperature=0, max_tokens=None)
 
 
 def _patch_pydantic_schema_v1(schema: dict):
@@ -269,7 +283,7 @@ async def get_agentic_llm(prompt: ChatPromptTemplate | None = None):
         if prompt is None:
             prompt = ChatPromptTemplate.from_messages([
                 ("system", "You are a helpful assistant. Use tools when helpful. Think step-by-step. "
-                           "If the user requests JSON, return strictly valid JSON."),
+                    "If the user requests JSON, return strictly valid JSON."),
                 MessagesPlaceholder("chat_history"),
                 ("human", "{input}"),
                 MessagesPlaceholder("agent_scratchpad"),
@@ -286,6 +300,52 @@ async def get_agentic_llm(prompt: ChatPromptTemplate | None = None):
             max_iterations=8,
         )
         return agent_executor
+    except Exception as e:
+        print(f"Error initializing agentic LLM: {e}")
+        return None
+
+
+async def get_structured_agentic_llm(structured_model: type[BaseModel], prompt: ChatPromptTemplate | None = None):
+    """
+    Returns a Gemini-based Tool Calling agent executor with MCP tools.
+    Note: Do NOT wrap the LLM with .with_structured_output here, because the agent
+    requires a model that implements .bind_tools. Structure the final output upstream.
+    """
+    tools = await mcp_client.get_tools()
+
+    # Patch tool schemas (keep your existing patchers)
+    for t in tools:
+        if hasattr(t, 'args_schema') and isinstance(t.args_schema, dict):
+            _patch_pydantic_schema_v1(t.args_schema)
+            _patch_google_schema(t.args_schema)
+
+    try:
+        ChatVertexAI = _import_vertex_llm()
+        _ensure_vertex_initialized()
+
+        # Slightly >0 temperature to avoid degenerate empty outputs
+        llm = ChatVertexAI(model="gemini-2.5-flash", temperature=0.2, max_tokens=None, max_retries=6, stop=None)
+
+        # Default prompt for tool-calling agent (system + placeholders)
+        if prompt is None:
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", "You are a helpful assistant. Use tools when helpful. Think step-by-step. "
+                    "If the user requests JSON, return strictly valid JSON."),
+                MessagesPlaceholder("chat_history"),
+                ("human", "{input}"),
+                MessagesPlaceholder("agent_scratchpad"),
+            ])
+
+        # Create a tool-calling agent (no ReAct “Action:” strings needed)
+        agent = create_tool_calling_agent(llm=llm, tools=tools, prompt=prompt)
+
+        return AgentExecutor(
+            agent=agent,
+            tools=tools,
+            verbose=True,
+            handle_parsing_errors=_handle_agent_parsing_error,
+            max_iterations=8,
+        )
     except Exception as e:
         print(f"Error initializing agentic LLM: {e}")
         return None

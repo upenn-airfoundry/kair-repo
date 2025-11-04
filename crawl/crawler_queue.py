@@ -1,5 +1,5 @@
 from backend.graph_db import GraphAccessor
-from typing import List, Dict
+from typing import List, Dict, Tuple
 
 import logging
 import asyncio
@@ -198,7 +198,7 @@ class CrawlQueue:
         # Normalize to a list of URLs
         urls: List[str] = []
         if not items:
-            return 0
+            return []
         if isinstance(items, dict):
             if isinstance(items.get("urls"), list):
                 urls = [u for u in items["urls"] if isinstance(u, str)]
@@ -218,8 +218,8 @@ class CrawlQueue:
             urls = [items]
 
         if not urls:
-            logging.info("extract_from_urls: no URLs provided")
-            return {}
+            logging.info("fetch_url_content: no URLs provided")
+            return []
 
         # Ensure each URL is present in crawl_queue; collect (id,url) rows
         rows: List[Dict[str, str]] = []
@@ -236,31 +236,42 @@ class CrawlQueue:
                     cid = int(inserted[0][0])
                 rows.append({"id": cid, "url": url})
             except Exception as e:
-                logging.warning(f"extract_from_urls: failed to queue URL {url}: {e}")
+                logging.warning(f"fetch_url_content: failed to queue URL {url}: {e}")
         try:
             graph_db.commit()
         except Exception as e:
-            logging.debug(f"extract_from_urls: commit warning (ignored): {e}")
+            logging.debug(f"fetch_url_content: commit warning (ignored): {e}")
 
         if not rows:
-            return {}
+            return []
 
         # Ensure download dir exists and crawl (downloads + TEI)
         os.makedirs(DOWNLOADS_DIR, exist_ok=True)
         from crawl.web_fetch import fetch_and_crawl_items
+        # Schedule indexing for those not yet indexed
+        tasks: List[asyncio.Future] = []
         try:
-            await asyncio.to_thread(fetch_and_crawl_items, rows, DOWNLOADS_DIR)
+            # The fetch_and_crawl_items function is synchronous but uses a thread pool internally.
+            # Running it in a separate thread with asyncio.to_thread ensures it doesn't block the event loop.
+            # The 'await' keyword ensures that this coroutine waits for the thread to complete.
+            # await asyncio.to_thread(fetch_and_crawl_items, rows, DOWNLOADS_DIR)
+            tasks.append(asyncio.to_thread(fetch_and_crawl_items, rows, DOWNLOADS_DIR))
         except Exception as e:
-            logging.error(f"extract_from_urls: fetch_and_crawl_items failed: {e}")
-            return {}
+            logging.error(f"fetch_url_content: fetch_and_crawl_items failed: {e}")
+            return []
+        
+        if tasks:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            if isinstance(results, Exception):
+                logging.error(f"fetch_url_content: fetch_and_crawl_items task failed: {results}")
+                #return []
 
-        return [{"id": row[0], "path": row[1], "url": row[2]} for row in rows]
+        return rows
 
     @classmethod
-    async def analyze_documents(cls, rows: List[Dict[str, str]]) -> None:
+    async def analyze_documents(cls, id_list: List[int]) -> None:
                 # Index newly crawled documents for these IDs
         try:
-            id_list = [int(r["id"]) for r in rows]
             docs = graph_db.exec_sql(
                 "SELECT c.id, c.path, cq.url "
                 "FROM crawled c LEFT JOIN crawl_queue cq ON c.id = cq.id "
@@ -278,12 +289,12 @@ class CrawlQueue:
                     pass
                 # Skip external file:// paths (not under DOWNLOADS_DIR)
                 if SKIP_EXISTING and isinstance(path, str) and path.startswith("file://"):
-                    logging.debug(f"extract_from_urls: skipping external local file {path}")
+                    logging.debug(f"analyze_documents: skipping external local file {path}")
                     continue
                 # handle_file expects path relative to DOWNLOAD_DIR
                 tasks.append(asyncio.to_thread(handle_file, path, url, False))
             if tasks:
                 await asyncio.gather(*tasks)
         except Exception as e:
-            logging.error(f"extract_from_urls: indexing failed: {e}")
+            logging.error(f"analyze_documents: indexing failed: {e}")
 

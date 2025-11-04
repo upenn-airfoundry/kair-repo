@@ -18,6 +18,9 @@ from prompts.llm_prompts import PeoplePrompts, ExpertBiosketch
 
 import json
 
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.DEBUG)
+
 class AnswerQuestionHandler():
     def __init__(self, graph_accessor: GraphAccessor, username: str, user_profile: dict[str, Any], user_id: int, project_id: int) -> None:
         self.graph_accessor = graph_accessor
@@ -31,9 +34,30 @@ class AnswerQuestionHandler():
 
     @classmethod
     def get_gemini_similarity(cls, embed1: List[float], embed2: List[float]) -> float:
+        """
+        Safe cosine similarity:
+        - Handles different vector lengths by truncating to min length.
+        - Replaces non-finite values with 0.
+        - Returns 0.0 if either vector has zero norm.
+        - Returns -1.0 only on unexpected errors.
+        """
         try:
-            sim = cosine_similarity(np.array(embed1).reshape(1, -1), np.array(embed2).reshape(1, -1))[0][0]
-            return float(sim)
+            v1 = np.asarray(embed1, dtype=np.float64).ravel()
+            v2 = np.asarray(embed2, dtype=np.float64).ravel()
+            n = min(v1.size, v2.size)
+            if n == 0:
+                return -1.0
+            if v1.size != v2.size:
+                v1 = v1[:n]
+                v2 = v2[:n]
+            # Replace NaN/Inf with 0 to avoid warnings
+            v1[~np.isfinite(v1)] = 0.0
+            v2[~np.isfinite(v2)] = 0.0
+            n1 = float(np.linalg.norm(v1))
+            n2 = float(np.linalg.norm(v2))
+            if n1 == 0.0 or n2 == 0.0:
+                return 0.0
+            return float(np.dot(v1, v2) / (n1 * n2))
         except Exception:
             return -1.0
     
@@ -151,14 +175,16 @@ class AnswerQuestionHandler():
         markdown_answer = WebPrompts.format_resources_as_markdown(answer)
         
         self.graph_accessor.add_user_history(self.user_id, self.project_id, original_prompt, markdown_answer)
-        
-        if ReviewPrompts.assess_responsiveness(user_prompt, markdown_answer).fully_responsive is False:
-            answer = await search_basic(
-                user_prompt,
-                "You are an expert assistant. Please answer the following question concisely and accurately, providing web links if appropriate.\n\nIf you don't know the answer, just say you don't know. Do not make up an answer."
-            )
-            self.graph_accessor.add_user_history(self.user_id, self.project_id, original_prompt, answer)
-            return (answer, 0)
+ 
+        # TODO: consider whether to change this prompt to see if the papers are promising
+        # for providing answers.       
+        # if ReviewPrompts.assess_responsiveness(user_prompt, markdown_answer).fully_responsive is False:
+        #     answer = await search_basic(
+        #         user_prompt,
+        #         "You are an expert assistant. Please answer the following question concisely and accurately, providing web links if appropriate.\n\nIf you don't know the answer, just say you don't know. Do not make up an answer."
+        #     )
+        #     self.graph_accessor.add_user_history(self.user_id, self.project_id, original_prompt, answer)
+        #     return (answer, 0)
 
         # Derive an evaluation prompt and output schema for downstream crawling/indexing
         eval_prompt = task_summary or original_prompt
@@ -208,17 +234,19 @@ class AnswerQuestionHandler():
         # Collect paper URLs to crawl, while creating/linking entities
         items: List[str] = []
         for resource in answer.resources:
-            entity_id = self.graph_accessor.get_entity_by_url(resource.url)
+            url = resource.open_access_pdf or resource.url
+            entity_id = self.graph_accessor.get_entity_by_url(url)
+            video_sites = ['youtube.com', 'youtu.be', 'vimeo.com', 'coursera.org', 'edx.org', 'khanacademy.org', 'udemy.com', 'dailymotion.com']
+            # If it's a paper, add to crawl queue
+            entity_type = 'learning_resource' if any(site in url for site in video_sites) else 'paper'
             if entity_id is None:
                 # Entity does not exist, create a new one
-                video_sites = ['youtube.com', 'youtu.be', 'vimeo.com', 'coursera.org', 'edx.org', 'khanacademy.org', 'udemy.com', 'dailymotion.com']
-                entity_type = 'learning_resource' if any(site in resource.url for site in video_sites) else 'paper'
-                
-                entity_id = self.graph_accessor.add_source(resource.url, entity_type, resource.title)
+                entity_id = self.graph_accessor.add_source(url, entity_type, resource.title)
 
-                # If it's a paper, add to crawl queue                
-                if entity_type == 'paper':
-                    items.append(resource.url)
+            #if entity_type == 'paper':
+            items.append(url)
+            # else:
+            #     logging.info(f"Entity for URL {resource.url} already exists with ID {entity_id}.")
             
             # Link the task to the new or existing entity
             if entity_id and task_id:
@@ -240,7 +268,7 @@ class AnswerQuestionHandler():
             
             # TODO: leverage enrichment tasks for analysis here
             # Also incorporate new enrichment tasks for any remaining questions
-            await CrawlQueue.analyze_documents(results)
+            await CrawlQueue.analyze_documents([int(result['id']) for result in results])
             
         # TODO: after analyze_documents is done and enriched -- search for results
         # with the key criteria, return results and annotations to build the task schema
@@ -545,7 +573,7 @@ class AnswerQuestionHandler():
             
             elif classification.query_class == "info_about_an_expert":
                 # Produce structured biosketch
-                biosketch: ExpertBiosketch = PeoplePrompts.generate_expert_biosketch_from_prompt(original_prompt)
+                biosketch: ExpertBiosketch = await PeoplePrompts.generate_expert_biosketch_from_prompt(original_prompt)
                 # Store as json_data if a task is selected
                 if selected_task_id is not None and biosketch is not None:
                     try:
@@ -557,12 +585,18 @@ class AnswerQuestionHandler():
                 md = [name_line, ""]
                 if biosketch.biosketch:
                     md += ["### Biographical Sketch", biosketch.biosketch.strip(), ""]
+                if biosketch.headshot_url:
+                    md += [f"![Headshot]({biosketch.headshot_url})", ""]
                 if biosketch.education_and_experience:
                     md += ["### Education and Experience"] + [f"- {item}" for item in biosketch.education_and_experience] + [""]
+                if biosketch.major_research_projects_and_entrepreneurship:
+                    md += ["### Major Research Projects and Entrepreneurship"] + [f"- {item}" for item in biosketch.major_research_projects_and_entrepreneurship] + [""]
+                if biosketch.honors_and_awards:
+                    md += ["### Honors and Awards"] + [f"- {item}" for item in biosketch.honors_and_awards] + [""]
                 if biosketch.expertise_and_contributions:
                     md += ["### Expertise and Major Contributions"] + [f"- {item}" for item in biosketch.expertise_and_contributions] + [""]
-                if biosketch.recent_publications_or_products:
-                    md += ["### Recent Publications or Products"] + [f"- {item}" for item in biosketch.recent_publications_or_products] + [""]
+                # if biosketch.recent_publications_or_products:
+                    # md += ["### Recent Publications or Products"] + [f"- {item}" for item in biosketch.recent_publications_or_products] + [""]
                 answer_md = "\n".join(md).strip()
                 # Save to user history
                 self.graph_accessor.add_user_history(self.user_id, self.project_id, original_prompt, answer_md)

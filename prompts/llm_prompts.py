@@ -8,7 +8,7 @@ import requests
 from pydantic import BaseModel, Field
 from typing import List, Optional, Literal, Union, Any
 
-from enrichment.llms import get_agentic_llm
+from enrichment.llms import get_agentic_llm, get_structured_agentic_llm
 
 # Add the new Pydantic models for learning resources
 class LearningResource(BaseModel):
@@ -16,7 +16,8 @@ class LearningResource(BaseModel):
     title: str = Field(..., description="The title of the learning resource.")
     rationale: str = Field(..., description="A brief explanation of why this resource is relevant and useful.")
     url: str = Field(..., description="The URL of the learning resource.")
-
+    open_access_pdf: Optional[str] = Field(None, description="The URL of the open-access PDF version of the resource, if available.")
+    
 class LearningResourceList(BaseModel):
     """A list of learning resources."""
     resources: List[LearningResource]
@@ -585,7 +586,7 @@ class WebPrompts:
         prompt = ChatPromptTemplate.from_messages([
             ("system",
              "You are an expert at finding high-quality learning resources. "
-             "You have tools available, including a Semantic Scholar search tool. "
+             "You have tools available, including a Semantic Scholar search tool. Please prefer open access resources when possible, and ask Semantic Scholar for those. "
              "Always call at least one tool to gather evidence before answering. "
              "After gathering information, return a single JSON object that strictly conforms to this schema:\n"
              f"```json\n{escaped_schema_str}\n```"),
@@ -705,54 +706,154 @@ class ExpertBiosketch(BaseModel):
     """
     Structured biosketch for an expert.
     """
-    name: Optional[str] = Field(None, description="The expert's full name, if determinable from the prompt/context.")
-    organization: Optional[str] = Field(None, description="The expert's primary organization or affiliation, if known.")
+    name: Optional[str] = Field(default=None, description="Expert's full name.")
+    organization: Optional[str] = Field(default=None, description="Primary affiliation or organization.")
+    headshot_url: Optional[str] = Field(default=None, description="URL to a headshot/photo if available.")
     biosketch: str = Field(..., description="A concise narrative biographical sketch.")
     education_and_experience: List[str] = Field(
         default_factory=list,
-        description="Bullet points for education and work experience. Include notable roles, especially research leadership/management."
+        description="Education and work experience; include leadership/management roles."
+    )
+    major_research_projects_and_entrepreneurship: List[str] = Field(
+        default_factory=list,
+        description="Major research projects and entrepreneurship activities."
+    )
+    honors_and_awards: List[str] = Field(
+        default_factory=list,
+        description="Honors, awards, fellowships."
     )
     expertise_and_contributions: List[str] = Field(
         default_factory=list,
-        description="Bullet points describing areas of expertise and major contributions."
+        description="Areas of expertise and major contributions."
     )
-    recent_publications_or_products: List[str] = Field(
-        default_factory=list,
-        description="Recent publications, software, datasets, or products (short citations or links when possible)."
-    )
+    # recent_publications_or_products: List[str] = Field(
+    #     default_factory=list,
+    #     description="Recent publications, software, datasets, or products."
+    # )
 
 
 class PeoplePrompts:
     @classmethod
-    def generate_expert_biosketch_from_prompt(cls, prompt_text: str) -> ExpertBiosketch:
+    async def generate_expert_biosketch_from_prompt(cls, prompt_text: str) -> ExpertBiosketch:
         """
-        Generate a structured ExpertBiosketch from a free-form prompt about a person.
+        Agentically call the LLM with structured output and return a fully populated ExpertBiosketch.
         """
-        llm = get_better_llm()
+        agent = await get_structured_agentic_llm(ExpertBiosketch)
         schema = ExpertBiosketch.model_json_schema()
-        # Ensure schema is prompt-safe
         schema_str = json.dumps(schema, indent=2).replace("{", "{{").replace("}", "}}")
 
-        prompt = ChatPromptTemplate.from_messages([
-            ("system",
-             "You are a careful researcher. Extract a concise, factual expert biosketch. "
-             "Populate the schema fields without inventing details. If you are uncertain, omit that item. "
-             "Prefer verified, widely known facts; keep bullet items short. "
-             "Return a single JSON object that strictly conforms to the ExpertBiosketch schema:\n"
-             f"```json\n{schema_str}\n```"),
-            ("user",
-             "Create an expert biosketch for the person described below. "
-             "If their name or organization is apparent, include it. "
-             "Fill fields: biosketch (narrative), education_and_experience (bullets; include leadership/management roles), "
-             "expertise_and_contributions (bullets), recent_publications_or_products (bullets).\n\n"
-             "Prompt:\n{input_text}")
-        ])
+        # Build a concrete input string for the agent
+        instruction = (
+            "You are a careful researcher. Given the user prompt about a person, extract a concise, factual expert biosketch. "
+            "Populate ONLY the fields in the provided schema; if uncertain, omit that item. "
+            "Use recent, publicly verifiable facts, starting from the person's CV or home page or public talks, as retrieved from a web search. "
+            "Return a single JSON object that strictly conforms to the ExpertBiosketch schema:\n"
+            f"```json\n{schema_str}\n```"
+        )
+        user_req = (
+            "Fill fields: biosketch (narrative), education_and_experience (bullets; include leadership/management roles), "
+            "major_research_projects_and_entrepreneurship (bullets), honors_and_awards (bullets), "
+            "expertise_and_contributions (bullets), headshot_url (if available). "
+            "Use tools like web search as well as Google Scholar search for {name}'s profile to get the most updated information.\n\n"
+            f"Prompt:\n{prompt_text}"
+        )
+        agent_input = f"{instruction}\n\n{user_req}"
 
-        structured_llm = llm.with_structured_output(ExpertBiosketch)  # type: ignore
-        chain = prompt | structured_llm
-        result: ExpertBiosketch = chain.invoke({"input_text": prompt_text})
-        return result
+        def _strip_fences(s: str) -> str:
+            s = (s or "").strip()
+            if s.startswith("```json"):
+                s = s[len("```json"):].strip()
+            if s.startswith("```"):
+                s = s[len("```"):].strip()
+            if s.endswith("```"):
+                s = s[:-3].strip()
+            return s
 
+        def _to_str_list(v) -> List[str]:
+            if not v:
+                return []
+            if isinstance(v, list):
+                out: List[str] = []
+                for it in v:
+                    try:
+                        out.append(it if isinstance(it, str) else json.dumps(it, ensure_ascii=False))
+                    except Exception:
+                        out.append(str(it))
+                # Drop empties and duplicates preserving order
+                seen, dedup = set(), []
+                for s in out:
+                    ss = s.strip()
+                    if ss and ss not in seen:
+                        seen.add(ss)
+                        dedup.append(ss)
+                return dedup
+            return [str(v)]
+
+        def _prune_to_model_keys(d: dict) -> dict:
+            allowed = {
+                "name",
+                "organization",
+                "headshot_url",
+                "biosketch",
+                "education_and_experience",
+                "major_research_projects_and_entrepreneurship",
+                "honors_and_awards",
+                "expertise_and_contributions",
+            }
+            return {k: v for k, v in (d or {}).items() if k in allowed}
+
+        # 1) Try agent with tools
+        if agent is not None:
+            try:
+                result = await agent.ainvoke({"input": agent_input, "chat_history": []})  # type: ignore
+                out = result.get("output", "") if isinstance(result, dict) else ""
+                data = json.loads(_strip_fences(out)) if out else {}
+                data = _prune_to_model_keys(data)
+
+                # Ensure required and normalize lists
+                data.setdefault("biosketch", prompt_text.strip())
+                data["education_and_experience"] = _to_str_list(data.get("education_and_experience"))
+                data["major_research_projects_and_entrepreneurship"] = _to_str_list(data.get("major_research_projects_and_entrepreneurship"))
+                data["honors_and_awards"] = _to_str_list(data.get("honors_and_awards"))
+                data["expertise_and_contributions"] = _to_str_list(data.get("expertise_and_contributions"))
+
+                return ExpertBiosketch(**data)
+            except Exception as e:
+                logging.warning(f"Agentic biosketch failed; falling back to structured LLM. Error: {e}")
+
+        # 2) Fallback: plain structured LLM (no tools)
+        try:
+            llm = get_better_llm()
+            if llm is None:
+                raise RuntimeError("No LLM available")
+            fallback_prompt = ChatPromptTemplate.from_messages([
+                ("system", instruction),
+                ("user", user_req),
+            ])
+            structured_llm = llm.with_structured_output(ExpertBiosketch)  # type: ignore
+            chain = fallback_prompt | structured_llm
+            eb: ExpertBiosketch = await chain.ainvoke({})
+            # Normalize lists and ensure biosketch
+            eb.education_and_experience = _to_str_list(eb.education_and_experience)
+            eb.major_research_projects_and_entrepreneurship = _to_str_list(eb.major_research_projects_and_entrepreneurship)
+            eb.honors_and_awards = _to_str_list(eb.honors_and_awards)
+            eb.expertise_and_contributions = _to_str_list(eb.expertise_and_contributions)
+            if eb.biosketch is None:
+                eb.biosketch = prompt_text.strip()
+            return eb
+        except Exception as e:
+            logging.error(f"Structured LLM biosketch fallback failed: {e}")
+            return ExpertBiosketch(
+                name=None,
+                organization=None,
+                headshot_url=None,
+                biosketch=prompt_text.strip(),
+                education_and_experience=[],
+                major_research_projects_and_entrepreneurship=[],
+                honors_and_awards=[],
+                expertise_and_contributions=[],
+            )
+    
     @classmethod
     def get_person_publications(cls, graph_accessor: GraphAccessor, name: str, organization: str, scholar_id: str) -> List[dict]:
         from crawl.web_fetch import scholar_search_gscholar_by_id
@@ -1216,8 +1317,8 @@ def _normalize_type(t: str | None) -> str:
     return "string"
 
 from pydantic import BaseModel, Field
-from typing import List, Optional, Literal, Union
-from enrichment.llms import get_agentic_llm
+from typing import List, Optional
+from langchain_core.prompts import ChatPromptTemplate
 
 # NEW: Decision model for "requires human?" checks
 class RequiresHumanDecision(BaseModel):

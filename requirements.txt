@@ -4,10 +4,14 @@ python-dotenv
 psycopg2-binary
 numpy
 pandas
+google-generativeai
 langchain
+langchain-core
 langchain_openai
 langchain-community
 langchain-mcp-adapters
+langchain-google-genai
+langchain-google-vertexai
 langgraph
 openai
 python-magic
@@ -30,9 +34,6 @@ lxml
 hurry.filesize
 bcrypt
 grobid-client-python
-langchain-google-vertexai
-google-generativeai
-langchain-google-genai
 biopython>=1.80
 mcp
 cloud-sql-python-connector

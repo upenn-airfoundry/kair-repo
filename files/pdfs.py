@@ -85,14 +85,19 @@ def chunk_and_partition_pdf_file(filename, dir:str = DOWNLOAD_DIR) -> dict:
 
         
 def split_pdf_with_langchain(pdf_path: str, chunk_size:int=1000, chunk_overlap: int=200) -> list:
-    loader = PyPDFLoader(pdf_path)
-    documents = loader.load()
-    
-    # Use the most common splitter: RecursiveCharacterTextSplitter
-    splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-    split_docs = splitter.split_documents(documents)
-    
-    return split_docs
+    try:
+        loader = PyPDFLoader(pdf_path)
+        documents = loader.load()
+        
+        # Use the most common splitter: RecursiveCharacterTextSplitter
+        splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+        split_docs = splitter.split_documents(documents)
+        
+        return split_docs
+    except Exception as e:
+        print(f"Error splitting PDF {pdf_path}: {e}")
+        traceback.print_exc()
+        return []
 
 def get_presplit_aryn_file(filename: str) -> list:
     """

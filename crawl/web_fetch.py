@@ -58,10 +58,10 @@ GROBID_SERVER = os.getenv("GROBID_SERVER", "http://localhost:8070")
 
 # make a request and wait for it to redirect
 def get_redirected_url(doi_url):
-  url = ' https://dx.doi.org/' + doi_url
-  response = requests.get(url, allow_redirects=False)
-  # print(response.headers['Location'])
-  return response.headers['Location']
+  # Follow redirects and return the final URL for a DOI
+  url = 'https://dx.doi.org/' + str(doi_url).strip()
+  response = requests.get(url, allow_redirects=True, timeout=10)
+  return response.url
 
 
 
@@ -142,18 +142,25 @@ def get_pdf_protocol(url, filename, retry_delay=12, retries=3):
         
         
 def get_pdf_bioRxiv(url, filename):
-  # make request to url to get redirect:
-  response = requests.get(url, allow_redirects=False)
-  response = requests.get(response.headers['Location'], allow_redirects=False)
-  response = requests.get(response.headers['Location'] + '.full.pdf')
-  if response.status_code == 200:
-      with open(filename, "wb") as file:
-          file.write(response.content)
-      print(f"Successfully downloaded: {url}")
-      return
-  else:
-      print(f"Failed to download: {url}. Status code: {response.status_code}")
-      print(response.text)
+  # Follow redirects to the final article URL, then fetch the full PDF
+  try:
+      r = requests.get(url, allow_redirects=True, timeout=10)
+      # Construct the full PDF URL if not already at a PDF
+      pdf_url = r.url
+      if not pdf_url.endswith('.full.pdf'):
+          pdf_url = pdf_url.rstrip('/') + '.full.pdf'
+      pdf_resp = requests.get(pdf_url, allow_redirects=True, timeout=30)
+      if pdf_resp.status_code == 200:
+          with open(filename, "wb") as file:
+              file.write(pdf_resp.content)
+          print(f"Successfully downloaded: {url}")
+          return
+      else:
+          print(f"Failed to download: {url}. Status code: {pdf_resp.status_code}")
+          print(pdf_resp.text)
+          return
+  except Exception as e:
+      print(f"Error downloading from bioRxiv: {e}")
       return
 
   # url = https://www.biorxiv.org/content/10.1101/2020.09.18.303958v1.full.pdf''
@@ -170,7 +177,7 @@ def get_pdf_frontiersin(url, filename):
     }
     if journal_abbr:
         url = 'https://www.frontiersin.org/journals/' + journal_abbr_map.get(journal_abbr, journal_abbr) + '/articles/' + article_id + '/pdf' # type: ignore
-    response = requests.get(url)
+    response = requests.get(url, allow_redirects=True, timeout=30)
     if response.status_code == 200:
         with open(filename, "wb") as file:
             file.write(response.content)
@@ -181,7 +188,7 @@ def get_pdf_frontiersin(url, filename):
 
 
 def get_pdf_nature(url, filename):
-    response = requests.get(url + '.pdf')
+    response = requests.get(url + '.pdf', allow_redirects=True, timeout=30)
     if response.status_code == 200:
         with open(filename, "wb") as file:
             file.write(response.content)
@@ -191,7 +198,7 @@ def get_pdf_nature(url, filename):
         print(response.text)
 
 def get_pdf_protocolexchange(url, filename):
-    response = requests.get(url + '_covered.pdf')
+    response = requests.get(url + '_covered.pdf', allow_redirects=True, timeout=30)
     if response.status_code == 200:
         with open(filename, "wb") as file:
             file.write(response.content)
@@ -257,32 +264,53 @@ async def fetch_and_crawl_items(rows: list[dict], downloads_dir: str = DOWNLOADS
                 ext_file = f"{crawl_id}-{file_base}"
                 filename = os.path.join(DOWNLOADS_DIR, ext_file)
                 
-                if os.path.exists(filename):
+                content_type = ''
+                # Fetch the PDF from the URL
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                }                    
+                if os.path.exists(filename) and os.path.getsize(filename) > 0:
                     logging.debug(f"File {filename} already exists. Skipping download.")
                     CrawlQueue.add_to_crawled(crawl_id, 'file://' + filename)
-                    continue
+                    # Follow redirects on HEAD to get accurate content-type after redirect
+                    response = requests.head(url, headers=headers, timeout=10, allow_redirects=True)
+                    if response.status_code != 200:
+                        raise IOError(f"Unable to request from {url}")
+                    try:
+                        mime_type_header = response.headers['Content-Type']
+                        content_type = mime_type_header.split(';')[0].strip()
+                    except KeyError:
+                        content_type = 'application/octet-stream'
+                else:
+                    response = requests.get(url, headers=headers, timeout=10, stream=True, allow_redirects=True)
+                    response.raise_for_status()  # Raise an error for HTTP errors
+                    
+                    mime_type_header = response.headers['Content-Type']
+                    content_type = mime_type_header.split(';')[0].strip()
 
-                await handle_file(filename, url)
+                    if response.status_code == 200:
+                        with open(filename, "wb") as pdf_file:
+                            for chunk in response.iter_content(chunk_size=8192):
+                                pdf_file.write(chunk)
+                    else:
+                        logging.error(f"Failed to download PDF from {url}. Status code: {response.status_code}")
+                        continue  # Skip to the next URL
 
-                # Fetch the PDF from the URL
-                response = requests.get(url, timeout=10)
-                response.raise_for_status()  # Raise an error for HTTP errors
+                if os.path.exists(filename) and os.path.getsize(filename) > 0:
+                    await handle_file(filename, url, content_type)
 
-                with open(filename, "wb") as pdf_file:
-                    pdf_file.write(response.content)
-                
-                global grobid_client
-                if grobid_client is None:   
-                    grobid_client = GrobidClient(grobid_server=GROBID_SERVER)
-                grobid_client.process(
-                    service="processFulltextDocument",
-                    input_path=downloads_dir,
-                    output=downloads_dir + "/tei_xml",
-                    # n=10, # Optional: number of concurrent threads, default is usually number of CPU cores
-                    # force=True, # Optional: force reprocessing of existing files
-                    # tei_coordinates=True, # Optional: to include coordinates in the TEI XML
-                    # segment_sentences=True, # Optional: to segment sentences
-                )
+                # global grobid_client
+                # if grobid_client is None:   
+                #     grobid_client = GrobidClient(grobid_server=GROBID_SERVER)
+                # grobid_client.process(
+                #     service="processFulltextDocument",
+                #     input_path=downloads_dir,
+                #     output=downloads_dir + "/tei_xml",
+                #     # n=10, # Optional: number of concurrent threads, default is usually number of CPU cores
+                #     # force=True, # Optional: force reprocessing of existing files
+                #     # tei_coordinates=True, # Optional: to include coordinates in the TEI XML
+                #     # segment_sentences=True, # Optional: to segment sentences
+                # )
                     
                 if CrawlQueue.add_to_crawled(crawl_id, ext_file):  # Mark this PDF as crawled in the database
                     logging.info(f"Successfully crawled and saved: {url} to {ext_file}")
