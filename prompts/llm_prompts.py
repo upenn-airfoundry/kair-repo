@@ -6,7 +6,8 @@ from langchain.schema.output_parser import StrOutputParser
 import requests
 
 from pydantic import BaseModel, Field
-from typing import List, Optional, Literal, Union, Any
+from typing import List, Optional, Literal, Union, Any, Dict, cast
+from datetime import datetime
 
 from enrichment.llms import get_agentic_llm, get_structured_agentic_llm
 
@@ -701,6 +702,11 @@ class WebPrompts:
             print(f"Error summarizing web page content: {e}")
             return "Summary could not be generated."
 
+def get_current_year() -> int:
+    """
+    Gets the current year.
+    """
+    return datetime.utcnow().year
 
 class ExpertBiosketch(BaseModel):
     """
@@ -726,17 +732,209 @@ class ExpertBiosketch(BaseModel):
         default_factory=list,
         description="Areas of expertise and major contributions."
     )
-    # recent_publications_or_products: List[str] = Field(
-    #     default_factory=list,
-    #     description="Recent publications, software, datasets, or products."
-    # )
+    recent_publications_or_products: List[str] = Field(
+        default_factory=list,
+        description="Recent publications, software, datasets, or products. Please include the title, authors, venue, and year."
+    )
 
+# -------------------------
+# Utilities and new helpers
+# -------------------------
+
+# Validate an image URL via a fast HEAD request.
+def _valid_image_url(url: Optional[str]) -> bool:
+    if not url or not isinstance(url, str):
+        return False
+    try:
+        r = requests.head(url, allow_redirects=True, timeout=10)
+        if 200 <= r.status_code < 400:
+            ctype = r.headers.get("Content-Type", "")
+            return isinstance(ctype, str) and ctype.lower().startswith("image")
+        return False
+    except Exception:
+        return False
+
+# Normalized call to a registered LangChain Tool (via MCP adapter).
+async def _lc_tool_call(tool_name: str, args: dict) -> Any:
+    """Call a registered LangChain Tool by name using normal LangChain APIs.
+    Returns parsed JSON if possible, else raw output.
+    Assumes `mcp_client.get_tools()` is available in this module.
+    """
+    try:
+        tools = await mcp_client.get_tools()  # type: ignore[name-defined]
+        target = None
+        for t in tools:
+            name = getattr(t, "name", None) or (t.get("name") if isinstance(t, dict) else None)
+            if name == tool_name:
+                target = t
+                break
+        if target is None:
+            logging.warning(f"LangChain tool not found: {tool_name}")
+            return {}
+        if hasattr(target, "ainvoke"):
+            resp = await target.ainvoke(args)  # type: ignore[attr-defined]
+        elif hasattr(target, "invoke"):
+            resp = target.invoke(args)  # type: ignore[attr-defined]
+        else:
+            logging.warning(f"Tool {tool_name} has no invoke/ainvoke")
+            return {}
+
+        if isinstance(resp, str):
+            s = resp.strip()
+            if (s.startswith("{") and s.endswith("}")) or (s.startswith("[") and s.endswith("]")):
+                try:
+                    return json.loads(s)
+                except Exception:
+                    return s
+            return s
+        if isinstance(resp, dict) and "content" in resp:
+            c = resp["content"]
+            if isinstance(c, str):
+                try:
+                    return json.loads(c)
+                except Exception:
+                    return c
+            return c
+        return resp
+    except Exception as e:
+        logging.warning(f"_lc_tool_call failed for {tool_name}: {e}")
+        return {}
+
+async def fetch_recent_publications_via_scholar(
+    name: str,
+    organization: Optional[str] = None,
+    *,
+    max_items: int = 20,
+    since_year: Optional[int] = None,
+    locale: str = "en"
+) -> List[str]:
+    """Use SearchAPI Google Scholar tools to fetch recent publications for a person.
+    Returns a list of formatted strings like "YYYY — Title — URL".
+    """
+    def _pick_profile(profiles: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if not profiles:
+            return None
+        if organization:
+            org = organization.lower()
+            for p in profiles:
+                aff = p.get("affiliations") or p.get("affiliation") or ""
+                if isinstance(aff, list):
+                    aff = " ".join(map(str, aff))
+                if isinstance(aff, str) and org in aff.lower():
+                    return p
+        return profiles[0]
+
+    # 1) Find candidate profiles by name
+    profiles_res = await _lc_tool_call("search_google_scholar_profiles", {"author_name": name, "num": "10", "hl": locale})
+    profiles: List[Dict[str, Any]] = []
+    if isinstance(profiles_res, dict):
+        profiles = profiles_res.get("profiles") or profiles_res.get("results") or []
+    elif isinstance(profiles_res, list):
+        profiles = profiles_res
+
+    chosen = _pick_profile(profiles)
+    if not isinstance(chosen, dict):
+        return []
+
+    author_id = chosen.get("author_id") or chosen.get("scholar_id") or chosen.get("id")
+    if not author_id:
+        return []
+
+    # 2) Fetch publications for that author
+    pubs_res = await _lc_tool_call(
+        "search_google_scholar_publications",
+        # {"author_id": str(author_id), "num": str(max_items if max_items > 0 else 0), "page": "1", "hl": locale}
+        {"author_id": str(author_id), "num": str(0), "page": "1", "hl": locale}
+    )
+    articles: List[Dict[str, Any]] = []
+    if isinstance(pubs_res, dict):
+        articles = pubs_res.get("articles") or pubs_res.get("publications") or pubs_res.get("results") or []
+    elif isinstance(pubs_res, list):
+        articles = pubs_res
+
+    items: List[str] = []
+    for art in articles:
+        try:
+            y_raw = art.get("year") or art.get("publication_year")
+            year = int(str(y_raw)[:4]) if y_raw is not None else None
+        except Exception:
+            year = None
+        if since_year is not None and year is not None and year < since_year:
+            continue
+        
+        # Skip the undated items
+        if year is None:
+            continue
+        title = str(art.get("title") or "").strip()
+        link = art.get("link") or art.get("url") or art.get("paper_url") or ""
+        link = str(link).strip() if link else ""
+        if title:
+            pretty = f"{str(year) if year else 'n.d.'} — {title}" + (f" — {link}" if link else "")
+            items.append(pretty)
+            if max_items > 0 and len(items) >= max_items:
+                break
+            
+        items.sort(reverse=True)  # Newest first. Since it's a stable sort, we'll sort by year, then by citation count in desc order.
+    return items
+
+async def find_headshot_via_searchapi(name: str, organization: Optional[str] = None) -> Optional[str]:
+    """Use SearchAPI image tools (via LangChain) to find a likely headshot URL for the person."""
+    person_str = f"{name} {organization}".strip() if organization else name
+    query = f"{person_str} headshot portrait"
+
+    # Discover an image search tool
+    try:
+        tools = await mcp_client.get_tools()  # type: ignore[name-defined]
+        toolnames = [getattr(t, "name", None) or (t.get("name") if isinstance(t, dict) else None) for t in tools]
+        toolnames = [t for t in toolnames if t]
+    except Exception as e:
+        logging.debug(f"find_headshot_via_searchapi: tool discovery failed: {e}")
+        toolnames = []
+
+    img_tool = None
+    for tname in toolnames:
+        tl = tname.lower()
+        if "search_google_images" in tl or ("image" in tl and "google" in tl):
+            img_tool = tname
+            break
+
+    if img_tool is None:
+        # No tool found
+        return None
+
+    res = await _lc_tool_call(img_tool, {"q": query, "num": "10"})
+    candidates: List[str] = []
+    if isinstance(res, dict):
+        imgs = res.get("images_results") or res.get("results") or res.get("images") or []
+        for it in imgs:
+            if isinstance(it, dict):
+                u = it.get("original") or it.get("link") or it.get("image") or it.get("thumbnail")
+                if isinstance(u, str):
+                    candidates.append(u)
+    elif isinstance(res, list):
+        for it in res:
+            if isinstance(it, dict):
+                u = it.get("original") or it.get("link") or it.get("image") or it.get("thumbnail")
+                if isinstance(u, str):
+                    candidates.append(u)
+
+    for cand in candidates:
+        if _valid_image_url(cand):
+            return cand
+    return None
+
+# -------------------------
+# PeoplePrompts refactor
+# -------------------------
 
 class PeoplePrompts:
     @classmethod
     async def generate_expert_biosketch_from_prompt(cls, prompt_text: str) -> ExpertBiosketch:
         """
         Agentically call the LLM with structured output and return a fully populated ExpertBiosketch.
+        Then:
+          - Fetch publications from the last two years via Google Scholar (SearchAPI MCP) and add them.
+          - If headshot_url is missing or invalid, use Google Images (via SearchAPI MCP) to find a suitable headshot URL.
         """
         agent = await get_structured_agentic_llm(ExpertBiosketch)
         schema = ExpertBiosketch.model_json_schema()
@@ -799,50 +997,85 @@ class PeoplePrompts:
                 "major_research_projects_and_entrepreneurship",
                 "honors_and_awards",
                 "expertise_and_contributions",
+                "recent_publications_or_products",
             }
             return {k: v for k, v in (d or {}).items() if k in allowed}
 
-        # 1) Try agent with tools
+        # 1) Try agent with tools for the core biosketch
+        eb: Optional[ExpertBiosketch] = ExpertBiosketch(
+            name=None,
+            organization=None,
+            headshot_url=None,
+            biosketch=prompt_text.strip(),
+            education_and_experience=[],
+            major_research_projects_and_entrepreneurship=[],
+            honors_and_awards=[],
+            expertise_and_contributions=[],
+            recent_publications_or_products=[],
+        )
         if agent is not None:
             try:
                 result = await agent.ainvoke({"input": agent_input, "chat_history": []})  # type: ignore
                 out = result.get("output", "") if isinstance(result, dict) else ""
-                data = json.loads(_strip_fences(out)) if out else {}
-                data = _prune_to_model_keys(data)
+                if out.startswith("Agent stopped"):
+                    eb = None
+                else:
+                    data = json.loads(_strip_fences(out)) if out else {}
+                    data = _prune_to_model_keys(data)
 
-                # Ensure required and normalize lists
-                data.setdefault("biosketch", prompt_text.strip())
-                data["education_and_experience"] = _to_str_list(data.get("education_and_experience"))
-                data["major_research_projects_and_entrepreneurship"] = _to_str_list(data.get("major_research_projects_and_entrepreneurship"))
-                data["honors_and_awards"] = _to_str_list(data.get("honors_and_awards"))
-                data["expertise_and_contributions"] = _to_str_list(data.get("expertise_and_contributions"))
+                    # Ensure required and normalize lists
+                    data.setdefault("biosketch", prompt_text.strip())
+                    data["education_and_experience"] = _to_str_list(data.get("education_and_experience"))
+                    data["major_research_projects_and_entrepreneurship"] = _to_str_list(data.get("major_research_projects_and_entrepreneurship"))
+                    data["honors_and_awards"] = _to_str_list(data.get("honors_and_awards"))
+                    data["expertise_and_contributions"] = _to_str_list(data.get("expertise_and_contributions"))
+                    data["recent_publications_or_products"] = _to_str_list(data.get("recent_publications_or_products"))
 
-                return ExpertBiosketch(**data)
+                    eb = ExpertBiosketch(**data)
             except Exception as e:
                 logging.warning(f"Agentic biosketch failed; falling back to structured LLM. Error: {e}")
+                eb = None
+        else:
+            eb = None
 
         # 2) Fallback: plain structured LLM (no tools)
-        try:
-            llm = get_better_llm()
-            if llm is None:
-                raise RuntimeError("No LLM available")
-            fallback_prompt = ChatPromptTemplate.from_messages([
-                ("system", instruction),
-                ("user", user_req),
-            ])
-            structured_llm = llm.with_structured_output(ExpertBiosketch)  # type: ignore
-            chain = fallback_prompt | structured_llm
-            eb: ExpertBiosketch = await chain.ainvoke({})
-            # Normalize lists and ensure biosketch
-            eb.education_and_experience = _to_str_list(eb.education_and_experience)
-            eb.major_research_projects_and_entrepreneurship = _to_str_list(eb.major_research_projects_and_entrepreneurship)
-            eb.honors_and_awards = _to_str_list(eb.honors_and_awards)
-            eb.expertise_and_contributions = _to_str_list(eb.expertise_and_contributions)
-            if eb.biosketch is None:
-                eb.biosketch = prompt_text.strip()
-            return eb
-        except Exception as e:
-            logging.error(f"Structured LLM biosketch fallback failed: {e}")
+        if eb is None:
+            try:
+                llm = get_better_llm()
+                if llm is None:
+                    raise RuntimeError("No LLM available")
+                fallback_prompt = ChatPromptTemplate.from_messages([
+                    ("system", instruction),
+                    ("user", user_req),
+                ])
+                structured_llm = llm.with_structured_output(ExpertBiosketch)  # type: ignore
+                chain = fallback_prompt | structured_llm
+                eb = cast(ExpertBiosketch, await chain.ainvoke({}))
+                # Normalize lists and ensure biosketch
+                if eb is not None:
+                    eb.education_and_experience = _to_str_list(eb.education_and_experience)
+                    eb.major_research_projects_and_entrepreneurship = _to_str_list(eb.major_research_projects_and_entrepreneurship)
+                    eb.honors_and_awards = _to_str_list(eb.honors_and_awards)
+                    eb.expertise_and_contributions = _to_str_list(eb.expertise_and_contributions)
+                    eb.recent_publications_or_products = _to_str_list(getattr(eb, "recent_publications_or_products", []))
+                    if eb.biosketch is None:
+                        eb.biosketch = prompt_text.strip()
+            except Exception as e:
+                logging.error(f"Structured LLM biosketch fallback failed: {e}")
+                return ExpertBiosketch(
+                    name=None,
+                    organization=None,
+                    headshot_url=None,
+                    biosketch=prompt_text.strip(),
+                    education_and_experience=[],
+                    major_research_projects_and_entrepreneurship=[],
+                    honors_and_awards=[],
+                    expertise_and_contributions=[],
+                    recent_publications_or_products=[],
+                )
+
+        # Enrich with publications (last two years) and a headshot URL using helper functions
+        if eb is None:
             return ExpertBiosketch(
                 name=None,
                 organization=None,
@@ -852,8 +1085,41 @@ class PeoplePrompts:
                 major_research_projects_and_entrepreneurship=[],
                 honors_and_awards=[],
                 expertise_and_contributions=[],
+                recent_publications_or_products=[],
             )
-    
+
+        # Publications enrichment
+        try:
+            current_year = datetime.utcnow().year
+            pubs = await fetch_recent_publications_via_scholar(
+                name=(eb.name or '').strip() or prompt_text.strip(),
+                organization=(eb.organization or '').strip() or None,
+                max_items=20,
+                since_year=current_year - 1,
+            )
+            if pubs:
+                existing = eb.recent_publications_or_products or []
+                merged = pubs + [p for p in existing if p not in pubs]
+                eb.recent_publications_or_products = merged[:20]
+        except Exception as e:
+            logging.warning(f"Biosketch publications enrichment failed: {e}")
+
+        # Headshot enrichment
+        try:
+            if getattr(eb, 'headshot_url', None) and getattr(eb, 'headshot_url', "").startswith("data://"):
+                pass#eb.headshot_url = None
+            if not _valid_image_url(getattr(eb, 'headshot_url', None)):
+                cand = await find_headshot_via_searchapi(
+                    name=(eb.name or '').strip() or prompt_text.strip(),
+                    organization=(eb.organization or '').strip() or None,
+                )
+                if cand:
+                    eb.headshot_url = cand
+        except Exception as e:
+            logging.debug(f"Biosketch headshot enrichment skipped due to error: {e}")
+
+        return eb
+
     @classmethod
     def get_person_publications(cls, graph_accessor: GraphAccessor, name: str, organization: str, scholar_id: str) -> List[dict]:
         from crawl.web_fetch import scholar_search_gscholar_by_id
@@ -1216,11 +1482,10 @@ class PlanningPrompts:
         def find_search_tool_name() -> str | None:
             for t in tools:
                 name = getattr(t, "name", None) or (t.get("name") if isinstance(t, dict) else None)
-                if not name:
-                    continue
-                lname = name.lower()
-                if "semantic" in lname or "scholar" in lname or "paper" in lname or "search" in lname:
-                    return name
+                if name:
+                    lname = name.lower()
+                    if "semantic" in lname or "scholar" in lname or "paper" in lname or "search" in lname:
+                        return name
             return None
 
         search_tool_name = find_search_tool_name()

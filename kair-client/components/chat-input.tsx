@@ -8,6 +8,7 @@ import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
 import { useSecureFetch } from '@/hooks/useSecureFetch';
 import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 // Optional (only if you expect raw HTML in the markdown):
 // import rehypeRaw from 'rehype-raw';
 // import rehypeSanitize from 'rehype-sanitize';
@@ -50,6 +51,35 @@ const useMarkdownComponents = () => {
     ),
     // Remove p/li overrides that force break-all/whitespace-pre-wrap.
   }), []);
+};
+
+// Normalize markdown so headings/line breaks render as intended
+const normalizeMarkdown = (input: string): string => {
+  if (!input) return '';
+  let s = input.trim();
+  // If content is wrapped in a fenced block, strip the outer fences
+  if (s.startsWith('```')) {
+    s = s.replace(/^```[a-zA-Z0-9_-]*\s*\n?/, '');
+    s = s.replace(/\n?```\s*$/, '');
+  }
+  // If we see literal \n but no actual newlines, unescape
+  if (s.includes('\\n') && !s.includes('\n')) {
+    s = s.replace(/\\n/g, '\n');
+  }
+  // Dedent if most lines are indented (e.g., LLM returned a code-indented block)
+  const lines = s.split('\n');
+  let minIndent = Number.POSITIVE_INFINITY;
+  let nonEmpty = 0;
+  for (const ln of lines) {
+    if (ln.trim().length === 0) continue;
+    nonEmpty++;
+    const m = ln.match(/^[\t ]*/)?.[0] ?? '';
+    minIndent = Math.min(minIndent, m.length);
+  }
+  if (nonEmpty > 0 && minIndent >= 4) {
+    s = lines.map(l => l.slice(minIndent)).join('\n');
+  }
+  return s;
 };
 
 // Message type
@@ -296,12 +326,12 @@ export default function ChatInput({ addMessage, projectId, onRefreshRequest, sel
             >
               <div className="prose prose-sm dark:prose-invert max-w-none">
                 <ReactMarkdown
-                  remarkPlugins={[remarkGfm]}
+                  remarkPlugins={[remarkGfm, remarkBreaks]}
                   // If you expect raw HTML from the LLM, uncomment rehype plugins:
                   // rehypePlugins={[rehypeRaw, rehypeSanitize]}
                   components={mdComponents}
                 >
-                  {msg.content}
+                  {normalizeMarkdown(msg.content)}
                 </ReactMarkdown>
               </div>
             </div>

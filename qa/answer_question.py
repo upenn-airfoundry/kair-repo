@@ -595,8 +595,8 @@ class AnswerQuestionHandler():
                     md += ["### Honors and Awards"] + [f"- {item}" for item in biosketch.honors_and_awards] + [""]
                 if biosketch.expertise_and_contributions:
                     md += ["### Expertise and Major Contributions"] + [f"- {item}" for item in biosketch.expertise_and_contributions] + [""]
-                # if biosketch.recent_publications_or_products:
-                    # md += ["### Recent Publications or Products"] + [f"- {item}" for item in biosketch.recent_publications_or_products] + [""]
+                if biosketch.recent_publications_or_products:
+                    md += ["### Recent Publications or Products"] + [f"- {item}" for item in biosketch.recent_publications_or_products] + [""]
                 answer_md = "\n".join(md).strip()
                 # Save to user history
                 self.graph_accessor.add_user_history(self.user_id, self.project_id, original_prompt, answer_md)
