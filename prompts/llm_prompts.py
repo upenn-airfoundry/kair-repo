@@ -5,8 +5,9 @@ from langchain_core.prompts import MessagesPlaceholder  # needed for agent promp
 from langchain.schema.output_parser import StrOutputParser
 import requests
 
-from pydantic import BaseModel, Field
-from typing import List, Optional, Literal, Union, Any, Dict, cast
+from pydantic import BaseModel, Field, ValidationError
+from typing import List, Optional, Literal, Tuple, Union, Any, Dict, cast
+import difflib
 from datetime import datetime
 
 from enrichment.llms import get_agentic_llm, get_structured_agentic_llm
@@ -56,6 +57,91 @@ class SolutionTask(BaseModel):
 class SolutionPlan(BaseModel):
     """A structured plan composed of a list of tasks to solve a user's request."""
     tasks: List[SolutionTask]
+
+# -------------------------
+# Generic structured LLM helpers
+# -------------------------
+def _coerce_pydantic(model_cls: type[BaseModel], raw: Any) -> BaseModel | None:
+    """Attempt to coerce raw output (dict/BaseModel/obj with model_dump) into the target Pydantic model."""
+    if isinstance(raw, model_cls):
+        return raw
+    if isinstance(raw, dict):
+        try:
+            return model_cls(**raw)
+        except Exception:
+            return None
+    if hasattr(raw, "model_dump"):
+        try:
+            data = raw.model_dump()  # type: ignore[attr-defined]
+            return model_cls(**data)
+        except Exception:
+            return None
+    return None
+
+def invoke_structured_with_retry(
+    *,
+    llm,
+    prompt: ChatPromptTemplate,
+    model_cls: type[BaseModel],
+    inputs: Dict[str, Any],
+    max_attempts: int = 2,
+    repair_instruction: str | None = None,
+) -> BaseModel | None:
+    """Synchronously invoke a structured LLM with schema validation and optional repair retry."""
+    if llm is None:
+        return None
+    structured_llm = llm.with_structured_output(model_cls)  # type: ignore[attr-defined]
+    chain = prompt | structured_llm
+    attempt = 0
+    last_error = None
+    while attempt < max_attempts:
+        attempt += 1
+        raw = chain.invoke(inputs)
+        inst = _coerce_pydantic(model_cls, raw)
+        if inst is not None:
+            return inst
+        last_error = f"Coercion failure attempt {attempt}"
+        if attempt < max_attempts and repair_instruction:
+            # Augment system message with repair guidance
+            repair_msgs = []
+            for m in prompt.messages:  # type: ignore[attr-defined]
+                repair_msgs.append(m)
+            repair_msgs.insert(0, ("system", repair_instruction + f" Previous error: {last_error}"))
+            prompt = ChatPromptTemplate.from_messages(repair_msgs)
+            chain = prompt | structured_llm
+    return None
+
+async def ainvoke_structured_with_retry(
+    *,
+    llm,
+    prompt: ChatPromptTemplate,
+    model_cls: type[BaseModel],
+    inputs: Dict[str, Any],
+    max_attempts: int = 2,
+    repair_instruction: str | None = None,
+) -> BaseModel | None:
+    """Async version of invoke_structured_with_retry."""
+    if llm is None:
+        return None
+    structured_llm = llm.with_structured_output(model_cls)  # type: ignore[attr-defined]
+    chain = prompt | structured_llm
+    attempt = 0
+    last_error = None
+    while attempt < max_attempts:
+        attempt += 1
+        raw = await chain.ainvoke(inputs)
+        inst = _coerce_pydantic(model_cls, raw)
+        if inst is not None:
+            return inst
+        last_error = f"Coercion failure attempt {attempt}"
+        if attempt < max_attempts and repair_instruction:
+            repair_msgs = []
+            for m in prompt.messages:  # type: ignore[attr-defined]
+                repair_msgs.append(m)
+            repair_msgs.insert(0, ("system", repair_instruction + f" Previous error: {last_error}"))
+            prompt = ChatPromptTemplate.from_messages(repair_msgs)
+            chain = prompt | structured_llm
+    return None
 
 
 # Pydantic models for describing dependencies between tasks in a SolutionPlan
@@ -122,6 +208,17 @@ def _patch_pydantic_schema_v1(schema: dict):
     """
     if '$defs' in schema:
         schema['definitions'] = schema['$defs']
+    # Some providers (e.g., Vertex AI function calling) ignore unsupported keys like
+    # 'additionalProperties'. Strip them recursively to avoid noisy warnings.
+    def _strip_keys(obj):
+        if isinstance(obj, dict):
+            obj.pop('additionalProperties', None)
+            for v in obj.values():
+                _strip_keys(v)
+        elif isinstance(obj, list):
+            for it in obj:
+                _strip_keys(it)
+    _strip_keys(schema)
 
 
 # Define the Pydantic Model
@@ -199,7 +296,14 @@ class FacultyList(BaseModel):
     
     
 class QueryClassification(BaseModel):
-    query_class: Literal["general_knowledge", "info_about_an_expert", "learning_resources_or_technical_training", "information_from_prior_work_like_papers_or_videos_or_articles", "multi_step_planning_or_problem_solving", "other"] = Field(..., description="The class of the query, chosen from the predefined categories.")
+    query_class: Literal[
+        "general_knowledge", 
+        "info_about_an_expert", 
+        "find_an_expert_for_a_topic",
+        "learning_resources_or_technical_training", 
+        "information_from_prior_work_like_papers_or_videos_or_articles", 
+        "multi_step_planning_or_problem_solving", 
+        "other"] = Field(..., description="The class of the query, chosen from the predefined categories.")
     task_summary: str = Field(..., description="A brief description of the task involved.")
 
 class DocumentPrompts:
@@ -715,6 +819,7 @@ class ExpertBiosketch(BaseModel):
     name: Optional[str] = Field(default=None, description="Expert's full name.")
     organization: Optional[str] = Field(default=None, description="Primary affiliation or organization.")
     headshot_url: Optional[str] = Field(default=None, description="URL to a headshot/photo if available.")
+    scholar_id: Optional[str] = Field(default=None, description="Google Scholar ID if available.")
     biosketch: str = Field(..., description="A concise narrative biographical sketch.")
     education_and_experience: List[str] = Field(
         default_factory=list,
@@ -736,7 +841,10 @@ class ExpertBiosketch(BaseModel):
         default_factory=list,
         description="Recent publications, software, datasets, or products. Please include the title, authors, venue, and year."
     )
-
+    all_articles: List[Any] = Field(
+        default_factory=list,
+        description="All articles found during the search."
+    )
 # -------------------------
 # Utilities and new helpers
 # -------------------------
@@ -807,8 +915,9 @@ async def fetch_recent_publications_via_scholar(
     max_items: int = 20,
     since_year: Optional[int] = None,
     locale: str = "en"
-) -> List[str]:
+) -> Tuple[Optional[str], List[str], List[Dict[str, Any]]]:
     """Use SearchAPI Google Scholar tools to fetch recent publications for a person.
+    
     Returns a list of formatted strings like "YYYY — Title — URL".
     """
     def _pick_profile(profiles: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -834,11 +943,11 @@ async def fetch_recent_publications_via_scholar(
 
     chosen = _pick_profile(profiles)
     if not isinstance(chosen, dict):
-        return []
-
+        return None, [], []
+    
     author_id = chosen.get("author_id") or chosen.get("scholar_id") or chosen.get("id")
     if not author_id:
-        return []
+        return None, [], []
 
     # 2) Fetch publications for that author
     pubs_res = await _lc_tool_call(
@@ -868,14 +977,286 @@ async def fetch_recent_publications_via_scholar(
         title = str(art.get("title") or "").strip()
         link = art.get("link") or art.get("url") or art.get("paper_url") or ""
         link = str(link).strip() if link else ""
+        # authors = ", ".join(str(a) for a in art.get("authors", []))
+        authors = str(art.get("authors") or "").strip()
+        venue = str(art.get("venue") or art.get("publication") or art.get("publication_venue") or "").strip()
         if title:
-            pretty = f"{str(year) if year else 'n.d.'} — {title}" + (f" — {link}" if link else "")
+            pretty = f"{str(year) if year else 'n.d.'} — {authors}: {title}. {venue}. " + (f" — [link]({link})" if link else "")
             items.append(pretty)
             if max_items > 0 and len(items) >= max_items:
                 break
             
         items.sort(reverse=True)  # Newest first. Since it's a stable sort, we'll sort by year, then by citation count in desc order.
-    return items
+    return (author_id, items, articles)
+
+async def fetch_publications_via_dblp(
+    name: str,
+    *,
+    similarity_threshold: float = 0.85,
+    max_items: int = 50,
+) -> Tuple[Optional[str], List[str], List[Dict[str, Any]]]:
+    """Use the DBLP MCP server to fetch publications for an author by name.
+
+    Mirrors fetch_recent_publications_via_scholar by returning:
+      (author_identifier_or_None, formatted_items, raw_publications)
+
+    Formatted items are like: "YYYY — Authors: Title. Venue. — [link](URL)"
+    """
+    try:
+        # DBLP: get publications for author with fuzzy matching (expects numeric types, not strings)
+        res = await _lc_tool_call(
+            "get_author_publications",
+            {
+                "author_name": name,
+                "similarity_threshold": float(similarity_threshold),
+                "max_results": int(max_items),
+                "include_bibtex": False,
+            },
+        )
+        pubs: List[Dict[str, Any]] = []
+        if isinstance(res, dict):
+            pubs = res.get("publications") or []
+        elif isinstance(res, list):
+            # Some adapters may return just the list
+            pubs = res
+        elif isinstance(res, str):
+            # FastMCP text content from DBLP tool; parse into structured publications
+            pubs = parse_dblp_text_publications(res)
+
+        items: List[str] = []
+        for p in pubs:
+            try:
+                year = p.get("year")
+                year_i = int(str(year)[:4]) if year is not None else None
+            except Exception:
+                year_i = None
+            title = str(p.get("title") or "").strip()
+            authors_val = p.get("authors")
+            if isinstance(authors_val, list):
+                authors = ", ".join(str(a) for a in authors_val)
+            else:
+                authors = str(authors_val or "").strip()
+            venue = str(p.get("venue") or p.get("journal") or p.get("booktitle") or p.get("publication") or "").strip()
+            # Prefer DOI link, else 'ee' (electronic edition), else 'url'
+            link = p.get("doi")
+            if link:
+                link = f"https://doi.org/{str(link).lstrip('doi:').strip()}"
+            if not link:
+                link = p.get("ee") or p.get("url") or ""
+            link = str(link).strip() if link else ""
+            if title:
+                pretty = f"{str(year_i) if year_i else 'n.d.'} — {authors}: {title}. {venue}. " + (f" — [link]({link})" if link else "")
+                items.append(pretty)
+                if max_items > 0 and len(items) >= max_items:
+                    break
+        # Sort newest-first by year
+        try:
+            items.sort(reverse=True)
+        except Exception:
+            pass
+        # DBLP tool doesn't provide a stable author id here; return None for identifier
+        return None, items, pubs
+    except Exception as e:
+        logging.warning(f"fetch_publications_via_dblp failed: {e}")
+        return None, [], []
+
+def parse_dblp_text_publications(text: str) -> List[Dict[str, Any]]:
+    """Parse plain-text DBLP tool output into a list of publication dicts.
+
+    Expected format per entry:
+      N. Title.
+         Authors: A1, A2, ...
+         Venue: Venue Name (YYYY)
+
+    Returns a list of dicts with keys: title, authors (list[str]), venue (str), year (int|None).
+    Gracefully skips incomplete entries.
+    """
+    try:
+        import re as _re
+        lines = [ln.rstrip() for ln in (text or "").splitlines()]
+        # Drop header like "Found 50 publications for author ..." and blank lines
+        # Find first numbered line
+        pubs: List[Dict[str, Any]] = []
+        i = 0
+        n = len(lines)
+        num_re = _re.compile(r"^\s*(\d+)\.\s+(.*)\s*$")
+        authors_re = _re.compile(r"^\s*Authors:\s*(.*)\s*$")
+        venue_re = _re.compile(r"^\s*Venue:\s*(.*?)(?:\s*\((\d{4})\))?\s*$")
+
+        while i < n:
+            m = num_re.match(lines[i])
+            if not m:
+                i += 1
+                continue
+            # Title line
+            title = m.group(2).strip()
+            # Title lines in sample end with a trailing period; trim it without harming abbreviations
+            if title.endswith(".") and not title.endswith(".."):
+                title = title[:-1].strip()
+
+            # Look ahead for Authors and Venue
+            i += 1
+            authors_list: List[str] = []
+            venue = ""
+            year_val: Optional[int] = None
+
+            # Consume up to the next numbered entry or end
+            while i < n and not num_re.match(lines[i]):
+                la = authors_re.match(lines[i])
+                if la:
+                    raw = la.group(1).strip()
+                    # Split by comma, keeping numeric suffixes like "Jianjun Chen 0001" intact
+                    authors_list = [a.strip() for a in raw.split(",") if a.strip()]
+                    i += 1
+                    continue
+                lv = venue_re.match(lines[i])
+                if lv:
+                    venue = (lv.group(1) or "").strip()
+                    y = lv.group(2)
+                    if y and y.isdigit():
+                        try:
+                            year_val = int(y)
+                        except Exception:
+                            year_val = None
+                    i += 1
+                    continue
+                # Skip blank or unrelated lines
+                i += 1
+
+            if title:
+                pubs.append({
+                    "title": title,
+                    "authors": authors_list,
+                    "venue": venue,
+                    "year": year_val,
+                })
+
+        return pubs
+    except Exception as e:
+        logging.warning(f"parse_dblp_text_publications failed: {e}")
+        return []
+
+class MergeChoice(BaseModel):
+    chosen_index: Optional[int] = Field(None, description="Index of the chosen candidate from 'candidates', or null if none match.")
+    rationale: str = Field(..., description="Brief reasoning for the choice.")
+
+def _normalized_title(s: str) -> str:
+    return " ".join("".join(ch.lower() if ch.isalnum() else " " for ch in (s or "")).split())
+
+async def merge_arxiv_with_dblp(
+    scholar_articles: List[Dict[str, Any]],
+    dblp_articles: List[Dict[str, Any]],
+    *,
+    max_candidates: int = 5,
+    min_similarity: float = 0.7,
+) -> Tuple[List[str], List[Dict[str, Any]]]:
+    """For each Google Scholar article that is an arXiv preprint, try to merge with a final DBLP entry.
+
+    Strategy:
+      - For each Scholar article with URL from arxiv.org, find up to N candidate DBLP entries by title similarity.
+      - Ask an LLM to choose the best candidate that represents a final publication (conference/journal), not arXiv.
+      - If chosen, replace the Scholar article's venue and URL with the DBLP venue and a final link (prefer DOI).
+      - Return updated formatted items and the mutated scholar_articles list.
+    """
+    if not scholar_articles:
+        return [], []
+
+    # Precompute normalized titles for DBLP
+    dblp_norm = [(_normalized_title(p.get("title", "")), p) for p in dblp_articles]
+
+    updated_articles: List[Dict[str, Any]] = []
+    for art in scholar_articles:
+        try:
+            art_copy = dict(art)
+            link = art_copy.get("link") or art_copy.get("url") or art_copy.get("paper_url") or ""
+            url = str(link).lower()
+            if "arxiv.org" not in url:
+                updated_articles.append(art_copy)
+                continue
+
+            title = str(art_copy.get("title") or "").strip()
+            title_n = _normalized_title(title)
+            # Score candidates by difflib ratio
+            scored = []
+            for norm_t, p in dblp_norm:
+                if not norm_t:
+                    continue
+                sim = difflib.SequenceMatcher(None, title_n, norm_t).ratio()
+                if sim >= min_similarity:
+                    scored.append((sim, p))
+            scored.sort(key=lambda x: x[0], reverse=True)
+            candidates = [p for _, p in scored[:max_candidates]]
+
+            if not candidates:
+                updated_articles.append(art_copy)
+                continue
+
+            # Prepare concise candidate summary for LLM
+            cand_view = []
+            for idx, p in enumerate(candidates):
+                cand_view.append({
+                    "index": idx,
+                    "title": p.get("title"),
+                    "venue": p.get("venue") or p.get("journal") or p.get("booktitle"),
+                    "year": p.get("year"),
+                    "doi": p.get("doi"),
+                    "ee": p.get("ee"),
+                    "url": p.get("url"),
+                    "type": p.get("type"),
+                })
+
+            llm = get_analysis_llm()
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", "You are matching an arXiv preprint to its final published version. Choose a candidate only if it is clearly the same paper published in a conference or journal (not arXiv). Prefer venues like NeurIPS, ICML, ICLR, CVPR, ACL, major journals, etc. If unsure, choose null."),
+                ("user", "ArXiv item:\nTitle: {title}\nAuthors: {authors}\nYear: {year}\nURL: {url}\n\nCandidates (from DBLP):\n{candidates}\n\nReturn JSON with fields: chosen_index (int or null) and rationale (string)."),
+            ])
+            structured = llm.with_structured_output(MergeChoice)  # type: ignore
+            resp: MergeChoice = (prompt | structured).invoke({
+                "title": art_copy.get("title"),
+                "authors": art_copy.get("authors"),
+                "year": art_copy.get("year"),
+                "url": link,
+                "candidates": json.dumps(cand_view, ensure_ascii=False, indent=2),
+            }) # type: ignore
+
+            if resp and resp.chosen_index is not None and 0 <= resp.chosen_index < len(candidates):
+                chosen = candidates[resp.chosen_index]
+                # Update venue and link to final
+                venue = chosen.get("venue") or chosen.get("journal") or chosen.get("booktitle") or ""
+                final_link = chosen.get("doi")
+                if final_link:
+                    final_link = f"https://doi.org/{str(final_link).lstrip('doi:').strip()}"
+                if not final_link:
+                    final_link = chosen.get("ee") or chosen.get("url") or link
+                art_copy["venue"] = venue
+                art_copy["publication"] = venue
+                art_copy["link"] = final_link
+                art_copy["url"] = final_link
+            updated_articles.append(art_copy)
+        except Exception:
+            updated_articles.append(art)
+
+    # Build pretty strings like Scholar fetch
+    items: List[str] = []
+    for art in updated_articles:
+        try:
+            y_raw = art.get("year") or art.get("publication_year")
+            year = int(str(y_raw)[:4]) if y_raw is not None else None
+        except Exception:
+            year = None
+        title = str(art.get("title") or "").strip()
+        link = art.get("link") or art.get("url") or art.get("paper_url") or ""
+        link = str(link).strip() if link else ""
+        authors = str(art.get("authors") or "").strip()
+        venue = str(art.get("venue") or art.get("publication") or art.get("publication_venue") or "").strip()
+        if title:
+            pretty = f"{str(year) if year else 'n.d.'} — {authors}: {title}. {venue}. " + (f" — [link]({link})" if link else "")
+            items.append(pretty)
+    try:
+        items.sort(reverse=True)
+    except Exception:
+        pass
+    return items, updated_articles
 
 async def find_headshot_via_searchapi(name: str, organization: Optional[str] = None) -> Optional[str]:
     """Use SearchAPI image tools (via LangChain) to find a likely headshot URL for the person."""
@@ -948,14 +1329,16 @@ class PeoplePrompts:
             "Return a single JSON object that strictly conforms to the ExpertBiosketch schema:\n"
             f"```json\n{schema_str}\n```"
         )
-        user_req = (
+        user_req_template = (
             "Fill fields: biosketch (narrative), education_and_experience (bullets; include leadership/management roles), "
             "major_research_projects_and_entrepreneurship (bullets), honors_and_awards (bullets), "
             "expertise_and_contributions (bullets), headshot_url (if available). "
-            "Use tools like web search as well as Google Scholar search for {name}'s profile to get the most updated information.\n\n"
-            f"Prompt:\n{prompt_text}"
+            "Use tools like web search as well as Google Scholar search to get the most updated information.\n\n"
+            "Prompt:\n{prompt_text}"
         )
-        agent_input = f"{instruction}\n\n{user_req}"
+        # Materialize the user text for agent input (not a template at this point)
+        user_text_for_agent = user_req_template.format(prompt_text=prompt_text)
+        agent_input = f"{instruction}\n\n{user_text_for_agent}"
 
         def _strip_fences(s: str) -> str:
             s = (s or "").strip()
@@ -1015,6 +1398,7 @@ class PeoplePrompts:
         )
         if agent is not None:
             try:
+                # Provide minimal context; agent_input already contains prompt_text
                 result = await agent.ainvoke({"input": agent_input, "chat_history": []})  # type: ignore
                 out = result.get("output", "") if isinstance(result, dict) else ""
                 if out.startswith("Agent stopped"):
@@ -1044,22 +1428,30 @@ class PeoplePrompts:
                 llm = get_better_llm()
                 if llm is None:
                     raise RuntimeError("No LLM available")
+                user_text = user_req_template.format(prompt_text=prompt_text)
                 fallback_prompt = ChatPromptTemplate.from_messages([
                     ("system", instruction),
-                    ("user", user_req),
+                    ("user", user_text),
                 ])
-                structured_llm = llm.with_structured_output(ExpertBiosketch)  # type: ignore
-                chain = fallback_prompt | structured_llm
-                eb = cast(ExpertBiosketch, await chain.ainvoke({}))
+                inst = await ainvoke_structured_with_retry(
+                    llm=llm,
+                    prompt=fallback_prompt,
+                    model_cls=ExpertBiosketch,
+                    inputs={},
+                    max_attempts=2,
+                    repair_instruction="If the previous JSON did not match the ExpertBiosketch schema, correct the JSON to match the schema exactly and return only JSON."
+                )
+                if inst is None:
+                    raise RuntimeError("Structured LLM did not return a valid ExpertBiosketch after retries")
+                eb = cast(ExpertBiosketch, inst)
                 # Normalize lists and ensure biosketch
-                if eb is not None:
-                    eb.education_and_experience = _to_str_list(eb.education_and_experience)
-                    eb.major_research_projects_and_entrepreneurship = _to_str_list(eb.major_research_projects_and_entrepreneurship)
-                    eb.honors_and_awards = _to_str_list(eb.honors_and_awards)
-                    eb.expertise_and_contributions = _to_str_list(eb.expertise_and_contributions)
-                    eb.recent_publications_or_products = _to_str_list(getattr(eb, "recent_publications_or_products", []))
-                    if eb.biosketch is None:
-                        eb.biosketch = prompt_text.strip()
+                eb.education_and_experience = _to_str_list(getattr(eb, "education_and_experience", []))
+                eb.major_research_projects_and_entrepreneurship = _to_str_list(getattr(eb, "major_research_projects_and_entrepreneurship", []))
+                eb.honors_and_awards = _to_str_list(getattr(eb, "honors_and_awards", []))
+                eb.expertise_and_contributions = _to_str_list(getattr(eb, "expertise_and_contributions", []))
+                eb.recent_publications_or_products = _to_str_list(getattr(eb, "recent_publications_or_products", []))
+                if not (getattr(eb, "biosketch", "") or "").strip():
+                    eb.biosketch = prompt_text.strip()
             except Exception as e:
                 logging.error(f"Structured LLM biosketch fallback failed: {e}")
                 return ExpertBiosketch(
@@ -1091,23 +1483,41 @@ class PeoplePrompts:
         # Publications enrichment
         try:
             current_year = datetime.utcnow().year
-            pubs = await fetch_recent_publications_via_scholar(
+            (scholar_id, pubs, articles) = await fetch_recent_publications_via_scholar(
                 name=(eb.name or '').strip() or prompt_text.strip(),
                 organization=(eb.organization or '').strip() or None,
                 max_items=20,
                 since_year=current_year - 1,
             )
-            if pubs:
-                existing = eb.recent_publications_or_products or []
-                merged = pubs + [p for p in existing if p not in pubs]
-                eb.recent_publications_or_products = merged[:20]
+            if scholar_id:
+                eb.scholar_id = scholar_id
+            # Fetch DBLP publications and merge arXiv items to final venues when possible
+            try:
+                (_, dblp_items, dblp_articles) = await fetch_publications_via_dblp(
+                    name=(eb.name or '').strip() or prompt_text.strip(),
+                    similarity_threshold=0.85,
+                    max_items=50,
+                )
+            except Exception:
+                dblp_items, dblp_articles = [], []
+
+            try:
+                 merged_pretty, merged_articles = await merge_arxiv_with_dblp(articles or [], dblp_articles)
+            except Exception:
+                merged_pretty, merged_articles = pubs, (articles or [])
+
+            eb.all_articles = merged_articles  # type: ignore
+            if merged_pretty:
+                existing = []
+                merged_list = merged_pretty + [p for p in existing if p not in merged_pretty]
+                eb.recent_publications_or_products = merged_list[:20]
         except Exception as e:
             logging.warning(f"Biosketch publications enrichment failed: {e}")
 
         # Headshot enrichment
         try:
             if getattr(eb, 'headshot_url', None) and getattr(eb, 'headshot_url', "").startswith("data://"):
-                pass#eb.headshot_url = None
+                eb.headshot_url = None
             if not _valid_image_url(getattr(eb, 'headshot_url', None)):
                 cand = await find_headshot_via_searchapi(
                     name=(eb.name or '').strip() or prompt_text.strip(),
@@ -1119,6 +1529,168 @@ class PeoplePrompts:
             logging.debug(f"Biosketch headshot enrichment skipped due to error: {e}")
 
         return eb
+    
+    @classmethod
+    def persist_biosketch_to_graph(cls, graph: GraphAccessor, sketch: ExpertBiosketch) -> int:
+        """Persist (upsert) an ExpertBiosketch to the DB using GraphAccessor.
+
+        Upsert semantics:
+        - Profile: Uses `add_entity_with_json` which now upserts on (entity_type, entity_url) so that a
+            second persistence of the same Google Scholar profile URL updates JSON instead of creating a duplicate.
+        - Papers: Uses `add_paper_full` which upserts on paper URL, updating metadata/JSON instead of duplicating.
+        - Authors (if added elsewhere): `add_person` now prefers uniqueness by Google Scholar ID embedded in the URL.
+
+        Steps:
+            1) Upsert a google_scholar_profile entity with the full biosketch JSON.
+            2) For each article in all_articles, upsert a paper entity (must have URL).
+            3) Link profile -> paper with link_type='author' (link insert is idempotent via ON CONFLICT DO NOTHING).
+            4) Annotate profile with entity_tags: name, biosketch, headshot_url (if present), and each item from
+                    list fields (education_and_experience, major_research_projects_and_entrepreneurship, honors_and_awards,
+                    expertise_and_contributions) as separate tag instances.
+
+        Returns: profile entity_id.
+        """
+        # 1) Create google_scholar_profile core entity with JSON dump of the biosketch
+        scholar_url: Optional[str] = None
+        if getattr(sketch, "scholar_id", None):
+            scholar_url = f"https://scholar.google.com/citations?user={sketch.scholar_id}&hl=en&oi=ao"
+
+        profile_json = sketch.model_dump()  # full JSON
+        profile_name = (sketch.name or "").strip() or "Google Scholar Profile"
+        profile_desc = (sketch.organization or "").strip() or None
+
+        profile_id = graph.add_entity_with_json(
+            entity_type="google_scholar_profile",
+            name=profile_name,
+            description=profile_desc,
+            json_content=profile_json,
+            url=scholar_url,
+        )
+
+        # 4) Tag the profile
+        try:
+            if sketch.name:
+                graph.add_or_update_tag(profile_id, "name", sketch.name, add_another=False)
+            if getattr(sketch, "biosketch", None):
+                graph.add_or_update_tag(profile_id, "biosketch", sketch.biosketch, add_another=False)
+            if getattr(sketch, "headshot_url", None):
+                graph.add_or_update_tag(profile_id, "headshot_url", sketch.headshot_url or "", add_another=False)
+
+            # Lists: add each item as its own tag instance
+            
+            # Replace all educational experiences with updated ones, since there will be inexact matches
+            # TODO: Consider asking the LLM to see if these have notably changed?
+            graph.remove_tag(profile_id, "education")
+            for item in (sketch.education_and_experience or []):
+                if item and str(item).strip():
+                    graph.add_or_update_tag(profile_id, "education", str(item).strip(), add_another=True)
+
+            # TODO: Consider asking the LLM to see if these have notably changed?
+            graph.remove_tag(profile_id, "research_projects")
+            for item in (sketch.major_research_projects_and_entrepreneurship or []):
+                if item and str(item).strip():
+                    graph.add_or_update_tag(profile_id, "research_projects", str(item).strip(), add_another=True)
+
+            # TODO: Consider asking the LLM to see if these have notably changed?
+            graph.remove_tag(profile_id, "awards")
+            for item in (sketch.honors_and_awards or []):
+                if item and str(item).strip():
+                    graph.add_or_update_tag(profile_id, "awards", str(item).strip(), add_another=True)
+
+            graph.remove_tag(profile_id, "expertise")
+            for item in (sketch.expertise_and_contributions or []):
+                if item and str(item).strip():
+                    graph.add_or_update_tag(profile_id, "expertise", str(item).strip(), add_another=True)
+        except Exception as e:
+            logging.warning(f"Failed tagging scholar profile {profile_id}: {e}")
+
+        # 2) Create paper entities and 3) link them
+        for art in getattr(sketch, "all_articles", []) or []:
+            try:
+                if not isinstance(art, dict):
+                    continue
+                title = str(art.get("title") or "").strip()
+                if not title:
+                    continue
+                link = art.get("link") or art.get("url") or art.get("paper_url") or ""
+                url = str(link).strip() if link else ""
+                if not url:
+                    # Require URL as per requirement "ensure URL is stored"; skip if missing.
+                    continue
+                # Normalize authors and venue/year
+                authors_val = art.get("authors")
+                if isinstance(authors_val, list):
+                    authors = ", ".join(str(a) for a in authors_val)
+                else:
+                    authors = str(authors_val or "").strip()
+                venue = str(art.get("venue") or art.get("publication") or art.get("publication_venue") or "").strip()
+                try:
+                    year = art.get("year")
+                    year = int(str(year)[:4]) if year is not None else None
+                except Exception:
+                    year = None
+
+                paper_id = graph.add_paper_full(
+                    title=title,
+                    url=url,
+                    authors=authors or None,
+                    venue=venue or None,
+                    year=year,
+                    extra_json=art,
+                )
+                if paper_id:
+                    graph.add_entity_link(profile_id, paper_id, "author")
+            except Exception as e:
+                logging.warning(f"Failed to persist article for profile {profile_id}: {e}")
+
+        return profile_id
+    
+    @classmethod
+    def format_biosketch_as_markdown(cls, sketch: ExpertBiosketch) -> str:
+        """
+        Formats the ExpertBiosketch as a Markdown string.
+        """
+        lines = []
+        if sketch.name:
+            lines.append(f"## [{sketch.name}](https://scholar.google.com/citations?user={sketch.scholar_id}&hl=en&oi=ao)\n")
+        if sketch.organization:
+            lines.append(f"**Affiliation:** {sketch.organization}\n")
+        if sketch.headshot_url and _valid_image_url(sketch.headshot_url):
+            lines.append(f"![Headshot]({sketch.headshot_url})\n")
+        lines.append(f"### Biosketch\n{sketch.biosketch}\n")
+        
+        if sketch.education_and_experience:
+            lines.append("### Education and Experience")
+            for item in sketch.education_and_experience:
+                lines.append(f"- {item}")
+            lines.append("")
+
+        if sketch.major_research_projects_and_entrepreneurship:
+            lines.append("### Major Projects and Activities")
+            for item in sketch.major_research_projects_and_entrepreneurship:
+                lines.append(f"- {item}")
+            lines.append("")
+
+        if sketch.honors_and_awards:
+            lines.append("### Honors and Awards")
+            for item in sketch.honors_and_awards:
+                lines.append(f"- {item}")
+            lines.append("")
+
+        if sketch.expertise_and_contributions:
+            lines.append("### Expertise and Contributions")
+            for item in sketch.expertise_and_contributions:
+                lines.append(f"- {item}")
+            lines.append("")
+
+        if sketch.recent_publications_or_products:
+            lines.append("### Recent Publications or Products")
+            for item in sketch.recent_publications_or_products:
+                lines.append(f"- {item}")
+            lines.append("")
+
+        return "\n".join(lines)
+
 
     @classmethod
     def get_person_publications(cls, graph_accessor: GraphAccessor, name: str, organization: str, scholar_id: str) -> List[dict]:
@@ -1141,15 +1713,21 @@ class PeoplePrompts:
         # Use GraphAccessor to load author data by scholar_id, optionally filtering by name and organization
         author_data = graph_accessor.get_author_by_scholar_id(scholar_id)
         if not author_data or "articles" not in author_data:
-            # TODO: if pubs is empty we need to fetch
+            # Fetch profile if we don't have cached articles
             profile = scholar_search_gscholar_by_id(graph_accessor, scholar_id, [])
-
             if profile:
-                return profile.get("articles", [])
+                if isinstance(profile, dict):
+                    return profile.get("articles", []) or []
+                if isinstance(profile, list):
+                    return profile
+                # Unknown type; fallback empty
+                return []
         if author_data:
-            return author_data.get("articles", [])
-        else:
-            return []
+            if isinstance(author_data, dict):
+                return author_data.get("articles", []) or []
+            if isinstance(author_data, list):
+                return author_data
+        return []
     
     @classmethod
     def get_person_profile(cls, name: str, organization: str) -> dict:
@@ -1166,6 +1744,13 @@ class PeoplePrompts:
         from prompts.llm_prompts import PersonOfInterest
 
         llm = get_better_llm()
+        if llm is None:
+            # Conservative fallback if LLM unavailable
+            return {
+                "biosketch": f"{name} at {organization}. (LLM unavailable; minimal profile.)",
+                "expertise": "",
+                "projects": ""
+            }
         prompt = ChatPromptTemplate.from_messages([
             ("system", "You are an expert at summarizing academic and professional profiles. Respond with a structured output matching the PersonOfInterest schema."),
             ("user", 
@@ -1177,18 +1762,26 @@ class PeoplePrompts:
             )
         ])
         # Use structured output
-        structured_llm = llm.with_structured_output(PersonOfInterest)
-        chain = prompt | structured_llm
-        result = chain.invoke({})
-        # Return as dict with required keys
+        inst = invoke_structured_with_retry(
+            llm=llm,
+            prompt=prompt,
+            model_cls=PersonOfInterest,
+            inputs={},
+            max_attempts=2,
+            repair_instruction="If your previous JSON did not match the PersonOfInterest schema, correct it and return only valid JSON."
+        )
+        if inst is None:
+            poi = PersonOfInterest(biosketch=f"{name} at {organization}.", expertise_and_research="", known_projects="")
+        else:
+            poi = cast(PersonOfInterest, inst)
         return {
-            "biosketch": result.biosketch,
-            "expertise": result.expertise_and_research,
-            "projects": result.known_projects
+            "biosketch": poi.biosketch,
+            "expertise": poi.expertise_and_research,
+            "projects": poi.known_projects,
         }
         
     @classmethod
-    def classify_query_and_summarize(query: str) -> QueryClassification:
+    def classify_query_and_summarize(cls, query: str) -> QueryClassification:
         # Use a fast LLM (e.g., Gemini Flash or GPT-3.5) with a structured output
         from enrichment.llms import get_analysis_llm
         from langchain.prompts import ChatPromptTemplate
@@ -1197,9 +1790,24 @@ class PeoplePrompts:
             ("system", "Classify the following query and summarize the task. Respond with a JSON object matching the QueryClassification schema."),
             ("user", f"Query: {query}")
         ])
-        llm = get_analysis_llm().with_structured_output(QueryClassification)
-        result = (prompt | llm).invoke({"query": query})
-        return result
+        base_llm = get_analysis_llm()
+        if base_llm is None:
+            # Fallback classification when analysis LLM unavailable
+            return QueryClassification(
+                query_class="general_knowledge",
+                task_summary=f"{query[:200]}"
+            )
+        inst = invoke_structured_with_retry(
+            llm=base_llm,
+            prompt=prompt,
+            model_cls=QueryClassification,
+            inputs={"query": query},
+            max_attempts=2,
+            repair_instruction="If your previous JSON did not match the QueryClassification schema, correct it and return only valid JSON."
+        )
+        if inst is None:
+            return QueryClassification(query_class="general_knowledge", task_summary=f"{query[:200]}")
+        return cast(QueryClassification, inst)
 
 class QueryPrompts:
     @classmethod
@@ -1240,9 +1848,20 @@ class QueryPrompts:
             ("system", "Classify the following query and summarize the task. Respond with a JSON object matching the QueryClassification schema."),
             ("user", f"Query: {query}")
         ])
-        llm = get_analysis_llm().with_structured_output(QueryClassification)
-        result = (prompt | llm).invoke({"query": query})
-        return result
+        base = get_analysis_llm()
+        if base is None:
+            return QueryClassification(query_class="general_knowledge", task_summary=query[:200])
+        inst = invoke_structured_with_retry(
+            llm=base,
+            prompt=prompt,
+            model_cls=QueryClassification,
+            inputs={"query": query},
+            max_attempts=2,
+            repair_instruction="If your previous JSON did not match the QueryClassification schema, correct it and return only valid JSON."
+        )
+        if inst is None:
+            return QueryClassification(query_class="general_knowledge", task_summary=query[:200])
+        return cast(QueryClassification, inst)
 
 
 class PlanningPrompts:
@@ -1258,6 +1877,8 @@ class PlanningPrompts:
             SolutionPlan: A Pydantic object containing a list of structured tasks.
         """
         llm = get_better_llm()
+        if llm is None:
+            return SolutionPlan(tasks=[])
 
         prompt = ChatPromptTemplate.from_messages([
             ("system",
@@ -1271,11 +1892,15 @@ class PlanningPrompts:
              "Request: \"{user_request}\"")
         ])
 
-        structured_llm = llm.with_structured_output(SolutionPlan)
-        chain = prompt | structured_llm
-
-        result = chain.invoke({"user_request": user_request})
-        return result
+        inst = invoke_structured_with_retry(
+            llm=llm,
+            prompt=prompt,
+            model_cls=SolutionPlan,
+            inputs={"user_request": user_request},
+            max_attempts=2,
+            repair_instruction="If your previous JSON did not match the SolutionPlan schema, correct it and return only valid JSON."
+        )
+        return cast(SolutionPlan, inst) if inst is not None else SolutionPlan(tasks=[])
 
     @classmethod
     def determine_task_dependencies(cls, solution_plan: SolutionPlan) -> TaskDependencyList:
@@ -1289,6 +1914,8 @@ class PlanningPrompts:
             TaskDependencyList: A Pydantic object containing the list of identified dependencies.
         """
         llm = get_better_llm()
+        if llm is None:
+            return TaskDependencyList(dependencies=[])
 
         # Convert the plan to a string representation for the prompt
         plan_str = ""
@@ -1317,11 +1944,15 @@ class PlanningPrompts:
              "{solution_plan_str}")
         ])
 
-        structured_llm = llm.with_structured_output(TaskDependencyList)
-        chain = prompt | structured_llm
-
-        result = chain.invoke({"solution_plan_str": plan_str})
-        return result
+        inst = invoke_structured_with_retry(
+            llm=llm,
+            prompt=prompt,
+            model_cls=TaskDependencyList,
+            inputs={"solution_plan_str": plan_str},
+            max_attempts=2,
+            repair_instruction="If your previous JSON did not match the TaskDependencyList schema, correct it and return only valid JSON."
+        )
+        return cast(TaskDependencyList, inst) if inst is not None else TaskDependencyList(dependencies=[])
     
     @classmethod
     def build_flesh_out_prompt(
@@ -1445,9 +2076,17 @@ class PlanningPrompts:
                 ("user", "Question about papers/articles:\n{question}")
             ])
 
-            structured_llm = llm.with_structured_output(PaperQuestionSpec)  # type: ignore
-            chain = prompt | structured_llm
-            spec: PaperQuestionSpec = chain.invoke({"question": user_request})
+            inst = invoke_structured_with_retry(
+                llm=llm,
+                prompt=prompt,
+                model_cls=PaperQuestionSpec,
+                inputs={"question": user_request},
+                max_attempts=2,
+                repair_instruction="If your previous JSON did not match the PaperQuestionSpec schema, correct it and return only valid JSON."
+            )
+            if inst is None:
+                raise ValueError("Unexpected return from structured_llm")
+            spec = cast(PaperQuestionSpec, inst)
 
             # Derive outputs_schema if missing
             if not (spec.outputs_schema or "").strip():
@@ -1508,8 +2147,16 @@ class PlanningPrompts:
             if search_tool_name:
                 try:
                     search_args = {"query": query, "limit": 5}
-                    # FIX: await invoke
-                    search_results = await mcp_client.invoke(search_tool_name, search_args)
+                    # Attempt generic invoke; fallback to execute_tool or empty list
+                    search_fn = getattr(mcp_client, "invoke", None)
+                    if callable(search_fn):  # type: ignore[attr-defined]
+                        search_results = await search_fn(search_tool_name, search_args)  # type: ignore
+                    else:
+                        exec_fn = getattr(mcp_client, "execute_tool", None)
+                        if callable(exec_fn):
+                            search_results = await exec_fn(search_tool_name, search_args)  # type: ignore
+                        else:
+                            search_results = []
                     items = []
                     if isinstance(search_results, dict) and "results" in search_results:
                         items = search_results["results"]
@@ -1542,8 +2189,15 @@ class PlanningPrompts:
 
             try:
                 analyzer_args = {"urls": [paper_url], "outputs": outputs_spec}
-                # FIX: await invoke
-                analyzer_res = await mcp_client.invoke("index_papers", analyzer_args)
+                index_fn = getattr(mcp_client, "invoke", None)
+                if callable(index_fn):  # type: ignore[attr-defined]
+                    analyzer_res = await index_fn("index_papers", analyzer_args)  # type: ignore
+                else:
+                    exec_fn = getattr(mcp_client, "execute_tool", None)
+                    if callable(exec_fn):
+                        analyzer_res = await exec_fn("index_papers", analyzer_args)  # type: ignore
+                    else:
+                        analyzer_res = {}
                 url_map = analyzer_res.get("results", analyzer_res) if isinstance(analyzer_res, dict) else analyzer_res
                 task_key = f"task_{idx}"
                 if isinstance(url_map, dict) and paper_url in url_map:
@@ -1687,12 +2341,21 @@ class ReviewPrompts:
                  "(include desired structure, key elements, and any constraints).")
             ])
 
-            structured_llm = llm.with_structured_output(AnswerResponsiveness)  # type: ignore
-            result: AnswerResponsiveness = (prompt | structured_llm).invoke({
-                "request": request,
-                "answer": answer
-            })
-            return result
+            inst = invoke_structured_with_retry(
+                llm=llm,
+                prompt=prompt,
+                model_cls=AnswerResponsiveness,
+                inputs={"request": request, "answer": answer},
+                max_attempts=2,
+                repair_instruction="If your previous JSON did not match the AnswerResponsiveness schema, correct it and return only valid JSON."
+            )
+            if inst is None:
+                return AnswerResponsiveness(
+                    fully_responsive=False,
+                    revised_prompt=f"Revise for completeness: {request}",
+                    rationale="Could not parse model output."
+                )
+            return cast(AnswerResponsiveness, inst)
         except Exception as e:
             # Safe fallback on any error
             return AnswerResponsiveness(

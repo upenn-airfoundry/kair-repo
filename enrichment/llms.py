@@ -37,6 +37,11 @@ mcp_client = MultiServerMCPClient(
             "url": "http://localhost:8002/mcp",
             "transport": "streamable_http",
             
+        },
+        "DBLP": {
+            # Make sure you start your server on port 8003
+            "url": "http://localhost:8003/mcp",
+            "transport": "streamable_http",
         }
     })
 
@@ -135,8 +140,8 @@ def _build_query_embeddings():
 
 
 def qwen_doc_embedding(text):
-    return [[0.0] * 4096 for _ in text] if isinstance(text, list) else [0.0] * 4096
-
+    #return [[0.0] * 4096 for _ in text] if isinstance(text, list) else [0.0] * 4096
+    return None
 
 
 

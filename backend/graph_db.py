@@ -145,6 +145,150 @@ class GraphAccessor:
             # throw the exception again
             raise e
         return paper_id
+
+    def add_entity_with_json(self, *, entity_type: str, name: Optional[str] = None,
+                              description: Optional[str] = None, json_content: Any = None,
+                              url: Optional[str] = None) -> int:
+        """Upsert an entity with arbitrary type and optional JSON payload.
+
+        If a URL is supplied, we first attempt to find an existing entity with the same
+        (entity_type, entity_url). If found, update its name, description, and JSON content
+        (replacing the prior JSON) and return the existing entity_id. Otherwise insert.
+
+        Returns the entity_id (existing or newly created).
+        """
+        try:
+            with self.conn.cursor() as cur:
+                existing_id: Optional[int] = None
+                if url:
+                    cur.execute(
+                        f"SELECT entity_id FROM {self.schema}.entities WHERE entity_type = %s AND entity_url = %s LIMIT 1;",
+                        (entity_type, url)
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        existing_id = int(row[0])
+                if existing_id is not None:
+                    # Update existing row
+                    cur.execute(
+                        f"""
+                        UPDATE {self.schema}.entities
+                        SET entity_name = %s,
+                            entity_detail = %s,
+                            entity_json = %s
+                        WHERE entity_id = %s;
+                        """,
+                        (
+                            name,
+                            description,
+                            json.dumps(json_content) if json_content is not None else None,
+                            existing_id,
+                        ),
+                    )
+                    self.conn.commit()
+                    return existing_id
+                # Insert new
+                cur.execute(
+                    f"""
+                    INSERT INTO {self.schema}.entities (entity_type, entity_name, entity_detail, entity_json, entity_url)
+                    VALUES (%s, %s, %s, %s, %s)
+                    RETURNING entity_id;
+                    """,
+                    (
+                        entity_type,
+                        name,
+                        description,
+                        json.dumps(json_content) if json_content is not None else None,
+                        url,
+                    ),
+                )
+                new_id = cur.fetchone()[0]  # type: ignore
+            self.conn.commit()
+            return int(new_id)
+        except Exception as e:
+            logging.error(f"Error upserting entity with JSON: {e}")
+            self.conn.rollback()
+            raise e
+
+    def add_paper_full(self, *, title: str, url: str,
+                        authors: Optional[str] = None, venue: Optional[str] = None,
+                        year: Optional[int] = None, extra_json: Optional[dict] = None) -> int:
+        """Upsert a paper entity (type 'paper') by URL.
+
+        If a paper with the same URL exists, update its title and merge JSON payload
+        (existing keys overwritten by new ones). Return existing entity_id. Otherwise insert.
+        """
+        try:
+            payload = {
+                "title": title,
+                "url": url,
+                "authors": authors,
+                "venue": venue,
+                "year": year,
+                **(extra_json or {}),
+            }
+            with self.conn.cursor() as cur:
+                existing_id: Optional[int] = None
+                cur.execute(
+                    f"SELECT entity_id, entity_json FROM {self.schema}.entities WHERE entity_type = 'paper' AND entity_url = %s LIMIT 1;",
+                    (url,)
+                )
+                row = cur.fetchone()
+                if row:
+                    existing_id = int(row[0])
+                    old_json = row[1]
+                    try:
+                        if isinstance(old_json, str):
+                            old_json = json.loads(old_json)
+                    except Exception:
+                        old_json = {}
+                    if not isinstance(old_json, dict):
+                        old_json = {}
+                    merged = {**old_json, **payload}
+                    cur.execute(
+                        f"""
+                        UPDATE {self.schema}.entities
+                        SET entity_name = %s,
+                            entity_json = %s
+                        WHERE entity_id = %s;
+                        """,
+                        (title, json.dumps(merged), existing_id),
+                    )
+                    self.conn.commit()
+                    return existing_id
+                # Insert new paper
+                cur.execute(
+                    f"""
+                    INSERT INTO {self.schema}.entities (entity_type, entity_name, entity_url, entity_json)
+                    VALUES ('paper', %s, %s, %s)
+                    RETURNING entity_id;
+                    """,
+                    (title, url, json.dumps(payload)),
+                )
+                new_id = cur.fetchone()[0]  # type: ignore
+            self.conn.commit()
+            return int(new_id)
+        except Exception as e:
+            logging.error(f"Error upserting paper (full): {e}")
+            self.conn.rollback()
+            raise e
+
+    def add_entity_link(self, from_id: int, to_id: int, link_type: str) -> None:
+        """Insert a generic link between two entities."""
+        try:
+            self.execute(
+                f"""
+                INSERT INTO {self.schema}.entity_link (from_id, to_id, link_type)
+                VALUES (%s, %s, %s)
+                ON CONFLICT DO NOTHING;
+                """,
+                (from_id, to_id, link_type)
+            )
+            self.conn.commit()
+        except Exception as e:
+            logging.error(f"Error adding entity link: {e}")
+            self.conn.rollback()
+            raise e
     
     def add_json(self, name: str, description: str, json_content: Any, url: Optional[str] = None) -> int:
         """
@@ -579,28 +723,58 @@ class GraphAccessor:
 
         Depending on whether add_another is true: if the tag already exists, it will either update the (first) tag value
         or add another instance of the tag with the new value.
+        Additional safeguard: WILL NOT create a duplicate instance if an identical (tag_name, tag_value)
+        already exists for this entity (in any instance). It simply returns that existing instance index.
         """
         try:
             with self.conn.cursor() as cur:
                 # Check if the tag already exists
                 new_tag_instance = 1
+                # First see if exact (name,value) already present in ANY instance
+                cur.execute(
+                    f"SELECT entity_tag_instance FROM {self.schema}.entity_tags WHERE entity_id=%s AND tag_name=%s AND tag_value=%s ORDER BY entity_tag_instance ASC LIMIT 1;",
+                    (entity_id, tag_name, tag_value)
+                )
+                existing_same = cur.fetchone()
+                if existing_same is not None:
+                    # Duplicate value exists; do not add a new row. Optionally update value if not add_another.
+                    if not add_another:
+                        # Ensure first instance reflects latest value (keep embeddings if present)
+                        cur.execute(
+                            f"UPDATE {self.schema}.entity_tags SET tag_value=%s WHERE entity_id=%s AND tag_name=%s AND entity_tag_instance=%s;",
+                            (tag_value, entity_id, tag_name, existing_same[0])
+                        )
+                    self.conn.commit()
+                    return existing_same[0]
+                # Otherwise proceed with original logic: check primary instance (instance 1) existence
                 cur.execute(f"SELECT tag_value FROM {self.schema}.entity_tags WHERE entity_id = %s AND tag_name = %s and entity_tag_instance = 1;", (entity_id, tag_name))
                 the_tag = cur.fetchone()
                 if the_tag is None:
                     from enrichment.llms import gemini_doc_embedding, qwen_doc_embedding
                     if COMPUTE_OPENAI and openai_embed is None:
                         openai_embed = self.generate_embedding(tag_value)
-                    else:
-                        openai_embed = None
                     if COMPUTE_GEMINI and gemini_embed is None:  
-                        gemini_embed = gemini_doc_embedding(tag_value)
-                    else:
-                        gemini_embed = None
+                        try:
+                            g_val = gemini_doc_embedding(tag_value)
+                            if isinstance(g_val, list) and g_val and isinstance(g_val[0], list):
+                                gemini_embed = g_val[0]
+                            else:
+                                gemini_embed = g_val  # type: ignore
+                        except Exception:
+                            gemini_embed = None
                     if COMPUTE_QWEN and qwen_embed is None:
-                        qwen_embed = qwen_doc_embedding(tag_value)
-                    else:
-                        qwen_embed = None
-                    cur.execute(f"INSERT INTO {self.schema}.entity_tags (entity_id, tag_name, tag_value, tag_embed, gem_embed, qwen_embed) VALUES (%s, %s, %s, %s);", (entity_id, tag_name, tag_value, openai_embed, gemini_embed, qwen_embed))
+                        try:
+                            q_val = qwen_doc_embedding(tag_value)
+                            if isinstance(q_val, list) and q_val and isinstance(q_val[0], list):
+                                qwen_embed = q_val[0]
+                            else:
+                                qwen_embed = q_val  # type: ignore
+                        except Exception:
+                            qwen_embed = None
+                    cur.execute(
+                        f"INSERT INTO {self.schema}.entity_tags (entity_id, tag_name, tag_value, tag_embed, gem_embed, qwen_embed) VALUES (%s, %s, %s, %s, %s, %s);",
+                        (entity_id, tag_name, tag_value, openai_embed, gemini_embed, qwen_embed)
+                    )
                 elif not add_another:
                     # Update the tag if it already exists
                     cur.execute(f"UPDATE {self.schema}.entity_tags SET tag_value = %s WHERE entity_id = %s AND tag_name = %s and entity_tag_instance = 1;", (tag_value, entity_id, tag_name))
@@ -609,13 +783,35 @@ class GraphAccessor:
                     cur.execute("SELECT MAX(entity_tag_instance) FROM entity_tags WHERE entity_id = %s AND tag_name = %s;", (entity_id, tag_name))
                     existing_tag_instance = cur.fetchone()[0] # type: ignore
                     new_tag_instance = existing_tag_instance + 1 if existing_tag_instance is not None else 1
-                    cur.execute("INSERT INTO entity_tags (entity_id, tag_name, tag_value, tag_embed, entity_tag_instance) VALUES (%s, %s, %s, %s, %s);", (entity_id, tag_name, tag_value, tag_embed, new_tag_instance))
+                    cur.execute(
+                        "INSERT INTO entity_tags (entity_id, tag_name, tag_value, tag_embed, gem_embed, qwen_embed, entity_tag_instance) VALUES (%s, %s, %s, %s, %s, %s, %s);",
+                        (entity_id, tag_name, tag_value, openai_embed, gemini_embed, qwen_embed, new_tag_instance)
+                    )
             self.conn.commit()
             return new_tag_instance
         except Exception as e:
             logging.error(f"Error adding tag: {e}")
             self.conn.rollback()
             # throw the exception again
+            raise e
+
+    def remove_tag(self, entity_id: int, tag_name: str) -> int:
+        """Remove all tag rows for a given entity and tag name.
+
+        Returns the number of rows deleted.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    f"DELETE FROM {self.schema}.entity_tags WHERE entity_id = %s AND tag_name = %s;",
+                    (entity_id, tag_name)
+                )
+                deleted = cur.rowcount if hasattr(cur, "rowcount") else 0
+            self.conn.commit()
+            return int(deleted)
+        except Exception as e:
+            logging.error(f"Error removing tag '{tag_name}' from entity {entity_id}: {e}")
+            self.conn.rollback()
             raise e
             
 
@@ -2268,6 +2464,76 @@ class GraphAccessor:
             logging.error(f"Error fetching entities for task: {e}")
             return []
 
+    def get_entities_for_task(self, task_id: int) -> List[dict]:
+        """
+        Retrieve all entities for a task, ordered by feedback rating.
+
+        Args:
+            task_id (int): The ID of the task.
+
+        Returns:
+            List[dict]: A list of entities with their details and ratings.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT e.entity_id, e.entity_type, e.entity_name, e.entity_detail, e.entity_json, e.entity_url, te.feedback_rating
+                    FROM entities e
+                    JOIN task_entities te ON e.entity_id = te.entity_id
+                    WHERE te.task_id = %s
+                    ORDER BY te.feedback_rating DESC;
+                    """,
+                    (task_id,)
+                )
+                return [{"id": r[0], "type": r[1], "name": r[2], "detail": r[3], "json": r[4], "url": r[5], "rating": r[6]} for r in cur.fetchall()]
+                
+        except Exception as e:
+            logging.error(f"Error fetching entities for task: {e}")
+            return []
+
+    def get_entities_for_tasks(self, task_ids: List[int]) -> Dict[int, List[dict]]:
+        """
+        Retrieve all entities for a list of tasks, ordered by feedback rating.
+
+        Args:
+            task_ids (List[int]): A list of task IDs.
+
+        Returns:
+            Dict[int, List[dict]]: A dictionary mapping task IDs to their entities.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT e.entity_id, e.entity_type, e.entity_name, e.entity_detail, e.entity_json, e.entity_url, te.feedback_rating
+                    FROM entities e
+                    JOIN task_entities te ON e.entity_id = te.entity_id
+                    WHERE te.task_id IN %s
+                    ORDER BY te.feedback_rating DESC;
+                    """,
+                    (tuple(task_ids),)
+                )
+                entities = {}
+                for r in cur.fetchall():
+                    task_id = r[0]
+                    entity = {
+                        "id": r[1],
+                        "type": r[2],
+                        "name": r[3],
+                        "detail": r[4],
+                        "json": r[5],
+                        "url": r[6],
+                        "rating": r[7]
+                    }
+                    entities.setdefault(task_id, []).append(entity)
+                return entities
+
+        except Exception as e:
+            logging.error(f"Error fetching entities for tasks: {e}")
+            return {}
+
+        
     def find_most_related_task_for_user(self, user_id: int, description: str) -> Optional[dict]:
         """
         Find the most similar task for a user across all their projects.
