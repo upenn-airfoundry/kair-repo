@@ -40,4 +40,5 @@ cloud-sql-python-connector
 fastmcp
 scikit-learn
 typing-extensions
+python-markdown
 

@@ -101,6 +101,11 @@ export default function ChatInput({ addMessage, projectId, onRefreshRequest, sel
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isHelperOpen, setIsHelperOpen] = useState(false);
+  const [helperChoice, setHelperChoice] = useState<
+    'find_expert' | 'learn_expert' | 'learn_resources' | 'summarize_url' | 'general_question'
+  >('find_expert');
+  const [helperText, setHelperText] = useState('');
   const secureFetch = useSecureFetch(); // Get the secure fetch function
   const mdComponents = useMarkdownComponents();
 
@@ -299,6 +304,35 @@ export default function ChatInput({ addMessage, projectId, onRefreshRequest, sel
     }
   };
 
+  // Helper: Build a prompt from radio choice + text
+  const generateHelperPrompt = (choice: typeof helperChoice, text: string): string => {
+    const t = text.trim();
+    switch (choice) {
+      case 'find_expert':
+        return t ? `Find me experts in ${t}. Explain briefly why each expert is a fit and include links to their profiles.`
+                 : 'Find me experts in <area>. Explain briefly why each expert is a fit and include links to their profiles.';
+      case 'learn_expert':
+        return t ? `Please tell me about ${t}. Include a short biosketch, research areas, major projects, awards, and recent publications.`
+                 : 'Please tell me about <person>. Include a short biosketch, research areas, major projects, awards, and recent publications.';
+      case 'learn_resources':
+        return t ? `Find learning and training resources about ${t}. Include accessible links and a brief rationale for each resource.`
+                 : 'Find learning and training resources about <topic>. Include accessible links and a brief rationale for each resource.';
+      case 'summarize_url':
+        return t ? `Summarize the paper at ${t}.`
+                 : 'Summarize the paper at <URL>.';
+      case 'general_question':
+      default:
+        return t || 'Ask a general question...';
+    }
+  };
+
+  const handleHelperInsert = () => {
+    const prompt = generateHelperPrompt(helperChoice, helperText);
+    setMessage(prompt);
+    setIsHelperOpen(false);
+    setTimeout(() => inputRef.current?.focus(), 0);
+  };
+
   return (
     <div className="flex flex-col h-full w-full max-w-full min-w-0 overflow-x-hidden">
       {/* Message list */}
@@ -353,6 +387,17 @@ export default function ChatInput({ addMessage, projectId, onRefreshRequest, sel
         onSubmit={handleSubmit}
         className="p-4 bg-background border-t flex items-center gap-2 w-full max-w-full min-w-0 overflow-x-hidden"
       >
+        {/* Helper button to craft prompts */}
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          onClick={() => { setHelperText(''); setIsHelperOpen(true); }}
+          aria-label="Open prompt helper"
+          className="shrink-0"
+        >
+          Help me...
+        </Button>
         <textarea
           ref={inputRef}
           value={message}
@@ -410,6 +455,95 @@ export default function ChatInput({ addMessage, projectId, onRefreshRequest, sel
           </>
         )}
       </form>
+
+      {/* Lightweight modal dialog for the helper */}
+      {isHelperOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setIsHelperOpen(false)} />
+          <div className="relative bg-background text-foreground rounded-md shadow-xl w-[min(560px,92vw)] p-4">
+            <h2 className="text-base font-semibold mb-3">Prompt helper</h2>
+            <div className="space-y-3">
+              <fieldset className="space-y-2">
+                <legend className="text-sm font-medium mb-1">What would you like to do?</legend>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="helper-choice"
+                      value="find_expert"
+                      checked={helperChoice === 'find_expert'}
+                      onChange={() => setHelperChoice('find_expert')}
+                    />
+                    <span>Find an expert</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="helper-choice"
+                      value="learn_expert"
+                      checked={helperChoice === 'learn_expert'}
+                      onChange={() => setHelperChoice('learn_expert')}
+                    />
+                    <span>Learn about a specific expert</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="helper-choice"
+                      value="learn_resources"
+                      checked={helperChoice === 'learn_resources'}
+                      onChange={() => setHelperChoice('learn_resources')}
+                    />
+                    <span>Find learning or training resources about a topic</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="helper-choice"
+                      value="summarize_url"
+                      checked={helperChoice === 'summarize_url'}
+                      onChange={() => setHelperChoice('summarize_url')}
+                    />
+                    <span>Summarize a paper at a URL</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="helper-choice"
+                      value="general_question"
+                      checked={helperChoice === 'general_question'}
+                      onChange={() => setHelperChoice('general_question')}
+                    />
+                    <span>Ask a general question</span>
+                  </label>
+                </div>
+              </fieldset>
+
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Your topic / person / URL / question</label>
+                <input
+                  type="text"
+                  value={helperText}
+                  onChange={(e) => setHelperText(e.target.value)}
+                  className="w-full border rounded px-2 py-1"
+                  placeholder="e.g., manufacturing lipid nanoparticles"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleHelperInsert();
+                    }
+                  }}
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-1">
+                <Button type="button" variant="ghost" onClick={() => setIsHelperOpen(false)}>Cancel</Button>
+                <Button type="button" onClick={handleHelperInsert}>Insert</Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

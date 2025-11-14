@@ -379,7 +379,7 @@ class FindRelatedEntitiesHandler(BaseHandler):
             logging.debug(f"Keywords: {keywords}")
         else:
             keywords = []
-        results = graph_accessor.find_related_entities(query, k, entity_type, keywords)
+        results = [item[0] for item in graph_accessor.find_related_entities(query, k, entity_type, keywords)]
         self.write({"results": results})
 
 class AddToCrawlQueueHandler(BaseHandler):
@@ -1158,6 +1158,177 @@ class FleshOutTaskHandler(BaseHandler):
             self.set_status(500)
             self.write({"error": f"An error occurred while fleshing out the task: {e}"})
 
+class ScholarProfileJsonHandler(BaseHandler):
+    def get(self):
+        """Return composite JSON biosketch for a person by Google Scholar ID (public, no auth)."""
+        scholar_id = self.get_argument("scholar_id", "").strip()
+        if not scholar_id:
+            self.set_status(400); self.write({"error": "Missing scholar_id"}); return
+        if graph_accessor is None:
+            self.set_status(503); self.write({"error": "Database unavailable"}); return
+        try:
+            rows = graph_accessor.exec_sql(
+                f"SELECT entity_id FROM {graph_accessor.schema}.entities WHERE entity_type='google_scholar_profile' AND entity_json::text LIKE %s LIMIT 1;",
+                (f"%\"scholar_id\": \"{scholar_id}\"%",)
+            )
+            if not rows:
+                self.set_status(404); self.write({"error": "Profile not found"}); return
+            eid = int(rows[0][0])
+            payload = graph_accessor.build_biosketch_json(eid)
+            self.write({"profile": payload})
+        except Exception as e:
+            logging.error(f"ScholarProfileJsonHandler error: {e}")
+            self.set_status(500); self.write({"error": str(e)})
+
+class ScholarProfileMarkdownHandler(BaseHandler):
+    def get(self):
+        """Return Markdown biosketch for a person by Google Scholar ID (public)."""
+        scholar_id = self.get_argument("scholar_id", "").strip()
+        if not scholar_id:
+            self.set_status(400); self.write({"error": "Missing scholar_id"}); return
+        if graph_accessor is None:
+            self.set_status(503); self.write({"error": "Database unavailable"}); return
+        try:
+            rows = graph_accessor.exec_sql(
+                f"SELECT entity_id FROM {graph_accessor.schema}.entities WHERE entity_type='google_scholar_profile' AND entity_json::text LIKE %s LIMIT 1;",
+                (f"%\"scholar_id\": \"{scholar_id}\"%",)
+            )
+            if not rows:
+                self.set_status(404); self.write({"error": "Profile not found"}); return
+            eid = int(rows[0][0])
+            md = graph_accessor.build_biosketch_markdown(eid)
+            self.set_header("Content-Type", "text/markdown; charset=utf-8")
+            self.write(md)
+        except Exception as e:
+            logging.error(f"ScholarProfileMarkdownHandler error: {e}")
+            self.set_status(500); self.write({"error": str(e)})
+
+class NameProfileJsonHandler(BaseHandler):
+    def get(self):
+        """Return composite JSON biosketch for best-matching name (public)."""
+        name = self.get_argument("name", "").strip()
+        if not name:
+            self.set_status(400); self.write({"error": "Missing name"}); return
+        if graph_accessor is None:
+            self.set_status(503); self.write({"error": "Database unavailable"}); return
+        try:
+            rows = graph_accessor.exec_sql(
+                f"SELECT e.entity_id FROM {graph_accessor.schema}.entities e LEFT JOIN {graph_accessor.schema}.entity_tags t ON e.entity_id=t.entity_id AND t.tag_name='name' WHERE e.entity_type='google_scholar_profile' AND (t.tag_value=%s OR e.entity_name ILIKE %s) ORDER BY (CASE WHEN t.tag_value=%s THEN 0 ELSE 1 END), e.entity_id ASC LIMIT 1;",
+                (name, f"%{name}%", name)
+            )
+            if not rows:
+                self.set_status(404); self.write({"error": "No matching profile"}); return
+            eid = int(rows[0][0])
+            payload = graph_accessor.build_biosketch_json(eid)
+            self.write({"profile": payload})
+        except Exception as e:
+            logging.error(f"NameProfileJsonHandler error: {e}")
+            self.set_status(500); self.write({"error": str(e)})
+
+class NameProfileMarkdownHandler(BaseHandler):
+    def get(self):
+        """Return Markdown biosketch for best-matching name (public)."""
+        name = self.get_argument("name", "").strip()
+        if not name:
+            self.set_status(400); self.write({"error": "Missing name"}); return
+        if graph_accessor is None:
+            self.set_status(503); self.write({"error": "Database unavailable"}); return
+        try:
+            rows = graph_accessor.exec_sql(
+                f"SELECT e.entity_id FROM {graph_accessor.schema}.entities e LEFT JOIN {graph_accessor.schema}.entity_tags t ON e.entity_id=t.entity_id AND t.tag_name='name' WHERE e.entity_type='google_scholar_profile' AND (t.tag_value=%s OR e.entity_name ILIKE %s) ORDER BY (CASE WHEN t.tag_value=%s THEN 0 ELSE 1 END), e.entity_id ASC LIMIT 1;",
+                (name, f"%{name}%", name)
+            )
+            if not rows:
+                self.set_status(404); self.write({"error": "No matching profile"}); return
+            eid = int(rows[0][0])
+            md = graph_accessor.build_biosketch_markdown(eid)
+            self.set_header("Content-Type", "text/markdown; charset=utf-8")
+            self.write(md)
+        except Exception as e:
+            logging.error(f"NameProfileMarkdownHandler error: {e}")
+            self.set_status(500); self.write({"error": str(e)})
+
+class ScholarProfileHtmlHandler(BaseHandler):
+    def get(self):
+        """Return HTML biosketch for a person by Google Scholar ID with optional external CSS."""
+        scholar_id = self.get_argument("scholar_id", "").strip()
+        css_url = self.get_argument("css", "").strip()
+        if not scholar_id:
+            self.set_status(400); self.write({"error": "Missing scholar_id"}); return
+        if graph_accessor is None:
+            self.set_status(503); self.write({"error": "Database unavailable"}); return
+        try:
+            rows = graph_accessor.exec_sql(
+                f"SELECT entity_id FROM {graph_accessor.schema}.entities WHERE entity_type='google_scholar_profile' AND entity_json::text LIKE %s LIMIT 1;",
+                (f"%\"scholar_id\": \"{scholar_id}\"%",)
+            )
+            if not rows:
+                self.set_status(404); self.write({"error": "Profile not found"}); return
+            eid = int(rows[0][0])
+            md = graph_accessor.build_biosketch_markdown(eid)
+            # Derive title from first Markdown header
+            title = "Expert Profile"
+            for line in md.splitlines():
+                if line.strip().startswith("#"):
+                    title = line.lstrip("#").strip() or title
+                    break
+            try:
+                from markdown import markdown as md_to_html
+                body_html = md_to_html(md, extensions=["extra", "sane_lists"])  # keep simple
+            except Exception:
+                # Fallback: preformatted block
+                import html as _html
+                body_html = f"<pre>{_html.escape(md)}</pre>"
+
+            css_link = f'\n    <link rel="stylesheet" href="{css_url}">\n' if css_url else "\n"
+            html_doc = f"""<!DOCTYPE html>
+<html lang=\"en\">\n<head>\n    <meta charset=\"utf-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n    <title>{title}</title>{css_link}</head>\n<body>\n{body_html}\n</body>\n</html>"""
+            self.set_header("Content-Type", "text/html; charset=utf-8")
+            self.write(html_doc)
+        except Exception as e:
+            logging.error(f"ScholarProfileHtmlHandler error: {e}")
+            self.set_status(500); self.write({"error": str(e)})
+
+class NameProfileHtmlHandler(BaseHandler):
+    def get(self):
+        """Return HTML biosketch for best-matching name with optional external CSS."""
+        name = self.get_argument("name", "").strip()
+        css_url = self.get_argument("css", "").strip()
+        if not name:
+            self.set_status(400); self.write({"error": "Missing name"}); return
+        if graph_accessor is None:
+            self.set_status(503); self.write({"error": "Database unavailable"}); return
+        try:
+            rows = graph_accessor.exec_sql(
+                f"SELECT e.entity_id FROM {graph_accessor.schema}.entities e LEFT JOIN {graph_accessor.schema}.entity_tags t ON e.entity_id=t.entity_id AND t.tag_name='name' WHERE e.entity_type='google_scholar_profile' AND (t.tag_value=%s OR e.entity_name ILIKE %s) ORDER BY (CASE WHEN t.tag_value=%s THEN 0 ELSE 1 END), e.entity_id ASC LIMIT 1;",
+                (name, f"%{name}%", name)
+            )
+            if not rows:
+                self.set_status(404); self.write({"error": "No matching profile"}); return
+            eid = int(rows[0][0])
+            md = graph_accessor.build_biosketch_markdown(eid)
+            # Derive title from first Markdown header
+            title = "Expert Profile"
+            for line in md.splitlines():
+                if line.strip().startswith("#"):
+                    title = line.lstrip("#").strip() or title
+                    break
+            try:
+                from markdown import markdown as md_to_html
+                body_html = md_to_html(md, extensions=["extra", "sane_lists"])  # keep simple
+            except Exception:
+                import html as _html
+                body_html = f"<pre>{_html.escape(md)}</pre>"
+
+            css_link = f'\n    <link rel=\"stylesheet\" href=\"{css_url}\">\n' if css_url else "\n"
+            html_doc = f"""<!DOCTYPE html>
+<html lang=\"en\">\n<head>\n    <meta charset=\"utf-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n    <title>{title}</title>{css_link}</head>\n<body>\n{body_html}\n</body>\n</html>"""
+            self.set_header("Content-Type", "text/html; charset=utf-8")
+            self.write(html_doc)
+        except Exception as e:
+            logging.error(f"NameProfileHtmlHandler error: {e}")
+            self.set_status(500); self.write({"error": str(e)})
+
 class RenameTaskHandler(BaseHandler):
     def post(self, task_id):
         if self.is_session_expired() or not self.is_authenticated():
@@ -1251,6 +1422,13 @@ def make_app():
         (r"/api/task/(\d+)/rename", RenameTaskHandler),
         (r"/api/task/(\d+)/delete", DeleteTaskHandler),
         (r"/api/user/find_task", UserFindTaskHandler),
+        # Public biosketch/profile endpoints (no auth required)
+        (r"/api/profile/scholar/json", ScholarProfileJsonHandler),
+        (r"/api/profile/scholar/markdown", ScholarProfileMarkdownHandler),
+        (r"/api/profile/scholar/html", ScholarProfileHtmlHandler),
+        (r"/api/profile/name/json", NameProfileJsonHandler),
+        (r"/api/profile/name/markdown", NameProfileMarkdownHandler),
+        (r"/api/profile/name/html", NameProfileHtmlHandler),
     ])
 
 if __name__ == "__main__":

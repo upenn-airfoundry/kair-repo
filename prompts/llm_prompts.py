@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, ValidationError
 from typing import List, Optional, Literal, Tuple, Union, Any, Dict, cast
 import difflib
 from datetime import datetime
+import re
 
 from enrichment.llms import get_agentic_llm, get_structured_agentic_llm
 
@@ -299,10 +300,12 @@ class QueryClassification(BaseModel):
     query_class: Literal[
         "general_knowledge", 
         "info_about_an_expert", 
-        "find_an_expert_for_a_topic",
+        #"find_an_expert_for_a_topic",
+        "find_experts_for_task_or_area",
         "learning_resources_or_technical_training", 
         "information_from_prior_work_like_papers_or_videos_or_articles", 
         "multi_step_planning_or_problem_solving", 
+        "summarize_paper_at_url",
         "other"] = Field(..., description="The class of the query, chosen from the predefined categories.")
     task_summary: str = Field(..., description="A brief description of the task involved.")
 
@@ -816,10 +819,10 @@ class ExpertBiosketch(BaseModel):
     """
     Structured biosketch for an expert.
     """
-    name: Optional[str] = Field(default=None, description="Expert's full name.")
+    name: Optional[str] = Field(default=None, description="Expert's full name, including middle initial or middle name if available.")
     organization: Optional[str] = Field(default=None, description="Primary affiliation or organization.")
     headshot_url: Optional[str] = Field(default=None, description="URL to a headshot/photo if available.")
-    scholar_id: Optional[str] = Field(default=None, description="Google Scholar ID if available.")
+    scholar_id: Optional[str] = Field(default=None, description="Expert's Google Scholar ID if available.")
     biosketch: str = Field(..., description="A concise narrative biographical sketch.")
     education_and_experience: List[str] = Field(
         default_factory=list,
@@ -908,6 +911,112 @@ async def _lc_tool_call(tool_name: str, args: dict) -> Any:
         logging.warning(f"_lc_tool_call failed for {tool_name}: {e}")
         return {}
 
+# Structured model for name refinement
+class NameRefinement(BaseModel):
+    full_name: str = Field(..., description="The expert's most likely full name, including any middle names or initials.")
+
+def _refine_expert_name(eb: ExpertBiosketch) -> Optional[str]:
+    """
+    Infer a refined full name for the expert using the current eb.name and
+    the list of authors present across eb.all_articles.
+
+    Strategy:
+    - Collect candidate author-name strings from eb.all_articles (split comma-separated lists if needed).
+    - If an analysis LLM is available, ask it to choose the most likely full name corresponding to eb.name,
+      preferring consistent last name matches and the most complete variant (with middle names/initials).
+    - Return the chosen full name, or fall back to a simple heuristic when the LLM is unavailable.
+    """
+    try:
+        base = (getattr(eb, "name", None) or "").strip()
+        # Collect unique author names from articles
+        author_names: list[str] = []
+        try:
+            for art in getattr(eb, "all_articles", []) or []:
+                if not isinstance(art, dict):
+                    continue
+                a = art.get("authors")
+                if not a:
+                    continue
+                if isinstance(a, list):
+                    for nm in a:
+                        s = str(nm or "").strip()
+                        if s:
+                            author_names.append(s)
+                else:
+                    # Often a comma-separated string
+                    s = str(a or "").strip()
+                    if s:
+                        for part in s.split(","):
+                            sp = part.strip()
+                            if sp:
+                                author_names.append(sp)
+        except Exception:
+            pass
+
+        # Deduplicate while preserving order
+        seen: set[str] = set()
+        candidates: list[str] = []
+        for nm in author_names:
+            if nm not in seen:
+                seen.add(nm)
+                candidates.append(nm)
+
+        # If nothing to refine from, return the base
+        if not base and not candidates:
+            return None
+        if not candidates:
+            return base or None
+
+        # Optional heuristic fallback
+        def _heuristic_pick() -> str:
+            if not base:
+                # choose the longest well-formed name
+                return max(candidates, key=lambda s: (len(s.split()), len(s)))
+            last = base.split()[-1].lower()
+            # Filter to matching last names
+            same_last = [c for c in candidates if c.split() and c.split()[-1].lower() == last]
+            pool = same_last or candidates
+            # Prefer the candidate with the most tokens (likely includes middle names/initials)
+            return max(pool, key=lambda s: (len(s.split()), len(s)))
+
+        # Try LLM refinement
+        llm = get_analysis_llm()
+        if llm is None:
+            return _heuristic_pick()
+
+        prompt = ChatPromptTemplate.from_messages([
+            ("system",
+             "You refine personal names. Given an initial expert name and a list of author names found in their publications, "
+             "infer the expert's most likely full name (including middle names or initials). Choose a variant that matches the same person, "
+             "prefers the expert's last name when present, and uses the most complete representation used consistently across papers. "
+             "Return only valid JSON matching the NameRefinement schema."),
+            ("user",
+             "Initial expert name: {base_name}\n\n"
+             "Author names found in publications (deduplicated):\n{author_names}\n\n"
+             "Respond with the JSON field 'full_name' only, containing the refined name."),
+        ])
+
+        inst = invoke_structured_with_retry(
+            llm=llm,
+            prompt=prompt,
+            model_cls=NameRefinement,
+            inputs={
+                "base_name": base or "",
+                "author_names": json.dumps(candidates, ensure_ascii=False, indent=2),
+            },
+            max_attempts=2,
+            repair_instruction=(
+                "If your previous JSON did not match the NameRefinement schema, correct it and return only valid JSON."
+            ),
+        )
+
+        if inst is None:
+            return _heuristic_pick()
+        full = (getattr(inst, "full_name", None) or "").strip()
+        return full or _heuristic_pick()
+    except Exception:
+        return (getattr(eb, "name", None) or None)
+
 async def fetch_recent_publications_via_scholar(
     name: str,
     organization: Optional[str] = None,
@@ -933,15 +1042,127 @@ async def fetch_recent_publications_via_scholar(
                     return p
         return profiles[0]
 
-    # 1) Find candidate profiles by name
-    profiles_res = await _lc_tool_call("search_google_scholar_profiles", {"author_name": name, "num": "10", "hl": locale})
-    profiles: List[Dict[str, Any]] = []
-    if isinstance(profiles_res, dict):
-        profiles = profiles_res.get("profiles") or profiles_res.get("results") or []
-    elif isinstance(profiles_res, list):
-        profiles = profiles_res
+    # Helpers for name variant generation
+    def _split_name(full_name: str) -> Tuple[str, List[str], str]:
+        s = (full_name or "").strip()
+        # Remove obvious decorations
+        for ch in [",", ";", "(", ")", "[", "]", "{", "}"]:
+            s = s.replace(ch, " ")
+        parts = [p for p in s.split() if p]
+        if not parts:
+            return "", [], ""
+        # Handle suffixes
+        suffixes = {"jr", "sr", "iii", "iv", "phd", "md", "ms", "msc", "dphil"}
+        if len(parts) >= 2 and parts[-1].lower().rstrip('.') in suffixes:
+            parts = parts[:-1]
+        if len(parts) == 1:
+            return parts[0], [], ""
+        first = parts[0]
+        last = parts[-1]
+        middles = parts[1:-1]
+        return first, middles, last
 
-    chosen = _pick_profile(profiles)
+    NICKNAMES = {
+        # Common masculine
+        "robert": ["bob", "rob", "bobby", "robby"],
+        "william": ["will", "bill", "billy", "liam"],
+        "james": ["jim", "jimmy"],
+        "john": ["jack", "johnny"],
+        "michael": ["mike"],
+        "thomas": ["tom", "tommy"],
+        "joseph": ["joe", "joey"],
+        "benjamin": ["ben", "benny"],
+        "samuel": ["sam"],
+        "anthony": ["tony"],
+        "charles": ["charlie", "chuck"],
+        "daniel": ["dan", "danny"],
+        "stephen": ["steve"],
+        "steven": ["steve"],
+        "jonathan": ["jon"],
+        "christopher": ["chris"],
+        "nicholas": ["nick"],
+        "alexander": ["alex"],
+        "andrew": ["andy", "drew"],
+        "edward": ["ed", "eddie", "ted", "ned"],
+        # Common feminine
+        "elizabeth": ["liz", "beth", "eliza", "lizzy", "betty"],
+        "katherine": ["kate", "katie", "kathy", "kat"],
+        "catherine": ["cate", "cathy", "kate", "katie"],
+        "margaret": ["meg", "maggie", "peggy"],
+        "rebecca": ["becca", "becky"],
+        "victoria": ["vicky", "tori"],
+        "patricia": ["pat", "trish"],
+    }
+
+    # Build reverse mapping (nickname -> canonical) to expand both ways
+    REV_NICKS: Dict[str, List[str]] = {}
+    for canonical, alts in NICKNAMES.items():
+        for a in alts:
+            REV_NICKS.setdefault(a, []).append(canonical)
+
+    def _nickname_variants(first_name: str) -> List[str]:
+        f = (first_name or "").strip()
+        if not f:
+            return []
+        base = {f}
+        lower = f.lower().rstrip('.')
+        for v in NICKNAMES.get(lower, []):
+            base.add(v.capitalize())
+        for v in REV_NICKS.get(lower, []):
+            base.add(v.capitalize())
+        return list(base)
+
+    def _middle_name_is_full(middles: List[str]) -> bool:
+        if not middles:
+            return False
+        # consider it "full" if at least one middle token length > 1
+        return any(len(m) > 1 and m[-1] != '.' for m in middles)
+
+    def _name_variants(full_name: str) -> List[str]:
+        first, middles, last = _split_name(full_name)
+        variants: List[str] = []
+        seen: set = set()
+        def add(v: str):
+            vv = v.strip()
+            if vv and vv not in seen:
+                seen.add(vv)
+                variants.append(vv)
+        # Baselines
+        add(full_name)
+        if first and last:
+            add(f"{first} {last}")
+            # First initial + Last can help occasionally
+            if len(first) > 0:
+                add(f"{first[0]}. {last}")
+        # Nickname swaps on first
+        for fn in _nickname_variants(first):
+            if last:
+                add(f"{fn} {last}")
+                if middles:
+                    add(f"{fn} {' '.join(middles)} {last}")
+        # If full middle exists, try middle-as-first
+        if _middle_name_is_full(middles) and last:
+            mid_first = middles[0]
+            add(f"{mid_first} {last}")
+            for mn in _nickname_variants(mid_first):
+                add(f"{mn} {last}")
+        return variants[:12]  # cap attempts
+
+    # 1) Find candidate profiles by name; if not found, expand variants
+    profiles: List[Dict[str, Any]] = []
+    chosen: Optional[Dict[str, Any]] = None
+    tried_names = _name_variants(name)
+    for nm in tried_names:
+        profiles_res = await _lc_tool_call("search_google_scholar_profiles", {"author_name": nm, "num": "10", "hl": locale})
+        if isinstance(profiles_res, dict):
+            profiles = profiles_res.get("profiles") or profiles_res.get("results") or []
+        elif isinstance(profiles_res, list):
+            profiles = profiles_res
+        else:
+            profiles = []
+        chosen = _pick_profile(profiles)
+        if isinstance(chosen, dict):
+            break
     if not isinstance(chosen, dict):
         return None, [], []
     
@@ -1017,10 +1238,15 @@ async def fetch_publications_via_dblp(
         if isinstance(res, dict):
             pubs = res.get("publications") or []
         elif isinstance(res, list):
-            # Some adapters may return just the list
-            pubs = res
+            # FastMCP tools typically return a list of TextContent dicts: [{"type":"text","text":"..."}]
+            if res and isinstance(res[0], dict) and "text" in res[0]:
+                full_text = "\n\n".join(str(it.get("text") or "") for it in res if isinstance(it, dict))
+                pubs = parse_dblp_text_publications(full_text)
+            else:
+                # Some adapters may return just the publications list
+                pubs = res  # type: ignore[assignment]
         elif isinstance(res, str):
-            # FastMCP text content from DBLP tool; parse into structured publications
+            # Text content from DBLP tool; parse into structured publications
             pubs = parse_dblp_text_publications(res)
 
         items: List[str] = []
@@ -1033,6 +1259,8 @@ async def fetch_publications_via_dblp(
             title = str(p.get("title") or "").strip()
             authors_val = p.get("authors")
             if isinstance(authors_val, list):
+                # DBLP can append numeric suffixes for disambiguation (e.g., "J. Smith 0001"). Strip them.
+                authors_val = [re.sub(r'\s+\d+$', '', str(a)).strip() for a in authors_val]
                 authors = ", ".join(str(a) for a in authors_val)
             else:
                 authors = str(authors_val or "").strip()
@@ -1159,7 +1387,7 @@ async def merge_arxiv_with_dblp(
       - Return updated formatted items and the mutated scholar_articles list.
     """
     if not scholar_articles:
-        return [], []
+        return [], dblp_articles
 
     # Precompute normalized titles for DBLP
     dblp_norm = [(_normalized_title(p.get("title", "")), p) for p in dblp_articles]
@@ -1170,7 +1398,8 @@ async def merge_arxiv_with_dblp(
             art_copy = dict(art)
             link = art_copy.get("link") or art_copy.get("url") or art_copy.get("paper_url") or ""
             url = str(link).lower()
-            if "arxiv.org" not in url:
+            pub = art_copy.get("publication") or art_copy.get("venue") or ""
+            if "arXiv preprint" not in pub and "arxiv.org" not in url:
                 updated_articles.append(art_copy)
                 continue
 
@@ -1261,7 +1490,7 @@ async def merge_arxiv_with_dblp(
 async def find_headshot_via_searchapi(name: str, organization: Optional[str] = None) -> Optional[str]:
     """Use SearchAPI image tools (via LangChain) to find a likely headshot URL for the person."""
     person_str = f"{name} {organization}".strip() if organization else name
-    query = f"{person_str} headshot portrait"
+    query = f"{person_str} headshot portrait, faculty directory photo, professional photo, linkedin photo"
 
     # Discover an image search tool
     try:
@@ -1325,7 +1554,9 @@ class PeoplePrompts:
         instruction = (
             "You are a careful researcher. Given the user prompt about a person, extract a concise, factual expert biosketch. "
             "Populate ONLY the fields in the provided schema; if uncertain, omit that item. "
-            "Use recent, publicly verifiable facts, starting from the person's CV or home page or public talks, as retrieved from a web search. "
+            "Use recent, publicly verifiable facts, starting from the person's CV or home page or public talks, as retrieved from a web search."
+            "When calling tools, strictly follow their schemas: include ALL required fields with correct names and types. "
+            "If a tool requires a parameter called 'query', pass a non-empty search string under 'query'. "
             "Return a single JSON object that strictly conforms to the ExpertBiosketch schema:\n"
             f"```json\n{schema_str}\n```"
         )
@@ -1338,7 +1569,9 @@ class PeoplePrompts:
         )
         # Materialize the user text for agent input (not a template at this point)
         user_text_for_agent = user_req_template.format(prompt_text=prompt_text)
-        agent_input = f"{instruction}\n\n{user_text_for_agent}"
+        # Provide a suggested initial query to reduce schema errors calling search tools
+        suggested_query = f"{prompt_text} CV homepage Google Scholar profile"
+        agent_input = f"{instruction}\n\nSuggested initial search query (use as 'query' when needed): {suggested_query}\n\n{user_text_for_agent}"
 
         def _strip_fences(s: str) -> str:
             s = (s or "").strip()
@@ -1399,7 +1632,18 @@ class PeoplePrompts:
         if agent is not None:
             try:
                 # Provide minimal context; agent_input already contains prompt_text
-                result = await agent.ainvoke({"input": agent_input, "chat_history": []})  # type: ignore
+                # Include explicit 'query' and 'q' keys to satisfy search/tool schemas that require them.
+                invoke_payload = {"input": agent_input, "chat_history": [], "query": suggested_query, "q": suggested_query}
+                try:
+                    result = await agent.ainvoke(invoke_payload)  # type: ignore
+                except Exception as e_inner:
+                    # If failure mentions missing 'query', retry once with simplified input.
+                    if "query" in str(e_inner).lower():
+                        logging.warning("Retrying agent invoke with simplified payload due to missing 'query' error")
+                        invoke_payload_retry = {"input": prompt_text, "chat_history": [], "query": suggested_query, "q": suggested_query}
+                        result = await agent.ainvoke(invoke_payload_retry)  # type: ignore
+                    else:
+                        raise
                 out = result.get("output", "") if isinstance(result, dict) else ""
                 if out.startswith("Agent stopped"):
                     eb = None
@@ -1491,6 +1735,17 @@ class PeoplePrompts:
             )
             if scholar_id:
                 eb.scholar_id = scholar_id
+                
+                eb.all_articles = articles  # type: ignore
+                
+            # Refine expert name using publication author lists
+            try:
+                refined_name = _refine_expert_name(eb)
+                if refined_name:
+                    eb.name = refined_name
+            except Exception as e:
+                logging.warning(f"Biosketch name refinement failed: {e}")
+
             # Fetch DBLP publications and merge arXiv items to final venues when possible
             try:
                 (_, dblp_items, dblp_articles) = await fetch_publications_via_dblp(
@@ -1503,6 +1758,8 @@ class PeoplePrompts:
 
             try:
                  merged_pretty, merged_articles = await merge_arxiv_with_dblp(articles or [], dblp_articles)
+                 if len(merged_pretty) == 0:
+                     merged_pretty = dblp_items
             except Exception:
                 merged_pretty, merged_articles = pubs, (articles or [])
 
@@ -1575,6 +1832,8 @@ class PeoplePrompts:
                 graph.add_or_update_tag(profile_id, "biosketch", sketch.biosketch, add_another=False)
             if getattr(sketch, "headshot_url", None):
                 graph.add_or_update_tag(profile_id, "headshot_url", sketch.headshot_url or "", add_another=False)
+            if getattr(sketch, "organization", None):
+                graph.add_or_update_tag(profile_id, "organization", sketch.organization or "", add_another=False)
 
             # Lists: add each item as its own tag instance
             
@@ -1751,33 +2010,33 @@ class PeoplePrompts:
                 "expertise": "",
                 "projects": ""
             }
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", "You are an expert at summarizing academic and professional profiles. Respond with a structured output matching the PersonOfInterest schema."),
-            ("user", 
-                f"Summarize what is known about {name} at {organization} in three paragraphs:\n"
-                "1. A concise biosketch describing their background and career.\n"
-                "2. A paragraph describing their expertise and research interests.\n"
-                "3. A paragraph describing their known projects or major contributions.\n"
-                "Respond in clear, factual prose and use the PersonOfInterest schema."
+
+        # Attempt a structured profile using PersonOfInterest model for richer detail
+        try:
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", "Extract a concise person profile."),
+                ("user", f"Name: {name}\nOrganization: {organization}\nReturn JSON with biosketch, expertise, projects."),
+            ])
+            inst = invoke_structured_with_retry(
+                llm=llm,
+                prompt=prompt,
+                model_cls=PersonOfInterest,
+                inputs={},
+                max_attempts=2,
+                repair_instruction="Ensure output matches PersonOfInterest schema exactly; correct and return only JSON.",
             )
-        ])
-        # Use structured output
-        inst = invoke_structured_with_retry(
-            llm=llm,
-            prompt=prompt,
-            model_cls=PersonOfInterest,
-            inputs={},
-            max_attempts=2,
-            repair_instruction="If your previous JSON did not match the PersonOfInterest schema, correct it and return only valid JSON."
-        )
-        if inst is None:
-            poi = PersonOfInterest(biosketch=f"{name} at {organization}.", expertise_and_research="", known_projects="")
-        else:
-            poi = cast(PersonOfInterest, inst)
+            if inst:
+                return {
+                    "biosketch": getattr(inst, "biosketch", "") or f"{name} at {organization}.",
+                    "expertise": getattr(inst, "expertise", "") or "",
+                    "projects": getattr(inst, "projects", "") or "",
+                }
+        except Exception as e:
+            logging.warning(f"get_person_profile structured attempt failed: {e}")
         return {
-            "biosketch": poi.biosketch,
-            "expertise": poi.expertise_and_research,
-            "projects": poi.known_projects,
+            "biosketch": f"{name} at {organization}.",
+            "expertise": "",
+            "projects": "",
         }
         
     @classmethod
@@ -1859,9 +2118,123 @@ class QueryPrompts:
             max_attempts=2,
             repair_instruction="If your previous JSON did not match the QueryClassification schema, correct it and return only valid JSON."
         )
+        # Heuristic override: if the query contains an explicit URL and words like 'summarize', force summarize_paper_at_url
+        try:
+            import re
+            # Summarize-at-URL
+            if re.search(r"https?://\S+", query, flags=re.IGNORECASE) and re.search(r"\b(summarize|summary|tl;dr|explain|overview)\b", query, flags=re.IGNORECASE):
+                return QueryClassification(query_class="summarize_paper_at_url", task_summary=query[:200])
+            # Find experts (plural/team) pattern
+            if re.search(r"\b(experts|team|collaborators|researchers|people)\b", query, flags=re.IGNORECASE):
+                if re.search(r"\b(find|recommend|identify|who)\b", query, flags=re.IGNORECASE):
+                    return QueryClassification(query_class="find_experts_for_task_or_area", task_summary=query[:200])
+        except Exception:
+            pass
         if inst is None:
             return QueryClassification(query_class="general_knowledge", task_summary=query[:200])
         return cast(QueryClassification, inst)
+
+class ExpertRequestSpec(BaseModel):
+    """Normalized description of desired expertise for expert search."""
+    desired_expertise: List[str] = Field(default_factory=list, description="List of key expertise/topic phrases to match.")
+    task_context: Optional[str] = Field(default=None, description="Optional task or application context for the expertise.")
+
+def extract_expertise_spec(query: str) -> ExpertRequestSpec:
+    """Use a fast LLM to extract normalized expertise specifiers from the user query.
+
+    Returns ExpertRequestSpec with desired_expertise populated; falls back to using the raw query.
+    """
+    try:
+        base = get_analysis_llm()
+        if base is None:
+            return ExpertRequestSpec(desired_expertise=[query.strip()])
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", "Extract a concise set of expertise specifiers from the user's request for experts. Return JSON matching the ExpertRequestSpec schema."),
+            ("user", f"Query: {query}")
+        ])
+        inst = invoke_structured_with_retry(
+            llm=base,
+            prompt=prompt,
+            model_cls=ExpertRequestSpec,
+            inputs={"query": query},
+            max_attempts=2,
+            repair_instruction="If your previous JSON did not match the schema, correct it and return only valid JSON."
+        )
+        if inst is None:
+            return ExpertRequestSpec(desired_expertise=[query.strip()])
+        return cast(ExpertRequestSpec, inst)
+    except Exception:
+        return ExpertRequestSpec(desired_expertise=[query.strip()])
+
+
+# -------------------------
+# NotebookLM: Paper summarization
+# -------------------------
+async def summarize_paper_via_notebooklm(url: str, focus: Optional[str] = None) -> str:
+    """Summarize a paper at the given URL using the NotebookLM MCP tool via direct tool invocation.
+
+    Returns Markdown text. Falls back to a simple note if the tool isn't available or the call fails.
+    """
+    # We assume the NotebookLM server exposes a tool named something like 'summarize_url' or 'summarize_paper'.
+    # If the actual tool name differs, adjust TOOL_NAME accordingly.
+    TOOL_CANDIDATES = ["chat_with_notebook", "summarize_paper", "summarize_url", "notebooklm_summarize", "summarize_document"]
+    try:
+        # Construct a summarization instruction passed as part of args to the tool (if supported)
+        base_instruction = (
+            "Return a concise Markdown summary with sections: Title, TL;DR, Key Points (bullets), Methods, Results, Limitations, and Links."
+        )
+        if focus:
+            base_instruction += f" Focus on: {focus}."
+
+        # Try candidate tool names until one succeeds
+        last_error: Optional[Exception] = None
+        for tool_name in TOOL_CANDIDATES:
+            try:
+                # Common arg patterns: {"url": url, "instruction": base_instruction}
+                # Some tools might require 'query' or 'q'; include them proactively.
+                res = await _lc_tool_call(tool_name, {
+                    "url": url,
+                    "instruction": base_instruction,
+                    "query": f"Summarize paper at {url}",
+                    "q": f"Summarize paper at {url}"
+                })
+                if isinstance(res, dict):
+                    # Possible keys containing summary text
+                    for k in ["summary", "content", "output", "markdown", "result"]:
+                        v = res.get(k)
+                        if isinstance(v, str) and v.strip():
+                            return v.strip()
+                    # Fallback: dump dict as markdown-ish code block
+                    return "```json\n" + json.dumps(res, ensure_ascii=False, indent=2) + "\n```"
+                elif isinstance(res, list):
+                    # Join text fields if list of text chunks
+                    parts: List[str] = []
+                    for it in res:
+                        if isinstance(it, dict):
+                            txt = it.get("text") or it.get("content") or it.get("summary")
+                            if isinstance(txt, str):
+                                parts.append(txt)
+                        elif isinstance(it, str):
+                            parts.append(it)
+                    combined = "\n\n" + "\n\n".join(p.strip() for p in parts if p.strip())
+                    if combined.strip():
+                        return combined.strip()
+                    return f"(NotebookLM returned empty list for {url})"
+                elif isinstance(res, str):
+                    if res.strip():
+                        return res.strip()
+                    return f"(Empty string returned for {url})"
+                else:
+                    return f"(Unexpected NotebookLM tool response type: {type(res).__name__})"
+            except Exception as te:
+                last_error = te
+                continue
+        if last_error:
+            raise last_error
+        return f"(NotebookLM tool not found) For reference, here is the URL: {url}"
+    except Exception as e:
+        logging.warning(f"summarize_paper_via_notebooklm failed: {e}")
+        return f"(NotebookLM summary unavailable) For reference, here is the URL: {url}"
 
 
 class PlanningPrompts:

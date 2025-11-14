@@ -1,13 +1,18 @@
-from typing import Any, List, Dict, Optional, Union
+from typing import Any, List, Dict, Optional, Tuple, Union
+import asyncio
 import logging
 
 from backend.graph_db import GraphAccessor
 from prompts.llm_prompts import QueryPrompts, TaskDependencyList, WebPrompts, PlanningPrompts, ReviewPrompts
+from prompts.llm_prompts import extract_expertise_spec, ExpertRequestSpec
+from pydantic import BaseModel, Field
+from langchain.prompts import ChatPromptTemplate
+from enrichment.llms import get_analysis_llm
 from crawl.crawler_queue import CrawlQueue
 
 from search import search_over_criteria, search_multiple_criteria, generate_rag_answer, search_basic, is_relevant_answer_with_data
 from prompts.llm_prompts import UpstreamTaskContext
-from prompts.llm_prompts import PeoplePrompts, ExpertBiosketch
+from prompts.llm_prompts import PeoplePrompts, ExpertBiosketch, summarize_paper_via_notebooklm
 from qa.qa_tasks import TaskHelper
 
 import json
@@ -291,7 +296,7 @@ class AnswerQuestionHandler():
                 name=task_name,
                 description=task.description_and_goals,
                 schema=schema_string,
-                task_context=task.model_dump_json()
+                task_context=task.model_dump()
             )
             # Optional: connect this new task under the parent task as a subtask
             try:
@@ -420,8 +425,27 @@ class AnswerQuestionHandler():
                 return (answer, 0)
             
             elif classification.query_class == "info_about_an_expert":
-                # Produce structured biosketch
-                biosketch: ExpertBiosketch = await PeoplePrompts.generate_expert_biosketch_from_prompt(original_prompt)
+                # Produce structured biosketch with timeout and safe fallback
+                try:
+                    biosketch: ExpertBiosketch = await asyncio.wait_for(
+                        PeoplePrompts.generate_expert_biosketch_from_prompt(original_prompt),
+                        timeout=120,
+                    )
+                except Exception as e:
+                    logging.warning(f"Biosketch generation failed, using minimal fallback: {e}")
+                    biosketch = ExpertBiosketch(
+                        name=None,
+                        organization=None,
+                        headshot_url=None,
+                        scholar_id=None,
+                        biosketch=original_prompt.strip(),
+                        education_and_experience=[],
+                        major_research_projects_and_entrepreneurship=[],
+                        honors_and_awards=[],
+                        expertise_and_contributions=[],
+                        recent_publications_or_products=[],
+                        all_articles=[],
+                    )
                 # Find a suitable existing task or create one
                 task_id = TaskHelper.get_or_create_task(self.graph_accessor, self.project_id, task_summary, selected_task_id, parent_task_id)
                 # Store as json_data if a task is selected
@@ -443,20 +467,212 @@ class AnswerQuestionHandler():
 
                 return (answer_md, 1)
             
-            elif classification.query_class == "find_an_expert_for_a_topic":
-                answer = await search_basic(
-                    user_prompt,
-                    "You are an expert assistant. Please recommend an expert for the following topic."
-                )
+            # elif classification.query_class == "find_an_expert_for_a_topic":
+            #     answer = await search_basic(
+            #         user_prompt,
+            #         "You are an expert assistant. Please recommend an expert for the following topic."
+            #     )
 
-                if ReviewPrompts.assess_responsiveness(user_prompt, answer).fully_responsive and selected_task_id is not None:
-                    TaskHelper.add_task_entities(self.graph_accessor, selected_task_id, {"answer": {"response": answer, "source_prompt": user_prompt}})
+            #     if ReviewPrompts.assess_responsiveness(user_prompt, answer).fully_responsive and selected_task_id is not None:
+            #         TaskHelper.add_task_entities(self.graph_accessor, selected_task_id, {"answer": {"response": answer, "source_prompt": user_prompt}})
                 
-                self.graph_accessor.add_user_history(self.user_id, self.project_id, original_prompt, answer)
-                return (answer, 0)
+            #     self.graph_accessor.add_user_history(self.user_id, self.project_id, original_prompt, answer)
+            #     return (answer, 0)
+
+            elif classification.query_class == "find_experts_for_task_or_area":
+                # Extract normalized expertise specifiers via LLM (with robust fallback)
+                try:
+                    spec: ExpertRequestSpec = extract_expertise_spec(original_prompt)
+                except Exception:
+                    spec = ExpertRequestSpec(desired_expertise=[original_prompt.strip()])
+
+                # Build a search query string from extracted expertise terms
+                expertise_query = " ".join([s for s in (spec.desired_expertise or []) if isinstance(s, str) and s.strip()])
+                if not expertise_query:
+                    expertise_query = original_prompt.strip()
+
+                # Use tag-embedding similarity search over 'expertise' tags
+                try:
+                    candidate_ids: List[Tuple[int, float]] = self.graph_accessor.find_related_entity_ids_by_tag(expertise_query, "expertise", k=50)
+                except Exception as e:
+                    logging.warning(f"find_related_entity_ids_by_tag failed: {e}")
+                    candidate_ids = []
+
+                candidate_ids = [cid for cid in candidate_ids if (cid[1] is not None) and (cid[1] < 0.9)]
+                
+                
+                if not candidate_ids:
+                    answer = await search_basic(
+                        user_prompt,
+                        "You are an expert assistant. Please recommend an expert for the following topic."
+                    )
+
+                    if ReviewPrompts.assess_responsiveness(user_prompt, answer).fully_responsive and selected_task_id is not None:
+                        TaskHelper.add_task_entities(self.graph_accessor, selected_task_id, {"answer": {"response": answer, "source_prompt": user_prompt}})
+                    
+                    self.graph_accessor.add_user_history(self.user_id, self.project_id, original_prompt, answer)
+                    return (answer, 0)
+
+                # Fetch entity core info for google_scholar_profile candidates
+                rows: List[tuple] = []
+                try:
+                    sql = f"""
+                        SELECT e.entity_id, e.entity_name, e.entity_url
+                        FROM {self.graph_accessor.schema}.entities e
+                        JOIN unnest(%s::int[]) WITH ORDINALITY AS u(id, ord) ON e.entity_id = u.id
+                        WHERE e.entity_type = 'google_scholar_profile'
+                        ORDER BY u.ord
+                    """
+                    rows = self.graph_accessor.exec_sql(sql, ([cid[0] for cid in candidate_ids],)) or []
+                except Exception as e:
+                    logging.warning(f"Expert fetch SQL failed: {e}")
+
+                if not rows:
+                    answer = "No matching experts were found."
+                    self.graph_accessor.add_user_history(self.user_id, self.project_id, original_prompt, answer)
+                    return (answer, 0)
+
+                # Fetch expertise tags for these entities
+                expertise_rows: List[tuple] = []
+                expertise_map: Dict[int, List[str]] = {}
+                try:
+                    sql_tags = f"""
+                        SELECT et.entity_id, et.tag_value
+                        FROM {self.graph_accessor.schema}.entity_tags et
+                        WHERE et.tag_name='expertise' AND et.entity_id = ANY(%s)
+                    """
+                    expertise_rows = self.graph_accessor.exec_sql(sql_tags, ([cid[0] for cid in candidate_ids],)) or []
+                    for eid, tag_val in expertise_rows:
+                        if eid not in expertise_map:
+                            expertise_map[eid] = []
+                        if isinstance(tag_val, str) and tag_val.strip():
+                            expertise_map[eid].append(tag_val.strip())
+                except Exception as e:
+                    logging.warning(f"Failed fetching expertise tags: {e}")
+
+                # Define structured selection models
+                class ExpertCandidate(BaseModel):
+                    entity_id: int
+                    name: str
+                    url: Optional[str] = None
+                    expertise: List[str] = Field(default_factory=list)
+
+                class ExpertSelectionItem(BaseModel):
+                    entity_id: int
+                    name: str
+                    url: Optional[str] = None
+                    expertise: List[str]
+                    justification: str
+
+                class ExpertSelection(BaseModel):
+                    matches: List[ExpertSelectionItem]
+
+                # Build candidate list
+                candidates: List[ExpertCandidate] = []
+                for (eid, name, url) in rows:
+                    candidates.append(ExpertCandidate(
+                        entity_id=int(eid),
+                        name=name or f"Expert {eid}",
+                        url=url,
+                        expertise=expertise_map.get(int(eid), [])
+                    ))
+
+                # LLM selection prompt
+                llm = get_analysis_llm()
+                selection: Optional[ExpertSelection] = None
+                if llm is not None:
+                    try:
+                        cand_text_lines = []
+                        for c in candidates:
+                            exp_str = "; ".join(c.expertise) if c.expertise else "(no expertise tags)"
+                            cand_text_lines.append(f"ID {c.entity_id} | {c.name} | {exp_str}")
+                        cand_block = "\n".join(cand_text_lines)
+                        prompt = ChatPromptTemplate.from_messages([
+                            ("system", "You are selecting the most relevant experts for the user's request. You MUST return JSON matching the ExpertSelection schema. Include only experts whose expertise clearly maps to the request. For each selected expert provide a concise justification referencing their expertise list. If there is no justification, omit the expert from the list."),
+                            ("user", f"Original request: {original_prompt}\n\nCandidate experts (one per line):\n{cand_block}\n\nReturn JSON.")
+                        ])
+                        structured_llm = llm.with_structured_output(ExpertSelection)  # type: ignore[attr-defined]
+                        selection_raw = structured_llm.invoke(prompt.format())
+                        if isinstance(selection_raw, ExpertSelection):
+                            selection = selection_raw
+                    except Exception as e:
+                        logging.warning(f"Structured expert selection failed: {e}")
+
+                if selection is None or not getattr(selection, "matches", None):
+                    # Fallback: include all candidates with heuristic justification
+                    fallback_items = []
+                    for c in candidates[:20]:
+                        just = f"Matches query terms via expertise: {', '.join(c.expertise[:5]) if c.expertise else 'general relevance'}"
+                        fallback_items.append(ExpertSelectionItem(
+                            entity_id=c.entity_id,
+                            name=c.name,
+                            url=c.url,
+                            expertise=c.expertise,
+                            justification=just
+                        ))
+                    selection = ExpertSelection(matches=fallback_items)
+
+                # Build maps for filling missing details
+                eid_to_url: Dict[int, Optional[str]] = {int(eid): url for (eid, _name, url) in rows}
+                eid_to_name: Dict[int, str] = {int(eid): (_name or f"Expert {eid}") for (eid, _name, _url) in rows}
+                eid_to_expertise: Dict[int, List[str]] = {int(eid): expertise_map.get(int(eid), []) for (eid, _n, _u) in rows}
+
+                # Build markdown output
+                lines = [f"# Top experts for: {expertise_query}", ""]
+                results_payload: List[Dict[str, Any]] = []
+                for idx, m in enumerate(selection.matches, start=1):
+                    sel_url = m.url or eid_to_url.get(int(m.entity_id))
+                    sel_name = m.name or eid_to_name.get(int(m.entity_id), f"Expert {m.entity_id}")
+                    sel_exp = m.expertise or eid_to_expertise.get(int(m.entity_id), [])
+                    exp_str = ", ".join(sel_exp) if sel_exp else "(no expertise tags)"
+                    name_display = f"[{sel_name}]({sel_url})" if sel_url else sel_name
+                    lines.append(f"{idx}. {name_display}\n   * Expertise: {exp_str}\n   * Justification: {m.justification}")
+                    results_payload.append({
+                        "entity_id": int(m.entity_id),
+                        "name": sel_name,
+                        "url": sel_url,
+                        "expertise": sel_exp,
+                        "justification": m.justification,
+                    })
+                answer_md = "\n".join(lines)
+
+                # Persist to task & link entities
+                task_id = TaskHelper.get_or_create_task(self.graph_accessor, self.project_id, task_summary or f"Find experts: {expertise_query}", selected_task_id, parent_task_id)
+                try:
+                    if task_id:
+                        TaskHelper.add_task_entities(self.graph_accessor, int(task_id), {"expert_matches": results_payload})
+                        for m in selection.matches[:20]:
+                            try:
+                                self.graph_accessor.link_entity_to_task(int(task_id), int(m.entity_id), 8.7)
+                            except Exception:
+                                continue
+                except Exception as e:
+                    logging.warning(f"Failed to persist expert match entities: {e}")
+
+                self.graph_accessor.add_user_history(self.user_id, self.project_id, original_prompt, answer_md)
+                return (answer_md, 1)
 
             elif classification.query_class == "learning_resources_or_technical_training" or classification.query_class == "information_from_prior_work_like_papers_or_videos_or_articles":
                 return await self.search_over_papers(user_prompt, original_prompt, task_summary, selected_task_id, parent_task_id=parent_task_id)
+            elif classification.query_class == "summarize_paper_at_url":
+                # Extract URL from original prompt (simple heuristic)
+                import re
+                url_match = re.search(r"https?://\S+", original_prompt)
+                if not url_match:
+                    answer = "No URL found to summarize. Please provide a direct paper URL."
+                    self.graph_accessor.add_user_history(self.user_id, self.project_id, original_prompt, answer)
+                    return (answer, 0)
+                paper_url = url_match.group(0).rstrip(').,;')
+                summary_md = await summarize_paper_via_notebooklm(paper_url)
+                # Create or associate task
+                task_id = TaskHelper.get_or_create_task(self.graph_accessor, self.project_id, task_summary or "Summarize paper", selected_task_id, parent_task_id)
+                if task_id is not None:
+                    try:
+                        TaskHelper.add_task_entities(self.graph_accessor, int(task_id), {"paper_summary": {"url": paper_url, "markdown": summary_md}})
+                    except Exception as e:
+                        logging.warning(f"Failed to store paper summary entity: {e}")
+                self.graph_accessor.add_user_history(self.user_id, self.project_id, original_prompt, summary_md)
+                return (summary_md, 1)
 
             elif classification.query_class == "papers_reports_or_prior_work":
                 # TODO: Needs to be merged with above
@@ -515,6 +731,11 @@ class AnswerQuestionHandler():
                 raise ValueError(f"Unknown query class: {classification.query_class}")
         except Exception as e:
             logging.error(f"Error during expansion: {e}")
-            raise e
+            error_msg = f"An internal error occurred while processing your request. Details: {e}"
+            try:
+                self.graph_accessor.add_user_history(self.user_id, self.project_id, user_prompt, error_msg)
+            except Exception:
+                pass
+            return (error_msg, 0)
         return None
     

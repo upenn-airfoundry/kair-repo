@@ -43,6 +43,11 @@ mcp_client = MultiServerMCPClient(
             "url": "http://localhost:8003/mcp",
             "transport": "streamable_http",
         }
+        # "NotebookLM": {
+        #     # Make sure you start your server on port 8004
+        #     "url": "http://34.150.175.163:8001/mcp",
+        #     "transport": "streamable_http",
+        # }
     })
 
 # Define the argument schema for the Semantic Scholar tool
@@ -287,7 +292,10 @@ async def get_agentic_llm(prompt: ChatPromptTemplate | None = None):
         # Default prompt for tool-calling agent (system + placeholders)
         if prompt is None:
             prompt = ChatPromptTemplate.from_messages([
-                ("system", "You are a helpful assistant. Use tools when helpful. Think step-by-step. "
+                ("system", "You are a careful assistant. Use tools when helpful. Think step-by-step. "
+                    "When calling tools, strictly adhere to each tool's args schema: include ALL required properties with correct names and types. "
+                    "In particular, if a tool requires 'query', pass a non-empty string under the 'query' key. "
+                    "For Google Scholar tools, prefer author-specific calls and use 'author_name' or 'author_id' as required. "
                     "If the user requests JSON, return strictly valid JSON."),
                 MessagesPlaceholder("chat_history"),
                 ("human", "{input}"),
@@ -334,7 +342,10 @@ async def get_structured_agentic_llm(structured_model: type[BaseModel], prompt: 
         # Default prompt for tool-calling agent (system + placeholders)
         if prompt is None:
             prompt = ChatPromptTemplate.from_messages([
-                ("system", "You are a helpful assistant. Use tools when helpful. Think step-by-step. "
+                ("system", "You are a careful assistant. Use tools when helpful. Think step-by-step. "
+                    "When calling tools, strictly adhere to each tool's args schema: include ALL required properties with correct names and types. "
+                    "In particular, if a tool requires 'query', pass a non-empty string under the 'query' key. "
+                    "For Google Scholar tools, prefer author-specific calls and use 'author_name' or 'author_id' as required. "
                     "If the user requests JSON, return strictly valid JSON."),
                 MessagesPlaceholder("chat_history"),
                 ("human", "{input}"),

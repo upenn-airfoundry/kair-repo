@@ -880,6 +880,12 @@ class GraphAccessor:
             self.conn.rollback()
             return []
 
+    def generate_query_embedding(self, content: str) -> List[float]:
+        # from enrichment.llms import generate_openai_embedding
+        # return generate_openai_embedding(content)
+        from enrichment.llms import gemini_query_embedding
+        return gemini_query_embedding(content)
+        
     def generate_embedding(self, content: str) -> List[float]:
         from enrichment.llms import generate_openai_embedding
         return generate_openai_embedding(content)
@@ -912,7 +918,7 @@ class GraphAccessor:
             self.conn.rollback()
             return None
 
-    def find_related_entities(self, question: str, k: int = 10, entity_type: Optional[str] = None, keywords: Optional[List[str]] = None) -> List[int]:
+    def find_related_entities(self, question: str, k: int = 10, entity_type: Optional[str] = None, keywords: Optional[List[str]] = None) -> List[Tuple[int, float]]:
         """
         Find entities related to a particular task by matching against the entity_embed field using vector distance.
         Optionally filter by entity type and keywords.
@@ -946,7 +952,7 @@ class GraphAccessor:
         concept_embedding = self.generate_embedding(question)
         return self.find_related_entity_ids_by_embedding(concept_embedding, k, entity_type, keywords)
 
-    def find_related_entity_ids_by_tag(self, tag_value: str, tag_name: Optional[str], k: int = 10) -> List[int]:
+    def find_related_entity_ids_by_tag(self, tag_value: str, tag_name: Optional[str], k: int = 10) -> List[Tuple[int, float]]:
         """
         Find entities whose tag (with a specified tag_name) has a tag_value whose embedding approximately matches
         the query embedding using vector distance.
@@ -956,13 +962,13 @@ class GraphAccessor:
         Returns:
             List[int]: A list of entity IDs that match the criteria.
         """
-        query_embedding = self.generate_embedding(tag_value)
+        query_embedding = self.generate_query_embedding(tag_value)
         if tag_name is None:
             return self.find_related_entities_by_embedding(query_embedding, k)
         else:
             return self.find_entity_ids_by_tag_embedding(query_embedding, tag_name, k)
 
-    def find_related_entities_by_tag(self, tag_value: str, tag_name: Optional[str], k: int = 10) -> List[int]:
+    def find_related_entities_by_tag(self, tag_value: str, tag_name: Optional[str], k: int = 10) -> List[Tuple[int,float]]:
         """
         Find entities whose tag (with a specified tag_name) has a tag_value whose embedding approximately matches
         the query embedding using vector distance.
@@ -978,7 +984,7 @@ class GraphAccessor:
         else:
             return self.find_entities_by_tag_embedding(query_embedding, tag_name, k)
 
-    def find_related_entities_by_embedding(self, concept_embedding: List[float], k: int = 10, entity_type: Optional[str] = None, keywords: Optional[List[int]] = None) -> List[int]:
+    def find_related_entities_by_embedding(self, concept_embedding: List[float], k: int = 10, entity_type: Optional[str] = None, keywords: Optional[List[str]] = None) -> List[Tuple[int, float]]:
         """
         Find entities related to a particular concept by matching against the entity_embed field using vector distance.
         Optionally filter by entity type and keywords.
@@ -993,7 +999,7 @@ class GraphAccessor:
             List[int]: A list of entity IDs that match the criteria.
         """
         query = f"""
-            SELECT entity_type || ': ' || COALESCE(entity_name, entity_detail)
+            SELECT entity_type || ': ' || COALESCE(entity_name, entity_detail), (gem_embed <-> %s::vector)
             FROM {self.schema}.entities
             WHERE (entity_embed <-> %s::vector) IS NOT NULL
         """
@@ -1016,7 +1022,7 @@ class GraphAccessor:
         try:
             with self.conn.cursor() as cur:
                 cur.execute(query, tuple(params))
-                related_entity_ids = [row[0] for row in cur.fetchall()]
+                related_entity_ids = [(row[0], row[1]) for row in cur.fetchall()]
 
             return related_entity_ids
         except Exception as e:
@@ -1024,7 +1030,7 @@ class GraphAccessor:
             self.conn.rollback()
             return []
         
-    def find_related_entity_ids_by_embedding(self, concept_embedding: List[float], k: int = 10, entity_type: Optional[str] = None, keywords: Optional[List[int]] = None) -> List[int]:
+    def find_related_entity_ids_by_embedding(self, concept_embedding: List[float], k: int = 10, entity_type: Optional[str] = None, keywords: Optional[List[int]] = None) -> List[Tuple[int, float]]:
         """
         Find entities related to a particular concept by matching against the entity_embed field using vector distance.
         Optionally filter by entity type and keywords.
@@ -1039,11 +1045,11 @@ class GraphAccessor:
             List[int]: A list of entity IDs that match the criteria.
         """
         query = f"""
-            SELECT entity_id
+            SELECT entity_id, (entity_embed <-> %s::vector)
             FROM {self.schema}.entities
-            WHERE (entity_embed <-> %s::vector) IS NOT NULL
+            WHERE (gem_embed <-> %s::vector) IS NOT NULL
         """
-        params = [str(concept_embedding)]
+        params = [str(concept_embedding), str(concept_embedding)]
 
         if entity_type:
             query += " AND entity_type = %s"
@@ -1054,7 +1060,7 @@ class GraphAccessor:
             ts_query = ' & '.join(keywords) # type: ignore
             params.append(ts_query)
 
-        query += " ORDER BY (entity_embed <-> %s::vector) ASC LIMIT %s;"
+        query += " ORDER BY (gem_embed <-> %s::vector) ASC LIMIT %s;"
         params.extend([str(concept_embedding), k])
         
         logging.debug("Query: ", query)
@@ -1062,7 +1068,7 @@ class GraphAccessor:
         try:
             with self.conn.cursor() as cur:
                 cur.execute(query, tuple(params))
-                related_entity_ids = [row[0] for row in cur.fetchall()]
+                related_entity_ids = [(row[0], row[1]) for row in cur.fetchall()]
         except Exception as e:
             logging.error(f"Error executing query: {e}")
             self.conn.rollback()
@@ -1070,7 +1076,7 @@ class GraphAccessor:
 
         return related_entity_ids
 
-    def find_entities_by_tag_embedding(self, query_embedding: List[float], tag_name: str, k: int = 10) -> List[int]:
+    def find_entities_by_tag_embedding(self, query_embedding: List[float], tag_name: str, k: int = 10) -> List[Tuple[int, float]]:
         """
         Find entities whose tag (with a specified tag_name) has a tag_value whose embedding approximately matches
         the query embedding using vector distance.
@@ -1085,26 +1091,29 @@ class GraphAccessor:
         """
         if tag_name:
             query = f"""
-                SELECT tag_name || ': ' || COALESCE(entity_name, entity_detail)
-                FROM {self.schema}.entity_tags JOIN {self.schema}.entities ON entity_tags.entity_id = entities.entity_id
-                WHERE tag_name = %s
-                ORDER BY (tag_embed <-> %s::vector) ASC
+                SELECT tag_name || ': ' || COALESCE(entity_name, entity_detail), MIN(et.gem_embed <-> %s::vector)
+                FROM {self.schema}.entity_tags et JOIN {self.schema}.entities e ON et.entity_id = e.entity_id
+                WHERE et.tag_name = %s
+                GROUP BY tag_name, entity_name, entity_detail
+                ORDER BY MIN(et.gem_embed <-> %s::vector) ASC
                 LIMIT %s;
             """
-            params = (tag_name, str(query_embedding), k)
+            params = (str(query_embedding), tag_name, str(query_embedding), k)
         else:
             query = f"""
-                SELECT tag_name || ': ' || COALESCE(entity_name, entity_detail)
-                FROM {self.schema}.entity_tags JOIN {self.schema}.entities ON entity_tags.entity_id = entities.entity_id
-                ORDER BY (tag_embed <-> %s::vector) ASC
+                SELECT tag_name || ': ' || COALESCE(entity_name, entity_detail), min(et.gem_embed <-> %s::vector)
+                FROM {self.schema}.entity_tags et JOIN {self.schema}.entities e ON et.entity_id = e.entity_id
+                WHERE et.tag_name = %s
+                GROUP BY tag_name, entity_name, entity_detail
+                ORDER BY MIN(et.gem_embed <-> %s::vector) ASC
                 LIMIT %s;
             """
-            params = (str(query_embedding), k)
+            params = (str(query_embedding), tag_name, str(query_embedding), k)
 
         try:
             with self.conn.cursor() as cur:
                 cur.execute(query, params)
-                matching_entity_ids = [row[0] for row in cur.fetchall()]
+                matching_entity_ids = [(row[0], row[1]) for row in cur.fetchall()]
         except Exception as e:
             logging.error(f"Error executing query: {e}")
             self.conn.rollback()
@@ -1112,7 +1121,7 @@ class GraphAccessor:
 
         return matching_entity_ids
     
-    def find_entity_ids_by_tag_embedding(self, query_embedding: List[float], tag_name: str, k: int = 10) -> List[int]:
+    def find_entity_ids_by_tag_embedding(self, query_embedding: List[float], tag_name: str, k: int = 10) -> List[Tuple[int, float]]:
         """
         Find entities whose tag (with a specified tag_name) has a tag_value whose embedding approximately matches
         the query embedding using vector distance.
@@ -1127,21 +1136,24 @@ class GraphAccessor:
         """
         if tag_name:
             query = f"""
-                SELECT entities.entity_id
-                FROM {self.schema}.entity_tags JOIN {self.schema}.entities ON entity_tags.entity_id = entities.entity_id
-                WHERE tag_name = %s
-                ORDER BY (tag_embed <-> %s::vector) ASC
+                SELECT DISTINCT e.entity_id, MIN(et.gem_embed <-> %s::vector)
+                FROM {self.schema}.entity_tags et JOIN {self.schema}.entities e ON et.entity_id = e.entity_id
+                WHERE et.tag_name = %s
+                GROUP BY e.entity_id
+                ORDER BY MIN(et.gem_embed <-> %s::vector) ASC
                 LIMIT %s;
             """
-            params = (tag_name, str(query_embedding), k)
+            params = (str(query_embedding), tag_name, str(query_embedding), k)
         else:
             query = f"""
-                SELECT entities.entity_id
-                FROM {self.schema}.entity_tags JOIN {self.schema}.entities ON entity_tags.entity_id = entities.entity_id
-                ORDER BY (tag_embed <-> %s::vector) ASC
+                SELECT DISTINCT e.entity_id, MIN(et.gem_embed <-> %s::vector)
+                FROM {self.schema}.entity_tags et JOIN {self.schema}.entities e ON et.entity_id = e.entity_id
+                WHERE et.tag_name = %s
+                GROUP BY e.entity_id
+                ORDER BY MIN(et.gem_embed <-> %s::vector) ASC
                 LIMIT %s;
             """
-            params = (str(query_embedding), k)
+            params = (str(query_embedding), tag_name, str(query_embedding), k)
 
         try:
             if self.driver == "pg8000":
@@ -1154,7 +1166,7 @@ class GraphAccessor:
                 # psycopg2
                 with self.conn.cursor() as cur:
                     cur.execute(query, params)
-                    matching_entity_ids = [row[0] for row in cur.fetchall()]
+                    matching_entity_ids = [(row[0],row[1]) for row in cur.fetchall()]
         except Exception as e:
             logging.error(f"Error executing query: {e}")
             if self.driver == "psycopg2":
@@ -1940,6 +1952,384 @@ class GraphAccessor:
             logging.error(f"Error recomputing entity embeddings: {e}")
             self.conn.rollback()
             raise e
+
+    def build_biosketch_markdown(self, profile_entity_id: int, max_linked_pubs: int = 20) -> str:
+        """
+        Construct a Markdown biosketch for a google_scholar_profile entity.
+
+        Pulls primary text from entity_tags when available (as written by
+        PeoplePrompts.persist_biosketch_to_graph), with JSON fields as fallback.
+        Also enumerates linked paper entities (via entity_link, link_type='author')
+        to provide a publications section when present.
+
+        Sections produced (when data exists):
+        - H2 name (linked to scholar profile URL if present)
+        - Affiliation line
+        - Headshot image (if URL present)
+        - Biosketch paragraph
+        - Education and Experience (bullets)
+        - Major Projects and Activities (bullets)
+        - Honors and Awards (bullets)
+        - Expertise and Contributions (bullets)
+        - Recent Publications or Products (bullets; from JSON if present)
+        - Linked Publications (bullets; from linked paper entities, up to max_linked_pubs)
+        """
+        # Fetch base entity row
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT entity_name, entity_detail, entity_url, entity_json FROM {self.schema}.entities WHERE entity_id = %s;",
+                    (profile_entity_id,)
+                )
+                row = cur.fetchone()
+        except Exception as e:
+            logging.error(f"Error loading profile entity {profile_entity_id}: {e}")
+            self.conn.rollback()
+            row = None
+
+        entity_name: Optional[str] = None
+        entity_detail: Optional[str] = None
+        profile_url: Optional[str] = None
+        payload: Optional[dict] = None
+        if row:
+            entity_name, entity_detail, profile_url, payload = row[0], row[1], row[2], row[3]
+        # Normalize JSON payload
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except Exception:
+                payload = None
+        if not isinstance(payload, dict):
+            payload = {}
+
+        # Fetch all tags for the entity
+        tags_by_name: Dict[str, List[str]] = {}
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT tag_name, tag_value FROM {self.schema}.entity_tags WHERE entity_id = %s ORDER BY tag_name, entity_tag_instance ASC;",
+                    (profile_entity_id,)
+                )
+                for tag_name, tag_value in cur.fetchall():
+                    if tag_value is None:
+                        continue
+                    tags_by_name.setdefault(str(tag_name), []).append(str(tag_value))
+        except Exception as e:
+            logging.warning(f"Unable to fetch tags for {profile_entity_id}: {e}")
+            self.conn.rollback()
+
+        # Helpers to read primary + list values with fallbacks
+        def first_tag(tag: str) -> Optional[str]:
+            vals = tags_by_name.get(tag)
+            return (vals[0].strip() if vals else None) or None
+
+        def all_tags(tag: str) -> List[str]:
+            return [v for v in (tags_by_name.get(tag) or []) if (v or '').strip()]
+
+        def list_from_json(key: str) -> List[str]:
+            v = payload.get(key)
+            if isinstance(v, list):
+                return [str(x).strip() for x in v if str(x or '').strip()]
+            if isinstance(v, str) and v.strip():
+                return [v.strip()]
+            return []
+
+        # Compose fields
+        name = first_tag('name') or payload.get('name') or entity_name or ''
+        organization = payload.get('organization') or ''
+        scholar_id = payload.get('scholar_id')
+        headshot_url = first_tag('headshot_url') or payload.get('headshot_url') or ''
+        biosketch = first_tag('biosketch') or payload.get('biosketch') or entity_detail or ''
+
+        education = all_tags('education') or list_from_json('education_and_experience')
+        projects = all_tags('research_projects') or list_from_json('major_research_projects_and_entrepreneurship')
+        awards = all_tags('awards') or list_from_json('honors_and_awards')
+        expertise = all_tags('expertise') or list_from_json('expertise_and_contributions')
+        recent = list_from_json('recent_publications_or_products')
+
+        # Scholar URL preference: entity_url if set, otherwise build from scholar_id
+        scholar_url = profile_url
+        if not scholar_url and scholar_id:
+            scholar_url = f"https://scholar.google.com/citations?user={scholar_id}&hl=en&oi=ao"
+
+        lines: List[str] = []
+        if name:
+            if scholar_url:
+                lines.append(f"## [{name}]({scholar_url})\n")
+            else:
+                lines.append(f"## {name}\n")
+        if organization:
+            lines.append(f"**Affiliation:** {organization}\n")
+        if headshot_url and isinstance(headshot_url, str) and headshot_url.startswith("http"):
+            lines.append(f"![Headshot]({headshot_url})\n")
+
+        if biosketch:
+            lines.append("### Biosketch")
+            lines.append(biosketch)
+            lines.append("")
+
+        if education:
+            lines.append("### Education and Experience")
+            lines.extend([f"- {item}" for item in education])
+            lines.append("")
+
+        if projects:
+            lines.append("### Major Projects and Activities")
+            lines.extend([f"- {item}" for item in projects])
+            lines.append("")
+
+        if awards:
+            lines.append("### Honors and Awards")
+            lines.extend([f"- {item}" for item in awards])
+            lines.append("")
+
+        if expertise:
+            lines.append("### Expertise and Contributions")
+            lines.extend([f"- {item}" for item in expertise])
+            lines.append("")
+
+        if recent:
+            lines.append("### Recent Publications or Products")
+            lines.extend([f"- {item}" for item in recent])
+            lines.append("")
+
+        # Linked publications: follow entity_link from profile -> paper
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT p.entity_name, p.entity_url, p.entity_json
+                    FROM {self.schema}.entity_link l
+                    JOIN {self.schema}.entities p ON p.entity_id = l.to_id
+                    WHERE l.from_id = %s AND (l.link_type = 'author' OR l.link_type IS NULL)
+                    AND p.entity_type = 'paper';
+                    """,
+                    (profile_entity_id,)
+                )
+                paper_rows = cur.fetchall() or []
+        except Exception as e:
+            logging.warning(f"Unable to load linked publications for profile {profile_entity_id}: {e}")
+            self.conn.rollback()
+            paper_rows = []
+
+        def _fmt_paper(row) -> Optional[str]:
+            try:
+                title = row[0] or ''
+                url = row[1] or ''
+                pj = row[2]
+                if isinstance(pj, str):
+                    try:
+                        pj = json.loads(pj)
+                    except Exception:
+                        pj = None
+                if not isinstance(pj, dict):
+                    pj = {}
+                # prefer JSON fields if more specific
+                title = pj.get('title') or title
+                authors = pj.get('authors')
+                if isinstance(authors, list):
+                    authors_str = ", ".join(str(a) for a in authors if str(a or '').strip())
+                else:
+                    authors_str = str(authors or '').strip()
+                venue = pj.get('venue') or pj.get('publication') or pj.get('publication_venue') or ''
+                year = pj.get('year')
+                link = url or pj.get('url') or pj.get('paper_url') or pj.get('link') or ''
+                segs = []
+                if year:# and year != 'n.d.':
+                    try:
+                        segs.append(str(int(str(year)[:4])))
+                    except Exception:
+                        segs.append(str(year))
+                if authors_str:
+                    segs.append(f"{authors_str}: {title}")
+                else:
+                    segs.append(title)
+                if venue:
+                    segs.append(venue)
+                body = " — ".join(segs)
+                if link:
+                    body += f" — [link]({link})"
+                return f"- {body}"
+            except Exception:
+                return None
+
+        linked_lines = [s for s in (_fmt_paper(r) for r in paper_rows) if s]
+        linked_lines.sort(reverse=True)  # no key, just reverse order
+        if linked_lines:
+            lines.append("### Complete Publications List")
+            lines.extend(linked_lines)
+            lines.append("")
+
+        return "\n".join(lines).strip() or ""
+
+    def build_biosketch_json(self, profile_entity_id: int, max_linked_pubs: int = 50) -> Dict[str, Any]:
+        """
+        Build a composite JSON object for a google_scholar_profile entity aggregating
+        tag-based values (preferred) and falling back to the stored entity_json.
+
+        Returns a dict shaped similarly to the ExpertBiosketch model plus a list of
+        linked_publications with structured fields.
+
+        {
+          "name": str,
+          "organization": str | None,
+          "scholar_url": str | None,
+          "scholar_id": str | None,
+          "headshot_url": str | None,
+          "biosketch": str,
+          "education_and_experience": [...],
+          "major_research_projects_and_entrepreneurship": [...],
+          "honors_and_awards": [...],
+          "expertise_and_contributions": [...],
+          "recent_publications_or_products": [...],
+          "linked_publications": [ { title, authors, venue, year, url } ]
+        }
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT entity_name, entity_detail, entity_url, entity_json FROM {self.schema}.entities WHERE entity_id = %s;",
+                    (profile_entity_id,)
+                )
+                row = cur.fetchone()
+        except Exception as e:
+            logging.error(f"Error loading profile entity {profile_entity_id}: {e}")
+            self.conn.rollback()
+            row = None
+
+        entity_name: Optional[str] = None
+        entity_detail: Optional[str] = None
+        profile_url: Optional[str] = None
+        payload: Optional[dict] = None
+        if row:
+            entity_name, entity_detail, profile_url, payload = row[0], row[1], row[2], row[3]
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except Exception:
+                payload = None
+        if not isinstance(payload, dict):
+            payload = {}
+
+        tags_by_name: Dict[str, List[str]] = {}
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT tag_name, tag_value FROM {self.schema}.entity_tags WHERE entity_id = %s ORDER BY tag_name, entity_tag_instance ASC;",
+                    (profile_entity_id,)
+                )
+                for tag_name, tag_value in cur.fetchall():
+                    if tag_value is None:
+                        continue
+                    tags_by_name.setdefault(str(tag_name), []).append(str(tag_value))
+        except Exception as e:
+            logging.warning(f"Unable to fetch tags for {profile_entity_id}: {e}")
+            self.conn.rollback()
+
+        def first_tag(tag: str) -> Optional[str]:
+            vals = tags_by_name.get(tag)
+            return (vals[0].strip() if vals else None) or None
+
+        def all_tags(tag: str) -> List[str]:
+            return [v for v in (tags_by_name.get(tag) or []) if (v or '').strip()]
+
+        def list_from_json(key: str) -> List[str]:
+            v = payload.get(key)
+            if isinstance(v, list):
+                return [str(x).strip() for x in v if str(x or '').strip()]
+            if isinstance(v, str) and v.strip():
+                return [v.strip()]
+            return []
+
+        name = first_tag('name') or payload.get('name') or entity_name or ''
+        organization = payload.get('organization') or None
+        scholar_id = payload.get('scholar_id') or None
+        headshot_url = first_tag('headshot_url') or payload.get('headshot_url') or None
+        biosketch = first_tag('biosketch') or payload.get('biosketch') or entity_detail or ''
+
+        education = all_tags('education') or list_from_json('education_and_experience')
+        projects = all_tags('research_projects') or list_from_json('major_research_projects_and_entrepreneurship')
+        awards = all_tags('awards') or list_from_json('honors_and_awards')
+        expertise = all_tags('expertise') or list_from_json('expertise_and_contributions')
+        recent = list_from_json('recent_publications_or_products')
+
+        scholar_url = profile_url
+        if not scholar_url and scholar_id:
+            scholar_url = f"https://scholar.google.com/citations?user={scholar_id}&hl=en&oi=ao"
+
+        # Linked publications
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT p.entity_name, p.entity_url, p.entity_json
+                    FROM {self.schema}.entity_link l
+                    JOIN {self.schema}.entities p ON p.entity_id = l.to_id
+                    WHERE l.from_id = %s AND (l.link_type = 'author' OR l.link_type IS NULL)
+                          AND p.entity_type = 'paper'
+                    LIMIT %s;
+                    """,
+                    (profile_entity_id, max_linked_pubs)
+                )
+                paper_rows = cur.fetchall() or []
+        except Exception as e:
+            logging.warning(f"Unable to load linked publications for profile {profile_entity_id}: {e}")
+            self.conn.rollback()
+            paper_rows = []
+
+        linked_publications: List[Dict[str, Any]] = []
+        for r in paper_rows:
+            try:
+                title = r[0] or ''
+                url = r[1] or ''
+                pj = r[2]
+                if isinstance(pj, str):
+                    try:
+                        pj = json.loads(pj)
+                    except Exception:
+                        pj = None
+                if not isinstance(pj, dict):
+                    pj = {}
+                title = pj.get('title') or title
+                authors = pj.get('authors')
+                if isinstance(authors, list):
+                    authors_list = [str(a).strip() for a in authors if str(a or '').strip()]
+                else:
+                    authors_list = [s.strip() for s in str(authors or '').split(',') if s.strip()] if authors else []
+                venue = pj.get('venue') or pj.get('publication') or pj.get('publication_venue') or ''
+                year = pj.get('year')
+                link = url or pj.get('url') or pj.get('paper_url') or pj.get('link') or ''
+                # Normalize year
+                norm_year: Optional[int] = None
+                if year is not None:
+                    try:
+                        norm_year = int(str(year)[:4])
+                    except Exception:
+                        norm_year = None
+                linked_publications.append({
+                    'title': title,
+                    'authors': authors_list,
+                    'venue': venue,
+                    'year': norm_year,
+                    'url': link,
+                })
+            except Exception:
+                continue
+
+        return {
+            'name': name,
+            'organization': organization,
+            'scholar_url': scholar_url,
+            'scholar_id': scholar_id,
+            'headshot_url': headshot_url,
+            'biosketch': biosketch,
+            'education_and_experience': education,
+            'major_research_projects_and_entrepreneurship': projects,
+            'honors_and_awards': awards,
+            'expertise_and_contributions': expertise,
+            'recent_publications_or_products': recent,
+            'linked_publications': linked_publications,
+        }
 
     def save_user_profile(self, email: str, profile_data: dict, profile_context: Optional[str] = None) -> int:
         """
