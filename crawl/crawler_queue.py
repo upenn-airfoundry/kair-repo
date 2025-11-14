@@ -124,16 +124,26 @@ class CrawlQueue:
             logging.debug(f"File {path} already exists in the crawled table. Skipping.")
             return False
 
+        # Check for duplicate (id, crawl_time) pair to avoid primary key violation
+        today = datetime.now().date()
+        existing_crawl_today = graph_db.exec_sql(
+            "SELECT 1 FROM crawled WHERE id = %s AND crawl_time = %s;",
+            (crawl_id, today)
+        )
+        if existing_crawl_today:
+            logging.debug(f"Crawl ID {crawl_id} already crawled today. Skipping.")
+            return False
+
         # Add the crawled ID to the crawled table
         if crawl_id >= 1:
             graph_db.execute(
                 "INSERT INTO crawled (id, crawl_time, path) VALUES (%s, %s, %s);",
-                (crawl_id, datetime.now().date(), path)
+                (crawl_id, today, path)
             )
         else:
             graph_db.execute(
                 "INSERT INTO crawled (crawl_time, path) VALUES (%s, %s);",
-                (datetime.now().date(), path)
+                (today, path)
             )
             
         logging.info(f"Added {path} to crawled table with ID {crawl_id}.")
@@ -248,23 +258,12 @@ class CrawlQueue:
         # Ensure download dir exists and crawl (downloads + TEI)
         os.makedirs(DOWNLOADS_DIR, exist_ok=True)
         from crawl.web_fetch import fetch_and_crawl_items
-        # Schedule indexing for those not yet indexed
-        tasks: List[asyncio.Future] = []
+        # fetch_and_crawl_items is an async function, so we await it directly
         try:
-            # The fetch_and_crawl_items function is synchronous but uses a thread pool internally.
-            # Running it in a separate thread with asyncio.to_thread ensures it doesn't block the event loop.
-            # The 'await' keyword ensures that this coroutine waits for the thread to complete.
-            # await asyncio.to_thread(fetch_and_crawl_items, rows, DOWNLOADS_DIR)
-            tasks.append(asyncio.to_thread(fetch_and_crawl_items, rows, DOWNLOADS_DIR))
+            await fetch_and_crawl_items(rows, DOWNLOADS_DIR)
         except Exception as e:
             logging.error(f"fetch_url_content: fetch_and_crawl_items failed: {e}")
             return []
-        
-        if tasks:
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            if isinstance(results, Exception):
-                logging.error(f"fetch_url_content: fetch_and_crawl_items task failed: {results}")
-                #return []
 
         return rows
 

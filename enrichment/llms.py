@@ -212,6 +212,11 @@ def get_analysis_llm():
     # Light, fast model for structured analysis
     return _make_llm("gemini-2.0-flash-lite-001", temperature=0, max_tokens=None)
 
+def get_best_llm():
+    # Light, fast model for structured analysis
+    return _make_llm("gemini-2.5-pro", temperature=0, max_tokens=None)
+
+
 def get_better_llm():  # use_mcp_tools: bool = False
      """
      Returns a high-quality Gemini model instance.

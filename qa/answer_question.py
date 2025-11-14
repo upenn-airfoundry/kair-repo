@@ -3,7 +3,7 @@ import asyncio
 import logging
 
 from backend.graph_db import GraphAccessor
-from prompts.llm_prompts import QueryPrompts, TaskDependencyList, WebPrompts, PlanningPrompts, ReviewPrompts
+from prompts.llm_prompts import QueryPrompts, TaskDependencyList, WebPrompts, PlanningPrompts, ReviewPrompts, summarize_paper_via_llm
 from prompts.llm_prompts import extract_expertise_spec, ExpertRequestSpec
 from pydantic import BaseModel, Field
 from langchain.prompts import ChatPromptTemplate
@@ -663,7 +663,8 @@ class AnswerQuestionHandler():
                     self.graph_accessor.add_user_history(self.user_id, self.project_id, original_prompt, answer)
                     return (answer, 0)
                 paper_url = url_match.group(0).rstrip(').,;')
-                summary_md = await summarize_paper_via_notebooklm(paper_url)
+                # summary_md = await summarize_paper_via_notebooklm(paper_url)
+                summary_md = await summarize_paper_via_llm(paper_url, task_summary)
                 # Create or associate task
                 task_id = TaskHelper.get_or_create_task(self.graph_accessor, self.project_id, task_summary or "Summarize paper", selected_task_id, parent_task_id)
                 if task_id is not None:

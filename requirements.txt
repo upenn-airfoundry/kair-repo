@@ -20,7 +20,6 @@ beautifulsoup4
 requests
 pydantic
 pgvector
-aryn-sdk
 flask
 flask-cors
 bs4
@@ -41,4 +40,5 @@ fastmcp
 scikit-learn
 typing-extensions
 python-markdown
-
+unstructured
+langchain-unstructured

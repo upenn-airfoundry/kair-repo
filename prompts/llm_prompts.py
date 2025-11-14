@@ -195,6 +195,7 @@ import json
 from enrichment.llms import (
     get_analysis_llm,
     get_better_llm,
+    get_best_llm,
     get_structured_analysis_llm,
     get_agentic_llm,
     mcp_client,  # use MCP client to call SemanticScholarSearch and PDFAnalyzer
@@ -2235,6 +2236,181 @@ async def summarize_paper_via_notebooklm(url: str, focus: Optional[str] = None) 
     except Exception as e:
         logging.warning(f"summarize_paper_via_notebooklm failed: {e}")
         return f"(NotebookLM summary unavailable) For reference, here is the URL: {url}"
+
+
+async def summarize_paper_via_llm(url: str, focus: Optional[str] = None) -> str:
+    """Summarize a paper at the given URL using the best LLM directly (no tool calls).
+
+    Uses the existing crawl infrastructure to fetch and parse the document into text tokens via LangChain,
+    then runs the LLM over the extracted text to produce a structured Markdown summary.
+    Returns Markdown text. Falls back to a basic message if fetching or summarization fails.
+    """
+    from enrichment.llms import get_best_llm
+    from crawl.crawler_queue import CrawlQueue
+    from backend.graph_db import GraphAccessor
+    import os
+    
+    try:
+        # Step 1: Check if we've already crawled this URL
+        graph_db = GraphAccessor()
+        DOWNLOADS_DIR = os.getenv("PDF_PATH", os.path.expanduser("~/Downloads") + '/pdfs')
+        os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+        
+        # First, check if URL is already in crawl_queue and crawled
+        existing_crawl = graph_db.exec_sql(
+            """
+            SELECT cq.id, c.path 
+            FROM crawl_queue cq 
+            LEFT JOIN crawled c ON cq.id = c.id 
+            WHERE cq.url = %s 
+            ORDER BY c.crawl_time DESC 
+            LIMIT 1;
+            """,
+            (url,)
+        )
+        
+        file_path = None
+        content = None
+        
+        if existing_crawl and existing_crawl[0][1]:
+            # Already crawled, use existing file
+            file_path = existing_crawl[0][1]
+            logging.info(f"Using previously crawled file for {url}: {file_path}")
+        else:
+            # Not crawled yet, fetch it
+            rows = await CrawlQueue.fetch_url_content([url], task_id=0, task_description="Paper summarization", task_schema="")
+            
+            if not rows or len(rows) == 0:
+                # Fallback: try direct fetch if crawl queue didn't work
+                logging.warning(f"Crawl queue returned no results for {url}, attempting direct fetch")
+                import httpx
+                async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                    try:
+                        response = await client.get(url)
+                        response.raise_for_status()
+                        raw_content = response.text
+                    except Exception as fetch_err:
+                        logging.warning(f"Failed to fetch URL {url}: {fetch_err}")
+                        return f"Could not fetch the paper at {url}. Please verify the URL is accessible."
+                
+                # Use LangChain document loaders to parse the content
+                from langchain.docstore.document import Document
+                from langchain.text_splitter import RecursiveCharacterTextSplitter
+                
+                # Create a document from raw HTML/text content
+                doc = Document(page_content=raw_content, metadata={"source": url})
+                
+                # Split into manageable chunks
+                text_splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=10000,
+                    chunk_overlap=500,
+                    length_function=len,
+                )
+                chunks = text_splitter.split_documents([doc])
+                
+                # Combine chunks (limiting to first ~100k chars)
+                content_parts = [chunk.page_content for chunk in chunks[:10]]
+                content = "\n\n".join(content_parts)
+            else:
+                # Get the local file path from the crawled table
+                crawl_id = rows[0].get('id')
+                crawled_data = graph_db.exec_sql(
+                    "SELECT path FROM crawled WHERE id = %s ORDER BY crawl_time DESC LIMIT 1;",
+                    (crawl_id,)
+                )
+                
+                if not crawled_data or not crawled_data[0][0]:
+                    return f"Could not retrieve the downloaded file for {url}."
+                
+                file_path = crawled_data[0][0]
+        
+        # Step 2: Parse the file if we have one
+        if file_path:
+            full_path = os.path.join(DOWNLOADS_DIR, file_path) if not file_path.startswith('/') else file_path
+            
+            from langchain_community.document_loaders import PyPDFLoader
+            from langchain.text_splitter import RecursiveCharacterTextSplitter
+            
+            # Try to use the new langchain-unstructured package, fallback to old one
+            try:
+                from langchain_unstructured import UnstructuredLoader
+                use_new_loader = True
+            except ImportError:
+                from langchain_community.document_loaders import UnstructuredFileLoader
+                use_new_loader = False
+            
+            try:
+                # Try PDF loader first for PDF files
+                if full_path.lower().endswith('.pdf') or url.lower().endswith('.pdf'):
+                    loader = PyPDFLoader(full_path)
+                else:
+                    # Use unstructured loader for other file types
+                    if use_new_loader:
+                        loader = UnstructuredLoader(full_path)
+                    else:
+                        loader = UnstructuredFileLoader(full_path)
+                
+                documents = loader.load()
+                
+                # Split into manageable chunks
+                text_splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=10000,
+                    chunk_overlap=500,
+                    length_function=len,
+                )
+                chunks = text_splitter.split_documents(documents)
+                
+                # Combine chunks (limiting to first ~100k chars to stay within token limits)
+                content_parts = [chunk.page_content for chunk in chunks[:10]]
+                content = "\n\n".join(content_parts)
+                
+            except Exception as parse_err:
+                logging.warning(f"Failed to parse document at {full_path}: {parse_err}")
+                return f"Could not parse the document at {url}. The file may be corrupted or in an unsupported format."
+        
+        if not content or len(content.strip()) < 100:
+            return f"The content at {url} appears to be empty or too short to summarize."
+        
+        # Step 3: Build the summarization prompt and run the LLM
+        base_instruction = (
+            "You are an expert research summarizer. Read the following document and return a concise Markdown summary with these sections:\n\n"
+            "- **Title**: The paper's title if identifiable\n"
+            "- **TL;DR**: A one-sentence overview\n"
+            "- **Key Points**: 3-5 bullet points highlighting the main contributions or findings\n"
+            "- **Methods**: Brief description of the approach or methodology\n"
+            "- **Results**: Main outcomes or conclusions\n"
+            "- **Limitations**: Any noted limitations or caveats\n"
+            "- **Links**: Include the original URL for reference\n\n"
+        )
+        if focus:
+            base_instruction += f"Focus particularly on: {focus}\n\n"
+        
+        base_instruction += f"Original URL: {url}\n\n---\n\nDocument content:\n\n{content}"
+        
+        # Invoke the best LLM
+        llm = get_best_llm()
+        if llm is None:
+            return f"LLM not available for summarization. Reference URL: {url}"
+        
+        from langchain.prompts import ChatPromptTemplate
+        from langchain.schema.output_parser import StrOutputParser
+        
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", "You are a helpful research assistant that produces clear, structured Markdown summaries of academic papers and documents."),
+            ("user", "{instruction}")
+        ])
+        
+        chain = prompt | llm | StrOutputParser()
+        summary = await chain.ainvoke({"instruction": base_instruction})
+        
+        if not summary or not summary.strip():
+            return f"LLM returned an empty summary for {url}."
+        
+        return summary.strip()
+        
+    except Exception as e:
+        logging.error(f"summarize_paper_via_llm failed for {url}: {e}")
+        return f"An error occurred while summarizing the paper at {url}. Details: {e}"
 
 
 class PlanningPrompts:
